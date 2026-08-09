@@ -527,18 +527,20 @@ class AssetGenerator:
             
         return character
 
-    def generate_scene(self, scene: Scene, positive_prompt: str = None, negative_prompt: str = "", batch_size: int = 1, model_name: str = None, size: str = None) -> Scene:
+    def generate_scene(self, scene: Scene, positive_prompt: str = None, negative_prompt: str = "", batch_size: int = 1, model_name: str = None, size: str = None, prompt: str = None) -> Scene:
         """Generates a scene reference image."""
         scene.status = GenerationStatus.PROCESSING
-        
-        # Use provided prompts or fall back to default cinematic style
-        if positive_prompt is None:
-            positive_prompt = "cinematic lighting, movie still, 8k, highly detailed, realistic"
+
+        style_suffix = positive_prompt if positive_prompt is not None else "电影级光影，电影剧照质感，8K，细节丰富，写实"
         
         # Default size for scenes (landscape)
         effective_size = size or "1024*576"
         
-        prompt = f"Scene Concept Art: {scene.name}. {scene.description}. High quality, detailed. {positive_prompt}"
+        effective_prompt = prompt.strip() if prompt and prompt.strip() else (
+            f"场景概念设定图：{scene.name}。{scene.description}。高品质，细节丰富。"
+        )
+        if style_suffix and style_suffix not in effective_prompt:
+            effective_prompt = f"{effective_prompt}，{style_suffix}"
         
         try:
             for _ in range(batch_size):
@@ -546,7 +548,7 @@ class AssetGenerator:
                 output_path = os.path.join(self.output_dir, 'scenes', f"{scene.id}_{variant_id}.png")
                 os.makedirs(os.path.dirname(output_path), exist_ok=True)
                 
-                image_path, _ = self._get_model_for(model_name).generate(prompt, output_path, negative_prompt=negative_prompt, model_name=model_name, size=effective_size)
+                image_path, _ = self._get_model_for(model_name).generate(effective_prompt, output_path, negative_prompt=negative_prompt, model_name=model_name, size=effective_size)
                 
                 rel_path = os.path.relpath(output_path, "output")
                 
@@ -559,7 +561,7 @@ class AssetGenerator:
                     id=variant_id,
                     url=rel_path,
                     created_at=time.time(),
-                    prompt_used=prompt
+                    prompt_used=effective_prompt
                 )
                 scene.image_asset.variants.insert(0, variant)
                 
@@ -589,18 +591,20 @@ class AssetGenerator:
             
         return scene
 
-    def generate_prop(self, prop: Prop, positive_prompt: str = None, negative_prompt: str = "", batch_size: int = 1, model_name: str = None, size: str = None) -> Prop:
+    def generate_prop(self, prop: Prop, positive_prompt: str = None, negative_prompt: str = "", batch_size: int = 1, model_name: str = None, size: str = None, prompt: str = None) -> Prop:
         """Generates a prop reference image."""
         prop.status = GenerationStatus.PROCESSING
-        
-        # Use provided prompts or fall back to default cinematic style
-        if positive_prompt is None:
-            positive_prompt = "cinematic lighting, movie still, 8k, highly detailed, realistic"
+
+        style_suffix = positive_prompt if positive_prompt is not None else "电影级光影，电影剧照质感，8K，细节丰富，写实"
         
         # Default size for props (square)
         effective_size = size or "1024*1024"
         
-        prompt = f"Prop Design: {prop.name}. {prop.description}. Isolated on white background, high quality, detailed. {positive_prompt}"
+        effective_prompt = prompt.strip() if prompt and prompt.strip() else (
+            f"道具设计图：{prop.name}。{prop.description}。白色背景，主体独立展示，高品质，细节丰富。"
+        )
+        if style_suffix and style_suffix not in effective_prompt:
+            effective_prompt = f"{effective_prompt}，{style_suffix}"
         
         try:
             for _ in range(batch_size):
@@ -608,7 +612,7 @@ class AssetGenerator:
                 output_path = os.path.join(self.output_dir, 'props', f"{prop.id}_{variant_id}.png")
                 os.makedirs(os.path.dirname(output_path), exist_ok=True)
                 
-                image_path, _ = self._get_model_for(model_name).generate(prompt, output_path, negative_prompt=negative_prompt, model_name=model_name, size=effective_size)
+                image_path, _ = self._get_model_for(model_name).generate(effective_prompt, output_path, negative_prompt=negative_prompt, model_name=model_name, size=effective_size)
                 
                 rel_path = os.path.relpath(output_path, "output")
                 
@@ -621,7 +625,7 @@ class AssetGenerator:
                     id=variant_id,
                     url=rel_path,
                     created_at=time.time(),
-                    prompt_used=prompt
+                    prompt_used=effective_prompt
                 )
                 prop.image_asset.variants.insert(0, variant)
                 

@@ -5,6 +5,7 @@ python-multipart>=0.0.9
 
 # AI/ML Models
 dashscope>=1.20.0
+openai>=1.0.0
 pywebview>=5.0.0
 
 # Data Validation & Processing
@@ -14,6 +15,7 @@ pydantic-settings>=2.0.0
 # Utilities
 python-dotenv>=1.0.0
 requests>=2.31.0
+httpx[socks]>=0.23.0,<1.0.0
 pyyaml>=6.0
 PyJWT>=2.8.0
 
@@ -31,4 +33,3 @@ soundfile>=0.12.0
 # Uncomment if needed:
 # numpy>=1.24.0
 # pillow>=10.0.0
-# openai>=1.0.0  # Required when LLM_PROVIDER=openai

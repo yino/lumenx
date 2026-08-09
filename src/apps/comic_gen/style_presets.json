@@ -209,6 +209,21 @@
       "object_position": "center 30%"
     },
     {
+      "id": "chinese_fantasy_high_detail_3d",
+      "category": "style_lab",
+      "name": "Chinese Fantasy High-Detail 3D",
+      "name_zh": "3D国风高清渲染风格",
+      "subtitle_zh": "国风幻想 · PBR材质 · 电影光影",
+      "description": "高品质国风幻想3D渲染，融合写实人物比例、精细东方装饰、真实材质与电影级光影",
+      "best_for": ["仙侠", "玄幻", "古风", "神话", "武侠"],
+      "avoid_for": ["现代纪实", "低龄Q版", "极简插画"],
+      "positive_prompt": "高品质中国幻想3D动画风格，写实化人物比例，精致东方美学，繁复细腻的传统装饰，PBR物理渲染，真实丝绸与金属材质，细腻的皮肤次表面散射，电影级光影，体积雾，丰富而克制的色彩分级，强烈空间纵深，高精度商业级渲染",
+      "negative_prompt": "真人摄影，平面二维插画，欧美卡通，Q版，低多边形，塑料玩具质感，蜡质皮肤，粗糙模型，低清晰度贴图，平淡光照，颜色过饱和，模糊，人体结构错误，多余手指，文字，标志，水印",
+      "sample_prompt": "A young sword cultivator stands on an ancient palace terrace at night, wind moving the layered robes, distant mountains beneath the moon, warm lantern light against cool mist",
+      "thumbnail": "/assets/styles/3D-Chinese-style-high-definition-rendering-style.webp",
+      "object_position": "center 28%"
+    },
+    {
       "id": "clay_stop_motion",
       "category": "style_lab",
       "name": "Clay Stop-Motion Miniature",

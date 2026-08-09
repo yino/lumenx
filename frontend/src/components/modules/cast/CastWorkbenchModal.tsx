@@ -109,8 +109,8 @@ const CHARACTER_TEMPLATES: Record<CharacterTemplate, {
     simple: {
         labelKey: "tplSimpleLabel",
         descKey: "tplSimpleDesc",
-        compositionEn: "Composition: character reference sheet, single unified image, seamless layout without borders or frames, neutral gray background. Left half: large head close-up portrait (shoulders up, sharp facial details, front-facing, detailed skin texture). Right half: three equally-sized full-body standing poses arranged side by side (front view, side view, back view), head-to-toe fully visible, relaxed neutral pose. Consistent soft studio lighting across all views, no harsh shadows, even illumination.",
-        negativeAppend: "text, labels, watermark, UI overlay, panel borders, frames, multiple separate images",
+        compositionEn: "构图：角色设定参考图，单张完整画面，无边框、无分栏，使用中性灰色背景。左半部分为大型头部特写，展示肩部以上区域，正面视角，面部和皮肤细节清晰。右半部分并排展示三个大小一致的全身站姿，分别为正面、侧面和背面，人物从头到脚完整可见，保持自然放松的中立姿势。所有视图使用一致的柔和棚拍光线，避免强烈阴影，整体照明均匀。",
+        negativeAppend: "文字，标签，水印，界面覆盖，分栏边框，画框，多张独立图片",
         exampleImage: "/assets/templates/simple-triview.png",
     },
     detailed: {
@@ -140,9 +140,9 @@ function buildTemplate(kind: CastKind, entity: any, template?: CharacterTemplate
         return `${charDesc}\n\n${tpl.compositionEn}`;
     }
     if (kind === "scene") {
-        return `${name}${desc ? "：" + desc : ""}\n\nComposition: wide establishing shot of the environment on neutral gray background, single unified image, no figures in foreground. Emphasize atmosphere, architecture and terrain structure. Lighting and color palette match the scene mood. Soft volumetric lighting, depth of field.`;
+        return `${name}${desc ? "：" + desc : ""}\n\n构图：场景环境的广角全景建立镜头，使用中性灰色背景，呈现为单张完整画面，前景不出现人物。重点表现环境氛围、建筑结构与地形层次，光线和色彩应符合场景情绪。使用柔和的体积光与景深效果。`;
     }
-    return `${name}${desc ? "：" + desc : ""}\n\nComposition: product photography style on neutral gray background, single unified image, seamless layout without borders. Main view: object centered at slight angle. Secondary views: detail close-ups of material and texture. Clean even studio lighting, subtle shadow beneath object.`;
+    return `${name}${desc ? "：" + desc : ""}\n\n构图：产品摄影风格，使用中性灰色背景，呈现为无边框、无分栏的单张完整画面。主视图将道具居中并以轻微侧角展示，辅助视图展示材质与纹理细节特写。使用干净均匀的棚拍光线，道具下方保留轻微阴影。`;
 }
 
 function getTemplateNegative(kind: CastKind, template?: CharacterTemplate): string {
@@ -150,7 +150,10 @@ function getTemplateNegative(kind: CastKind, template?: CharacterTemplate): stri
         const tpl = CHARACTER_TEMPLATES[template || "simple"];
         return tpl.negativeAppend;
     }
-    return "text, labels, watermark, UI overlay, panel borders, frames";
+    if (kind === "scene") {
+        return "文字，标签，水印，界面覆盖，分栏边框，画框，前景人物";
+    }
+    return "文字，标签，水印，界面覆盖，分栏边框，画框，杂乱背景，多余物体";
 }
 
 /** Variants live in different slots depending on kind + legacy schema:
@@ -383,6 +386,7 @@ export default function CastWorkbenchModal({ isOpen, kind, entityId, onClose }: 
                 entity.id,
                 kind,
                 variantId,
+                kind === "character" ? "reference_sheet" : undefined,
             );
             updateProject(currentProject.id, updated);
             toast.success(t("toastSelected"), {
@@ -408,6 +412,7 @@ export default function CastWorkbenchModal({ isOpen, kind, entityId, onClose }: 
                 kind,
                 variantId,
                 !currentFav,
+                kind === "character" ? "reference_sheet" : undefined,
             );
             updateProject(currentProject.id, updated);
         } catch { /* silent — non-critical */ }
@@ -686,8 +691,8 @@ export default function CastWorkbenchModal({ isOpen, kind, entityId, onClose }: 
                                 {(kind === "character"
                                     ? ["full body", "close-up", "three-view", "dynamic pose", "soft lighting", "studio lighting", "white background", "detailed face"]
                                     : kind === "scene"
-                                        ? ["wide angle", "establishing shot", "golden hour", "dramatic lighting", "aerial view", "depth of field", "atmospheric", "cinematic"]
-                                        : ["product shot", "white background", "multi-angle", "studio lighting", "macro detail", "floating", "transparent background", "clean"]
+                                        ? ["广角镜头", "全景建立镜头", "黄金时刻", "戏剧性光影", "航拍视角", "景深效果", "氛围感", "电影感"]
+                                        : ["产品摄影", "白色背景", "多角度展示", "棚拍光线", "微距细节", "悬浮展示", "透明背景", "画面简洁"]
                                 ).map((tag) => (
                                     <button
                                         key={tag}

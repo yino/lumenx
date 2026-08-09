@@ -655,9 +655,25 @@ class ComicGenPipeline:
                     size=effective_size
                 )
             elif asset_type == "scene":
-                self.asset_generator.generate_scene(target_asset, effective_positive_prompt, effective_negative_prompt, batch_size=batch_size, model_name=t2i_model, size=effective_size)
+                self.asset_generator.generate_scene(
+                    target_asset,
+                    positive_prompt=effective_positive_prompt,
+                    negative_prompt=effective_negative_prompt,
+                    batch_size=batch_size,
+                    model_name=t2i_model,
+                    size=effective_size,
+                    prompt=prompt,
+                )
             elif asset_type == "prop":
-                self.asset_generator.generate_prop(target_asset, effective_positive_prompt, effective_negative_prompt, batch_size=batch_size, model_name=t2i_model, size=effective_size)
+                self.asset_generator.generate_prop(
+                    target_asset,
+                    positive_prompt=effective_positive_prompt,
+                    negative_prompt=effective_negative_prompt,
+                    batch_size=batch_size,
+                    model_name=t2i_model,
+                    size=effective_size,
+                    prompt=prompt,
+                )
                 
             target_asset.status = GenerationStatus.COMPLETED
         except Exception as e:
@@ -819,6 +835,7 @@ class ComicGenPipeline:
             self.asset_generator.generate_scene(
                 target, positive_prompt=positive_prompt, negative_prompt=negative_prompt,
                 batch_size=batch_size, model_name=t2i_model, size=effective_size,
+                prompt=prompt,
             )
         elif asset_type == "prop":
             target = next((p for p in series.props if p.id == asset_id), None)
@@ -827,6 +844,7 @@ class ComicGenPipeline:
             self.asset_generator.generate_prop(
                 target, positive_prompt=positive_prompt, negative_prompt=negative_prompt,
                 batch_size=batch_size, model_name=t2i_model, size=effective_size,
+                prompt=prompt,
             )
         else:
             raise ValueError(f"Unknown asset type: {asset_type}")
@@ -3607,14 +3625,23 @@ class ComicGenPipeline:
     def get_script(self, script_id: str) -> Optional[Script]:
         return self.scripts.get(script_id)
 
+    def _variant_collection(self, image_asset: Any) -> Tuple[List[Any], Optional[str]]:
+        """Return variants and the selected-id field for either asset schema."""
+        if not image_asset:
+            return [], None
+        if hasattr(image_asset, "image_variants"):
+            return image_asset.image_variants, "selected_image_id"
+        return getattr(image_asset, "variants", []), "selected_id"
+
     def _select_variant_in_asset(self, image_asset: Any, variant_id: str) -> Any:
-        """Helper to select a variant in an ImageAsset. Returns the selected variant if found."""
-        if not image_asset or not image_asset.variants:
+        """Select a variant in either ImageAsset or AssetUnit."""
+        variants, selected_field = self._variant_collection(image_asset)
+        if not variants or not selected_field:
             return None
-            
-        for variant in image_asset.variants:
+
+        for variant in variants:
             if variant.id == variant_id:
-                image_asset.selected_id = variant_id
+                setattr(image_asset, selected_field, variant_id)
                 return variant
         return None
 
@@ -3641,8 +3668,9 @@ class ComicGenPipeline:
         script = self.scripts.get(script_id)
         if not script:
             raise ValueError("Script not found")
-            
+
         target_asset = None
+        variant = None
         asset_is_series_level = False
         if asset_type == "character":
             target_asset = next((c for c in script.characters if c.id == asset_id), None)
@@ -3676,12 +3704,16 @@ class ComicGenPipeline:
                     # app (storyboard reference, etc.) sees the pick.
                     variant = self._select_variant_in_asset(getattr(target_asset, "reference_sheet", None), variant_id)
                     if variant:
-                        if target_asset.reference_sheet:
-                            target_asset.reference_sheet.selected_image_id = variant.id
                         target_asset.image_url = variant.url
                 else:
-                    # Legacy fallback: search all assets (for backward compatibility)
-                    variant = self._select_variant_in_asset(target_asset.full_body_asset, variant_id)
+                    # Backward-compatible fallback for clients that omit
+                    # generation_type: search the canonical sheet first.
+                    variant = self._select_variant_in_asset(getattr(target_asset, "reference_sheet", None), variant_id)
+                    if variant:
+                        target_asset.image_url = variant.url
+
+                    if not variant:
+                        variant = self._select_variant_in_asset(target_asset.full_body_asset, variant_id)
                     if variant:
                         target_asset.full_body_image_url = variant.url
                         target_asset.image_url = variant.url
@@ -3737,6 +3769,11 @@ class ComicGenPipeline:
                     variant = self._select_variant_in_asset(target_asset.image_asset, variant_id)
                     # If sketch, maybe don't update main image_url if rendered exists?
                     # For now, let's assume we only select rendered variants for frames usually.
+
+        if not target_asset:
+            raise ValueError(f"{asset_type.replace('_', ' ').title()} {asset_id} not found")
+        if not variant:
+            raise ValueError(f"Variant {variant_id} not found")
 
         self._save_data()
         if asset_is_series_level:
@@ -3840,9 +3877,10 @@ class ComicGenPipeline:
 
     def _set_variant_favorite(self, image_asset: Any, variant_id: str, is_favorited: bool) -> bool:
         """Helper to set favorite status of a variant. Returns True if found."""
-        if not image_asset or not image_asset.variants:
+        variants, _ = self._variant_collection(image_asset)
+        if not variants:
             return False
-        for v in image_asset.variants:
+        for v in variants:
             if v.id == variant_id:
                 v.is_favorited = is_favorited
                 return True
@@ -3855,8 +3893,14 @@ class ComicGenPipeline:
             raise ValueError("Script not found")
         
         found = False
+        asset_is_series_level = False
         if asset_type == "character":
             target_asset = next((c for c in script.characters if c.id == asset_id), None)
+            if not target_asset and script.series_id:
+                series = self.series_store.get(script.series_id)
+                if series:
+                    target_asset = next((c for c in series.characters if c.id == asset_id), None)
+                    asset_is_series_level = target_asset is not None
             if target_asset:
                 if generation_type == "full_body":
                     found = self._set_variant_favorite(target_asset.full_body_asset, variant_id, is_favorited)
@@ -3864,9 +3908,12 @@ class ComicGenPipeline:
                     found = self._set_variant_favorite(target_asset.three_view_asset, variant_id, is_favorited)
                 elif generation_type == "headshot":
                     found = self._set_variant_favorite(target_asset.headshot_asset, variant_id, is_favorited)
+                elif generation_type == "reference_sheet":
+                    found = self._set_variant_favorite(target_asset.reference_sheet, variant_id, is_favorited)
                 else:
-                    # Try all character assets
-                    found = self._set_variant_favorite(target_asset.full_body_asset, variant_id, is_favorited) or \
+                    # Try the canonical sheet first, then all legacy assets.
+                    found = self._set_variant_favorite(target_asset.reference_sheet, variant_id, is_favorited) or \
+                            self._set_variant_favorite(target_asset.full_body_asset, variant_id, is_favorited) or \
                             self._set_variant_favorite(target_asset.three_view_asset, variant_id, is_favorited) or \
                             self._set_variant_favorite(target_asset.headshot_asset, variant_id, is_favorited)
         
@@ -3890,6 +3937,8 @@ class ComicGenPipeline:
             raise ValueError(f"Variant {variant_id} not found")
 
         self._save_data()
+        if asset_is_series_level:
+            self._save_series_data()
         return script
 
     # ============================================================
