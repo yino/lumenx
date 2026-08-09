@@ -1,13 +1,17 @@
 family: seedance
 display_name: "Seedance (即梦)"
-provider: mulerouter
+provider: ark
 routing_prefixes:
   - seedance-2.0-
   - seedance/seedance-
 supported_backends:
+  - ark
   - mulerouter
-default_backend: mulerouter
+default_backend: ark
+backend_env_key: SEEDANCE_PROVIDER_MODE
 credential_sources:
+  ark:
+    - ARK_API_KEY
   mulerouter:
     - MULEROUTER_API_KEY
 supported_modalities:
@@ -16,24 +20,30 @@ supported_modalities:
   - r2v
 docs:
   official_snapshot_ids:
+    - volcengine/seedance-2.0-agent-plan/2026-08-09
     - mulerouter/seedance-2.0/2026-06-03
 transport:
   image_input_mode:
+    ark: ark_image_url
     mulerouter: mulerouter_base64_image
   audio_input_mode:
+    ark: ark_media_url
     mulerouter: mulerouter_audio_url
   reference_video_input_mode:
+    ark: ark_media_url
     mulerouter: mulerouter_video_url
 models:
   - id: seedance/seedance-2.0-video
     display_name: Seedance 2.0
-    description: ByteDance Seedance 2.0 video generation via MuleRouter
+    description: ByteDance Seedance 2.0 video generation via Volcengine Ark or MuleRouter
     status: active
     release_stage: stable
     docs:
       context_hub_doc_ids:
         - mulerouter/seedance-2.0
     runtime:
+      ark:
+        gateway: volcengine-ark
       mulerouter:
         gateway: mulerouter
     modes:

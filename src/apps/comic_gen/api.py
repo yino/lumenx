@@ -41,6 +41,7 @@ from .models import (
     PromptConfig,
     ProviderBackend,
     ProviderRoutingConfig,
+    SeedanceProviderBackend,
     Script,
     Series,
     StoryboardFrame,
@@ -1108,6 +1109,8 @@ class EnvConfig(ProviderRoutingConfig):
     KLING_ACCESS_KEY: Optional[str] = None
     KLING_SECRET_KEY: Optional[str] = None
     VIDU_API_KEY: Optional[str] = None
+    ARK_API_KEY: Optional[str] = None
+    ARK_SEEDANCE_MODEL: Optional[str] = None
     MULEROUTER_API_KEY: Optional[str] = None
     endpoint_overrides: Dict[str, str] = Field(default_factory=dict)
 
@@ -1117,6 +1120,16 @@ def _normalize_provider_mode(value: Optional[str]) -> str:
     if normalized in (ProviderBackend.DASHSCOPE.value, ProviderBackend.VENDOR.value):
         return normalized
     return ProviderBackend.DASHSCOPE.value
+
+
+def _normalize_seedance_provider_mode(value: Optional[str]) -> str:
+    normalized = (value or "").strip().lower()
+    if normalized in (
+        SeedanceProviderBackend.ARK.value,
+        SeedanceProviderBackend.MULEROUTER.value,
+    ):
+        return normalized
+    return SeedanceProviderBackend.ARK.value
 
 
 def get_user_config_path() -> str:
@@ -1249,7 +1262,7 @@ def update_env_config(config: EnvConfig):
                 # Booleans (e.g. OSS_ENABLE) persist as "true"/"false" strings so
                 # they round-trip through os.environ and the .env/config.json store.
                 config_dict[key] = "true" if value else "false"
-            elif isinstance(value, ProviderBackend):
+            elif isinstance(value, (ProviderBackend, SeedanceProviderBackend)):
                 config_dict[key] = value.value
             else:
                 config_dict[key] = value
@@ -2267,6 +2280,24 @@ def cancel_video_task(script_id: str, task_id: str):
     script = pipeline.get_script(script_id)
     task = next(
         (t for t in (script.video_tasks if script else []) if t.id == task_id),
+        None,
+    )
+    if not task:
+        raise HTTPException(status_code=404, detail="Video task not found")
+    return signed_response(task)
+
+
+@app.get("/projects/{script_id}/video_tasks/{task_id}", response_model=VideoTask)
+def get_video_task_status(script_id: str, task_id: str):
+    """Return one persisted video task for storyboard polling.
+
+    ``/tasks/{task_id}`` is reserved for asset-generation tasks. Video tasks
+    live inside their project, so exposing their project-scoped resource keeps
+    polling from confusing a video task id with an asset task id.
+    """
+    script = pipeline.get_script(script_id)
+    task = next(
+        (item for item in (script.video_tasks if script else []) if item.id == task_id),
         None,
     )
     if not task:
@@ -3859,6 +3890,7 @@ SECRET_FIELDS = {
     "KLING_ACCESS_KEY",
     "KLING_SECRET_KEY",
     "VIDU_API_KEY",
+    "ARK_API_KEY",
     "MULEROUTER_API_KEY",
 }
 
@@ -3910,6 +3942,7 @@ def get_env_config():
             "KLING_ACCESS_KEY": _mask_secret(os.getenv("KLING_ACCESS_KEY")),
             "KLING_SECRET_KEY": _mask_secret(os.getenv("KLING_SECRET_KEY")),
             "VIDU_API_KEY": _mask_secret(os.getenv("VIDU_API_KEY")),
+            "ARK_API_KEY": _mask_secret(os.getenv("ARK_API_KEY")),
             "MULEROUTER_API_KEY": _mask_secret(os.getenv("MULEROUTER_API_KEY")),
             # Non-secret config.
             "OSS_BUCKET_NAME": os.getenv("OSS_BUCKET_NAME", ""),
@@ -3920,6 +3953,8 @@ def get_env_config():
             "KLING_PROVIDER_MODE": _normalize_provider_mode(os.getenv("KLING_PROVIDER_MODE")),
             "VIDU_PROVIDER_MODE": _normalize_provider_mode(os.getenv("VIDU_PROVIDER_MODE")),
             "PIXVERSE_PROVIDER_MODE": _normalize_provider_mode(os.getenv("PIXVERSE_PROVIDER_MODE")),
+            "SEEDANCE_PROVIDER_MODE": _normalize_seedance_provider_mode(os.getenv("SEEDANCE_PROVIDER_MODE")),
+            "ARK_SEEDANCE_MODEL": os.getenv("ARK_SEEDANCE_MODEL", ""),
             "endpoint_overrides": endpoint_overrides,
             "secrets_configured": secrets_configured,
         }

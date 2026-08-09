@@ -109,6 +109,11 @@ class ProviderBackend(str, Enum):
     VENDOR = "vendor"
 
 
+class SeedanceProviderBackend(str, Enum):
+    ARK = "ark"
+    MULEROUTER = "mulerouter"
+
+
 class ProviderRoutingConfig(BaseModel):
     KLING_PROVIDER_MODE: ProviderBackend = Field(
         ProviderBackend.DASHSCOPE,
@@ -121,6 +126,10 @@ class ProviderRoutingConfig(BaseModel):
     PIXVERSE_PROVIDER_MODE: ProviderBackend = Field(
         ProviderBackend.DASHSCOPE,
         description="Provider backend for pixverse-* models: dashscope or vendor",
+    )
+    SEEDANCE_PROVIDER_MODE: SeedanceProviderBackend = Field(
+        SeedanceProviderBackend.ARK,
+        description="Provider backend for seedance-* models: ark or mulerouter",
     )
 
 class ImageVariant(BaseModel):

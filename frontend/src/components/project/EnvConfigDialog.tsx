@@ -4,7 +4,7 @@ import { useState, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { X, Save, ChevronDown, ChevronRight, Loader2, Key } from "lucide-react";
 import { useTranslations } from "next-intl";
-import { api, type EnvConfigPayload, type ProviderMode } from "@/lib/api";
+import { api, type EnvConfigPayload, type ProviderMode, type SeedanceProviderMode } from "@/lib/api";
 
 interface EnvConfigDialogProps {
   isOpen: boolean;
@@ -22,9 +22,12 @@ type EnvConfig = EnvConfigPayload & {
   KLING_PROVIDER_MODE: ProviderMode;
   VIDU_PROVIDER_MODE: ProviderMode;
   PIXVERSE_PROVIDER_MODE: ProviderMode;
+  SEEDANCE_PROVIDER_MODE: SeedanceProviderMode;
   KLING_ACCESS_KEY: string;
   KLING_SECRET_KEY: string;
   VIDU_API_KEY: string;
+  ARK_API_KEY: string;
+  ARK_SEEDANCE_MODEL: string;
   MULEROUTER_API_KEY: string;
   MULERUN_CLI_LOGGED_IN?: boolean;
   endpoint_overrides: Record<string, string>;
@@ -32,6 +35,7 @@ type EnvConfig = EnvConfigPayload & {
 
 const ENDPOINT_PROVIDERS = [
   { key: "DASHSCOPE_BASE_URL", label: "DashScope", placeholder: "https://dashscope.aliyuncs.com" },
+  { key: "ARK_BASE_URL", label: "火山方舟 / Agent Plan", placeholder: "https://ark.cn-beijing.volces.com/api/plan/v3" },
   { key: "KLING_BASE_URL", label: "Kling", placeholder: "https://api-beijing.klingai.com/v1" },
   { key: "VIDU_BASE_URL", label: "Vidu", placeholder: "https://api.vidu.cn/ent/v2" },
   { key: "MULEROUTER_BASE_URL", label: "MuleRouter", placeholder: "https://api.mulerouter.ai" },
@@ -47,14 +51,19 @@ const DEFAULT_CONFIG: EnvConfig = {
   KLING_PROVIDER_MODE: "dashscope",
   VIDU_PROVIDER_MODE: "dashscope",
   PIXVERSE_PROVIDER_MODE: "dashscope",
+  SEEDANCE_PROVIDER_MODE: "ark",
   KLING_ACCESS_KEY: "",
   KLING_SECRET_KEY: "",
   VIDU_API_KEY: "",
+  ARK_API_KEY: "",
+  ARK_SEEDANCE_MODEL: "",
   MULEROUTER_API_KEY: "",
   endpoint_overrides: {},
 };
 
 const normalizeProviderMode = (mode?: string): ProviderMode => (mode === "vendor" ? "vendor" : "dashscope");
+const normalizeSeedanceProviderMode = (mode?: string): SeedanceProviderMode =>
+  mode === "mulerouter" ? "mulerouter" : "ark";
 
 const normalizeEnvConfig = (existing: EnvConfig, data?: EnvConfigPayload): EnvConfig => ({
   ...existing,
@@ -62,6 +71,7 @@ const normalizeEnvConfig = (existing: EnvConfig, data?: EnvConfigPayload): EnvCo
   KLING_PROVIDER_MODE: normalizeProviderMode(data?.KLING_PROVIDER_MODE ?? existing.KLING_PROVIDER_MODE),
   VIDU_PROVIDER_MODE: normalizeProviderMode(data?.VIDU_PROVIDER_MODE ?? existing.VIDU_PROVIDER_MODE),
   PIXVERSE_PROVIDER_MODE: normalizeProviderMode(data?.PIXVERSE_PROVIDER_MODE ?? existing.PIXVERSE_PROVIDER_MODE),
+  SEEDANCE_PROVIDER_MODE: normalizeSeedanceProviderMode(data?.SEEDANCE_PROVIDER_MODE ?? existing.SEEDANCE_PROVIDER_MODE),
   endpoint_overrides: data?.endpoint_overrides ?? existing.endpoint_overrides ?? {},
 });
 
@@ -429,10 +439,57 @@ export default function EnvConfigDialog({ isOpen, onClose, isRequired = false }:
                   </div>
                 </div>
 
+                <div className="space-y-3 pt-4 border-t border-glass-border">
+                  <h4 className="text-sm font-medium text-text-secondary">Seedance 2.0 Provider</h4>
+                  <div className="flex flex-wrap gap-2">
+                    <button
+                      type="button"
+                      onClick={() => handleChange("SEEDANCE_PROVIDER_MODE", "ark")}
+                      className={modeButtonClass(config.SEEDANCE_PROVIDER_MODE === "ark")}
+                    >
+                      火山方舟 Agent Plan
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleChange("SEEDANCE_PROVIDER_MODE", "mulerouter")}
+                      className={modeButtonClass(config.SEEDANCE_PROVIDER_MODE === "mulerouter")}
+                    >
+                      MuleRouter
+                    </button>
+                  </div>
+                  {config.SEEDANCE_PROVIDER_MODE === "ark" && (
+                    <div className="space-y-3 bg-input-bg border border-glass-border rounded-lg p-4">
+                      <div>
+                        <label className="block text-xs text-text-secondary mb-1">Agent Plan API Key</label>
+                        <input
+                          type="password"
+                          value={config.ARK_API_KEY}
+                          onChange={(e) => handleChange("ARK_API_KEY", e.target.value)}
+                          placeholder="ARK_API_KEY"
+                          className={inputClass}
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-xs text-text-secondary mb-1">模型名（可选）</label>
+                        <input
+                          type="text"
+                          value={config.ARK_SEEDANCE_MODEL}
+                          onChange={(e) => handleChange("ARK_SEEDANCE_MODEL", e.target.value)}
+                          placeholder="doubao-seedance-2.0"
+                          className={inputClass}
+                        />
+                      </div>
+                      <p className="text-[0.6875rem] text-text-muted">
+                        Agent Plan 使用专属 Key；Base URL 可在下方高级端点中切换。
+                      </p>
+                    </div>
+                  )}
+                </div>
+
                 {/* MuleRun / MuleRouter */}
                 <div className="space-y-3 pt-4 border-t border-glass-border">
                   <h4 className="text-sm font-medium text-text-secondary">MuleRun / MuleRouter</h4>
-                  <p className="text-xs text-text-secondary/60">用于 Seedance 2.0 视频生成和 GPT-Image-2 图片生成</p>
+                  <p className="text-xs text-text-secondary/60">用于 GPT-Image-2，并可作为 Seedance 2.0 备用后端</p>
                   <div>
                     <label className="block text-xs text-text-secondary mb-1">API Key</label>
                     <input

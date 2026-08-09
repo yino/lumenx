@@ -3,7 +3,7 @@
 import { useState, useEffect, useCallback, useRef, type ReactNode } from "react";
 import { Save, Loader2, ChevronDown, ChevronRight, FolderOpen, WifiOff, Copy, Check } from "lucide-react";
 import { useTranslations } from "next-intl";
-import { api, type EnvConfigPayload, type ProviderMode, API_URL } from "@/lib/api";
+import { api, type EnvConfigPayload, type ProviderMode, type SeedanceProviderMode, API_URL } from "@/lib/api";
 import { ASPECT_RATIOS } from "@/store/projectStore";
 import {
   DEFAULT_MODEL_SETTINGS,
@@ -43,9 +43,12 @@ type EnvConfig = EnvConfigPayload & {
   KLING_PROVIDER_MODE: ProviderMode;
   VIDU_PROVIDER_MODE: ProviderMode;
   PIXVERSE_PROVIDER_MODE: ProviderMode;
+  SEEDANCE_PROVIDER_MODE: SeedanceProviderMode;
   KLING_ACCESS_KEY: string;
   KLING_SECRET_KEY: string;
   VIDU_API_KEY: string;
+  ARK_API_KEY: string;
+  ARK_SEEDANCE_MODEL: string;
   MULEROUTER_API_KEY: string;
   MULERUN_CLI_LOGGED_IN?: boolean;
   endpoint_overrides: Record<string, string>;
@@ -53,6 +56,7 @@ type EnvConfig = EnvConfigPayload & {
 
 const ENDPOINT_PROVIDERS = [
   { key: "DASHSCOPE_BASE_URL", label: "DashScope", placeholder: "https://dashscope.aliyuncs.com" },
+  { key: "ARK_BASE_URL", label: "火山方舟 / Agent Plan", placeholder: "https://ark.cn-beijing.volces.com/api/plan/v3" },
   { key: "KLING_BASE_URL", label: "Kling", placeholder: "https://api-beijing.klingai.com/v1" },
   { key: "VIDU_BASE_URL", label: "Vidu", placeholder: "https://api.vidu.cn/ent/v2" },
   { key: "MULEROUTER_BASE_URL", label: "MuleRouter", placeholder: "https://api.mulerouter.ai" },
@@ -69,14 +73,19 @@ const DEFAULT_CONFIG: EnvConfig = {
   KLING_PROVIDER_MODE: "dashscope",
   VIDU_PROVIDER_MODE: "dashscope",
   PIXVERSE_PROVIDER_MODE: "dashscope",
+  SEEDANCE_PROVIDER_MODE: "ark",
   KLING_ACCESS_KEY: "",
   KLING_SECRET_KEY: "",
   VIDU_API_KEY: "",
+  ARK_API_KEY: "",
+  ARK_SEEDANCE_MODEL: "",
   MULEROUTER_API_KEY: "",
   endpoint_overrides: {},
 };
 
 const normalizeProviderMode = (mode?: string): ProviderMode => (mode === "vendor" ? "vendor" : "dashscope");
+const normalizeSeedanceProviderMode = (mode?: string): SeedanceProviderMode =>
+  mode === "mulerouter" ? "mulerouter" : "ark";
 
 const normalizeEnvConfig = (existing: EnvConfig, data?: EnvConfigPayload): EnvConfig => ({
   ...existing,
@@ -84,6 +93,7 @@ const normalizeEnvConfig = (existing: EnvConfig, data?: EnvConfigPayload): EnvCo
   KLING_PROVIDER_MODE: normalizeProviderMode(data?.KLING_PROVIDER_MODE ?? existing.KLING_PROVIDER_MODE),
   VIDU_PROVIDER_MODE: normalizeProviderMode(data?.VIDU_PROVIDER_MODE ?? existing.VIDU_PROVIDER_MODE),
   PIXVERSE_PROVIDER_MODE: normalizeProviderMode(data?.PIXVERSE_PROVIDER_MODE ?? existing.PIXVERSE_PROVIDER_MODE),
+  SEEDANCE_PROVIDER_MODE: normalizeSeedanceProviderMode(data?.SEEDANCE_PROVIDER_MODE ?? existing.SEEDANCE_PROVIDER_MODE),
   endpoint_overrides: data?.endpoint_overrides ?? existing.endpoint_overrides ?? {},
 });
 
@@ -727,6 +737,39 @@ export default function SettingsPage() {
               <div className="mt-3">
                 <FieldLabel>VIDU_API_KEY *</FieldLabel>
                 <KeyField value={config.VIDU_API_KEY} onChange={(v) => handleChange("VIDU_API_KEY", v)} placeholder="Vidu API Key" />
+              </div>
+            )}
+          </FormRow>
+
+          <FormRow label="Seedance 2.0" hint="国内官方接口支持 Agent Plan，也可切换回 MuleRouter。">
+            <ModeSegment
+              value={config.SEEDANCE_PROVIDER_MODE}
+              onChange={(v) => handleChange("SEEDANCE_PROVIDER_MODE", v)}
+              options={[
+                { id: "ark", label: "火山方舟 Agent Plan" },
+                { id: "mulerouter", label: "MuleRouter" },
+              ]}
+            />
+            {config.SEEDANCE_PROVIDER_MODE === "ark" && (
+              <div className="space-y-3 mt-3">
+                <div>
+                  <FieldLabel>ARK_API_KEY</FieldLabel>
+                  <KeyField
+                    value={config.ARK_API_KEY}
+                    onChange={(v) => handleChange("ARK_API_KEY", v)}
+                    placeholder="Agent Plan API Key"
+                    status={config.ARK_API_KEY?.trim() ? { kind: "ok", text: t("filled") } : { kind: "warn", text: t("notConfiguredUnavailable") }}
+                  />
+                </div>
+                <div>
+                  <FieldLabel>ARK_SEEDANCE_MODEL（可选）</FieldLabel>
+                  <input
+                    value={config.ARK_SEEDANCE_MODEL}
+                    onChange={(e) => handleChange("ARK_SEEDANCE_MODEL", e.target.value)}
+                    placeholder="doubao-seedance-2.0"
+                    className={settingsInputClass}
+                  />
+                </div>
               </div>
             )}
           </FormRow>

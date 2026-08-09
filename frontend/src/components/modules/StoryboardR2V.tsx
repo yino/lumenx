@@ -909,7 +909,7 @@ export default function StoryboardR2V() {
                     videoConfig.duration,
                     undefined, // seed
                     videoConfig.resolution,
-                    false, // generateAudio
+                    true, // generateAudio
                     "", // audioUrl
                     videoConfig.promptExtend,
                     videoConfig.negativePrompt,
@@ -982,7 +982,7 @@ export default function StoryboardR2V() {
                     videoConfig.duration,
                     undefined, // seed
                     videoConfig.resolution,
-                    false, // generateAudio
+                    true, // generateAudio
                     "", // audioUrl
                     videoConfig.promptExtend,
                     videoConfig.negativePrompt,
@@ -1118,7 +1118,7 @@ export default function StoryboardR2V() {
                         params?.duration ?? videoConfig.duration,
                         params?.seed,
                         params?.resolution ?? videoConfig.resolution,
-                        false,
+                        true,
                         "",
                         params?.promptExtend ?? videoConfig.promptExtend,
                         params?.negativePrompt ?? videoConfig.negativePrompt,
@@ -1153,7 +1153,7 @@ export default function StoryboardR2V() {
                     params?.duration ?? videoConfig.duration,
                     params?.seed,
                     params?.resolution ?? videoConfig.resolution,
-                    false,
+                    true,
                     "",
                     params?.promptExtend ?? videoConfig.promptExtend,
                     params?.negativePrompt ?? videoConfig.negativePrompt,
@@ -1261,6 +1261,8 @@ export default function StoryboardR2V() {
 
     // Poll for task completion (both T2I and video)
     useEffect(() => {
+        const projectId = currentProject?.id;
+        if (!projectId) return;
         const processingShots = shots.filter(s =>
             (s.videoTaskId && (s.videoStatus === "processing" || s.videoStatus === "pending")) ||
             (s.t2iTaskId && (s.t2iStatus === "processing" || s.t2iStatus === "pending"))
@@ -1272,7 +1274,7 @@ export default function StoryboardR2V() {
                 // Poll video task
                 if (shot.videoTaskId && (shot.videoStatus === "processing" || shot.videoStatus === "pending")) {
                     try {
-                        const status = await api.getTaskStatus(shot.videoTaskId);
+                        const status = await api.getVideoTaskStatus(projectId, shot.videoTaskId);
                         if (status.status === "completed" && status.video_url) {
                             setShots(prev => prev.map(s =>
                                 s.id === shot.id ? { ...s, videoStatus: "completed", videoUrl: status.video_url } : s
@@ -1284,7 +1286,6 @@ export default function StoryboardR2V() {
                             // Sync shot.videoUrl from backend response too: if a sibling
                             // task in the same batch completed first (so backend picked
                             // that one as active) the hero stays in sync.
-                            const projectId = currentProject?.id;
                             if (projectId) {
                                 api.autoSelectLatestVideo(projectId, shot.id)
                                     .then(updated => {
@@ -1339,7 +1340,7 @@ export default function StoryboardR2V() {
         }, 5000);
 
         return () => clearInterval(interval);
-    }, [shots, persistWorkbench]);
+    }, [shots, persistWorkbench, currentProject?.id]);
 
     // Insert asset tag from drawer into target shot
     const insertAssetFromDrawer = useCallback((type: string, name: string) => {
@@ -2278,4 +2279,3 @@ export default function StoryboardR2V() {
         </div>
     );
 }
-

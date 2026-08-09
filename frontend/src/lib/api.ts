@@ -36,6 +36,7 @@ const getApiUrl = (): string => {
 export const API_URL = getApiUrl();
 
 export type ProviderMode = "dashscope" | "vendor";
+export type SeedanceProviderMode = "ark" | "mulerouter";
 
 /**
  * PR-3g #3 · TTS voice metadata returned by GET /voices.
@@ -85,9 +86,12 @@ export interface EnvConfigPayload {
     KLING_PROVIDER_MODE?: ProviderMode;
     VIDU_PROVIDER_MODE?: ProviderMode;
     PIXVERSE_PROVIDER_MODE?: ProviderMode;
+    SEEDANCE_PROVIDER_MODE?: SeedanceProviderMode;
     KLING_ACCESS_KEY?: string;
     KLING_SECRET_KEY?: string;
     VIDU_API_KEY?: string;
+    ARK_API_KEY?: string;
+    ARK_SEEDANCE_MODEL?: string;
     endpoint_overrides?: Record<string, string>;
     // Secrets from GET are masked (bullets + last 4 chars). This map reports
     // which credential fields are actually configured on the backend.
@@ -522,6 +526,13 @@ export const api = {
 
     getTaskStatus: async (taskId: string) => {
         const res = await axios.get(`${API_URL}/tasks/${taskId}`);
+        return res.data;
+    },
+
+    getVideoTaskStatus: async (scriptId: string, taskId: string) => {
+        const res = await axios.get(
+            `${API_URL}/projects/${scriptId}/video_tasks/${taskId}`,
+        );
         return res.data;
     },
 

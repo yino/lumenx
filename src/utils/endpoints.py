@@ -3,6 +3,9 @@ import os
 # Provider endpoint registry: {provider_key: default_base_url}
 PROVIDER_DEFAULTS = {
     "DASHSCOPE": "https://dashscope.aliyuncs.com",
+    # Agent Plan endpoint. Standard Ark users can override this with
+    # ARK_BASE_URL=https://ark.cn-beijing.volces.com/api/v3.
+    "ARK": "https://ark.cn-beijing.volces.com/api/plan/v3",
     "KLING": "https://api-beijing.klingai.com/v1",
     "VIDU": "https://api.vidu.cn/ent/v2",
     "MULEROUTER": "https://api.mulerouter.ai",

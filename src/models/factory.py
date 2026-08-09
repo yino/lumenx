@@ -16,6 +16,10 @@ class ModelFactory:
             from .vidu import ViduModel
             return ViduModel(config.get('model') or {})
         elif model_name in ('seedance', 'seedance-2.0'):
+            from ..utils.provider_registry import resolve_provider_backend
+            if resolve_provider_backend('seedance-2.0-i2v') == 'ark':
+                from .ark_seedance import ArkSeedanceVideoModel
+                return ArkSeedanceVideoModel(config.get('model') or {})
             from .mulerouter import MuleRouterVideoModel
             return MuleRouterVideoModel(config.get('model') or {})
         else:

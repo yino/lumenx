@@ -1,4 +1,8 @@
-from src.apps.comic_gen.models import ProviderBackend, ProviderRoutingConfig
+from src.apps.comic_gen.models import (
+    ProviderBackend,
+    ProviderRoutingConfig,
+    SeedanceProviderBackend,
+)
 from src.utils.provider_registry import ProviderFamilyConfig, ProviderRegistry, get_default_provider_registry
 
 
@@ -55,6 +59,15 @@ class TestProviderRegistryRouting:
 
         assert registry.resolve_backend("kling-v1", env=env) == "dashscope"
 
+    def test_seedance_defaults_to_ark_and_can_use_mulerouter(self):
+        registry = get_default_provider_registry()
+
+        assert registry.resolve_backend("seedance-2.0-i2v", env={}) == "ark"
+        assert registry.resolve_backend(
+            "seedance-2.0-r2v",
+            env={"SEEDANCE_PROVIDER_MODE": "mulerouter"},
+        ) == "mulerouter"
+
     def test_future_pixverse_family_can_be_registered_without_resolver_changes(self):
         registry = ProviderRegistry()
         registry.register_family(
@@ -99,6 +112,7 @@ class TestProviderRoutingConfig:
         assert config.KLING_PROVIDER_MODE == ProviderBackend.DASHSCOPE
         assert config.VIDU_PROVIDER_MODE == ProviderBackend.DASHSCOPE
         assert config.PIXVERSE_PROVIDER_MODE == ProviderBackend.DASHSCOPE
+        assert config.SEEDANCE_PROVIDER_MODE == SeedanceProviderBackend.ARK
 
     def test_provider_modes_accept_vendor_override(self):
         config = ProviderRoutingConfig(
@@ -110,3 +124,8 @@ class TestProviderRoutingConfig:
         assert config.KLING_PROVIDER_MODE == ProviderBackend.VENDOR
         assert config.VIDU_PROVIDER_MODE == ProviderBackend.VENDOR
         assert config.PIXVERSE_PROVIDER_MODE == ProviderBackend.VENDOR
+
+    def test_seedance_provider_mode_accepts_mulerouter_override(self):
+        config = ProviderRoutingConfig(SEEDANCE_PROVIDER_MODE="mulerouter")
+
+        assert config.SEEDANCE_PROVIDER_MODE == SeedanceProviderBackend.MULEROUTER

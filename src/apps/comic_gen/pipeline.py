@@ -101,6 +101,7 @@ class ComicGenPipeline:
         # Cached model instances (lazily initialized)
         self._kling_model = None
         self._vidu_model = None
+        self._ark_seedance_video_model = None
         self._mulerouter_video_model = None
 
         # Pre-download Demucs model in background so first dub request is fast
@@ -3263,8 +3264,44 @@ class ComicGenPipeline:
             use_mulerouter = backend == "mulerouter" and (
                 model_name_lower.startswith("seedance")
             )
+            use_ark_seedance = backend == "ark" and (
+                model_name_lower.startswith("seedance")
+            )
 
-            if use_mulerouter:
+            if use_ark_seedance:
+                if self._ark_seedance_video_model is None:
+                    from ...models.ark_seedance import ArkSeedanceVideoModel
+                    self._ark_seedance_video_model = ArkSeedanceVideoModel({})
+
+                def _capture_ark_provider_ids(
+                    provider_name: str,
+                    provider_task_id: Optional[str],
+                    provider_request_id: Optional[str],
+                ) -> None:
+                    task.provider_name = provider_name
+                    task.provider_task_id = provider_task_id
+                    task.provider_request_id = provider_request_id
+                    try:
+                        self._save_data()
+                    except Exception:
+                        logger.warning("Failed to persist Ark provider IDs mid-flight")
+
+                video_path, _ = self._ark_seedance_video_model.generate(
+                    prompt=task.prompt,
+                    output_path=output_path,
+                    img_url=img_url,
+                    img_path=img_path,
+                    duration=task.duration,
+                    resolution=task.resolution,
+                    aspect_ratio=task.ratio or "16:9",
+                    seed=task.seed,
+                    watermark=bool(task.watermark) if task.watermark is not None else False,
+                    generate_audio=final_generate_audio,
+                    generation_mode=task.generation_mode,
+                    ref_image_urls=task.reference_image_urls if task.generation_mode == "r2v" else None,
+                    on_provider_ids=_capture_ark_provider_ids,
+                )
+            elif use_mulerouter:
                 if self._mulerouter_video_model is None:
                     from ...models.mulerouter import MuleRouterVideoModel
                     self._mulerouter_video_model = MuleRouterVideoModel({})

@@ -278,7 +278,11 @@ def resolve_media_input(
     )
     local_path = resolve_local_media_path(ref, project_root=project_root)
 
-    if mode in {"dashscope_multimodal_message", "dashscope_image_to_video"}:
+    if mode in {
+        "dashscope_multimodal_message",
+        "dashscope_image_to_video",
+        "ark_image_url",
+    }:
         return _resolve_dashscope_image(
             ref,
             ref_type,
@@ -299,13 +303,16 @@ def resolve_media_input(
         mode.startswith("vidu_vendor_")
         or mode.startswith("kling_vendor_")
         or mode.startswith("pixverse_vendor_")
+        or mode == "ark_media_url"
     ):
         if mode.startswith("vidu_vendor_"):
             provider_label = "Vidu"
         elif mode.startswith("kling_vendor_"):
             provider_label = "Kling"
-        else:
+        elif mode.startswith("pixverse_vendor_"):
             provider_label = "Pixverse"
+        else:
+            provider_label = "Ark"
         return _resolve_vendor_url_mode(
             ref,
             ref_type,

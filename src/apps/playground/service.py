@@ -40,6 +40,7 @@ class PlaygroundService:
         self._wanx_image_model = None
         self._kling_model = None
         self._vidu_model = None
+        self._ark_seedance_video_model = None
         self._mulerouter_video_model = None
         self._mulerouter_image_model = None
 
@@ -277,7 +278,11 @@ class PlaygroundService:
 
             try:
                 if model_lower.startswith("seedance"):
-                    self._generate_video_mulerouter(gen, out_path)
+                    from ...utils.provider_registry import resolve_provider_backend
+                    if resolve_provider_backend(gen.model_id) == "ark":
+                        self._generate_video_ark(gen, out_path)
+                    else:
+                        self._generate_video_mulerouter(gen, out_path)
                 elif model_lower.startswith("kling"):
                     self._generate_video_kling(gen, out_path)
                 elif model_lower.startswith("vidu") or model_lower.startswith("viduq"):
@@ -367,6 +372,35 @@ class PlaygroundService:
             kwargs["ref_image_urls"] = list(gen.input_media)
 
         self._mulerouter_video_model.generate(
+            prompt=gen.prompt,
+            output_path=out_path,
+            img_url=img_url,
+            img_path=img_path,
+            **kwargs,
+        )
+
+    def _generate_video_ark(self, gen: PlaygroundGeneration, out_path: str) -> None:
+        """Delegate Seedance generation to the official Volcengine Ark API."""
+        from ...models.ark_seedance import ArkSeedanceVideoModel
+
+        if self._ark_seedance_video_model is None:
+            self._ark_seedance_video_model = ArkSeedanceVideoModel({})
+
+        params = gen.parameters
+        img_path, img_url = self._resolve_first_input_media(gen)
+        kwargs = {
+            "duration": params.get("duration", 5),
+            "resolution": params.get("resolution", "720p"),
+            "aspect_ratio": params.get("aspect_ratio", params.get("ratio", "16:9")),
+            "seed": params.get("seed"),
+            "watermark": params.get("watermark", False),
+            "generate_audio": params.get("generate_audio", False),
+            "generation_mode": gen.mode.value,
+        }
+        if gen.mode == PlaygroundMode.R2V and gen.input_media:
+            kwargs["ref_image_urls"] = list(gen.input_media)
+
+        self._ark_seedance_video_model.generate(
             prompt=gen.prompt,
             output_path=out_path,
             img_url=img_url,
