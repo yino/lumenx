@@ -112,6 +112,7 @@ def test_local_only_pipeline_flow_without_oss(monkeypatch):
         seed: int = None,
         shot_type: str = "single",
         extra_headers=None,
+        on_provider_ids=None,
     ) -> str:
         captured["img_url"] = img_url
         captured["model_name"] = model_name

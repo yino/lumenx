@@ -46,7 +46,7 @@ interface SeriesSidebarProps {
   onAddEpisode: () => void;
   onAddEpisodeKeyDown: (e: React.KeyboardEvent) => void;
   // Actions
-  onOpenModelSettings: () => void;
+  onOpenModelSettings?: () => void;
   onOpenPromptConfig: () => void;
   onOpenImportAssets: () => void;
 }
@@ -398,13 +398,15 @@ export default function SeriesSidebar({
           <MessageSquareCode size={16} className="group-hover:text-purple-400 transition-colors" />
           <span className="text-sm">{t("promptConfig")}</span>
         </button>
-        <button
-          onClick={onOpenModelSettings}
-          className="w-full flex items-center gap-3 px-3 py-2 rounded-lg text-text-secondary hover:text-foreground hover:bg-hover-bg transition-colors group"
-        >
-          <Settings size={16} className="group-hover:text-foreground transition-colors" />
-          <span className="text-sm">{t("genSettings")}</span>
-        </button>
+        {onOpenModelSettings && (
+          <button
+            onClick={onOpenModelSettings}
+            className="w-full flex items-center gap-3 px-3 py-2 rounded-lg text-text-secondary hover:text-foreground hover:bg-hover-bg transition-colors group"
+          >
+            <Settings size={16} className="group-hover:text-foreground transition-colors" />
+            <span className="text-sm">{t("genSettings")}</span>
+          </button>
+        )}
       </div>
     </motion.aside>
   );

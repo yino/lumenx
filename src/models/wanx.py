@@ -27,7 +27,7 @@ class WanxModel(VideoGenModel):
 
     @property
     def api_key(self):
-        api_key = os.getenv("DASHSCOPE_API_KEY")
+        api_key = self.config.get("api_key") or os.getenv("DASHSCOPE_API_KEY")
         if not api_key:
             logger.warning("Dashscope API Key not found in config or environment variables.")
         return api_key
@@ -272,6 +272,9 @@ class WanxModel(VideoGenModel):
             img_url = kwargs.get('img_url')
             uploader = OSSImageUploader()
             extra_media_headers: Dict[str, str] = {}
+            provider_id_options = {}
+            if callable(kwargs.get('on_provider_ids')):
+                provider_id_options['on_provider_ids'] = kwargs['on_provider_ids']
 
             # Use HTTP API for wan2.7-i2v, wan2.6-i2v, wan2.5-i2v, or wan2.6-r2v
             if final_model_name in ['wan2.7-i2v', 'wan2.6-i2v', 'wan2.6-i2v-flash', 'wan2.5-i2v']:
@@ -335,6 +338,7 @@ class WanxModel(VideoGenModel):
                     seed=seed,
                     shot_type=shot_type,
                     extra_headers=extra_media_headers,
+                    **provider_id_options,
                 )
             elif final_model_name in ('wan2.6-r2v', 'wan2.7-r2v'):
                 # R2V generation
@@ -375,6 +379,7 @@ class WanxModel(VideoGenModel):
                     shot_type=shot_type,
                     seed=seed,
                     extra_headers=extra_media_headers,
+                    **provider_id_options,
                 )
             elif final_model_name in ('wan2.7-t2v', 'wan2.7-videoedit'):
                 # Wan2.7 T2V and VideoEdit via HTTP API
@@ -503,7 +508,7 @@ class WanxModel(VideoGenModel):
                     watermark=watermark,
                     audio_setting=kwargs.get('audio_setting'),
                     extra_headers=extra_media_headers,
-                    on_provider_ids=kwargs.get('on_provider_ids'),
+                    **provider_id_options,
                 )
             else:
                 # Use SDK for other models
@@ -526,7 +531,8 @@ class WanxModel(VideoGenModel):
                     watermark=watermark,
                     seed=seed,
                     camera_motion=camera_motion,
-                    subject_motion=subject_motion
+                    subject_motion=subject_motion,
+                    **provider_id_options,
                 )
 
             api_end_time = time.time()
@@ -549,7 +555,8 @@ class WanxModel(VideoGenModel):
                                   negative_prompt: str = None, audio_url: str = None,
                                   watermark: bool = False, seed: int = None,
                                   shot_type: str = "single",
-                                  extra_headers: Optional[Mapping[str, str]] = None) -> str:
+                                  extra_headers: Optional[Mapping[str, str]] = None,
+                                  on_provider_ids=None) -> str:
         """Generate video using Wan I2V (2.5/2.6/2.7) via HTTP API (asynchronous with polling)."""
         base = get_provider_base_url("DASHSCOPE")
         create_url = f"{base}/api/v1/services/aigc/video-generation/video-synthesis"
@@ -608,10 +615,13 @@ class WanxModel(VideoGenModel):
         
         result = response.json()
         task_id = result.get('output', {}).get('task_id')
+        request_id = result.get('request_id')
         if not task_id:
             raise RuntimeError(f"No task_id in response: {result}")
         
         logger.info(f"Task created: {task_id}")
+        if callable(on_provider_ids):
+            on_provider_ids("dashscope", task_id, request_id)
         
         # Step 2: Poll for task completion
         poll_url = f"{base}/api/v1/tasks/{task_id}"
@@ -662,7 +672,8 @@ class WanxModel(VideoGenModel):
                                   size: Optional[str] = "1280*720", ratio: Optional[str] = None,
                                   duration: int = 5, audio: bool = True,
                                   shot_type: str = "multi", seed: int = None,
-                                  extra_headers: Optional[Mapping[str, str]] = None) -> str:
+                                  extra_headers: Optional[Mapping[str, str]] = None,
+                                  on_provider_ids=None) -> str:
         """Generate video using Wan R2V (2.6/2.7) via HTTP API (asynchronous with polling)."""
         base = get_provider_base_url("DASHSCOPE")
         create_url = f"{base}/api/v1/services/aigc/video-generation/video-synthesis"
@@ -714,10 +725,13 @@ class WanxModel(VideoGenModel):
         
         result = response.json()
         task_id = result.get('output', {}).get('task_id')
+        request_id = result.get('request_id')
         if not task_id:
             raise RuntimeError(f"No task_id in response: {result}")
         
         logger.info(f"Task created: {task_id}")
+        if callable(on_provider_ids):
+            on_provider_ids("dashscope", task_id, request_id)
         
         # Step 2: Poll for task completion
         poll_url = f"{base}/api/v1/tasks/{task_id}"
@@ -843,10 +857,7 @@ class WanxModel(VideoGenModel):
         # running. Wrap in try/except so a buggy callback can't kill the
         # whole generation flow.
         if on_provider_ids is not None:
-            try:
-                on_provider_ids("dashscope", task_id, request_id)
-            except Exception as cb_err:
-                logger.warning(f"on_provider_ids callback failed: {cb_err}")
+            on_provider_ids("dashscope", task_id, request_id)
 
         # Step 2: Poll for task completion
         poll_url = f"{base}/api/v1/tasks/{task_id}"
@@ -896,7 +907,8 @@ class WanxModel(VideoGenModel):
     def _generate_sdk(self, prompt: str, model_name: str, img_url: str = None, size: str = "1280*720",
                       duration: int = 5, prompt_extend: bool = True, negative_prompt: str = None,
                       audio_url: str = None, watermark: bool = False, seed: int = None,
-                      camera_motion: str = None, subject_motion: str = None) -> str:
+                      camera_motion: str = None, subject_motion: str = None,
+                      on_provider_ids=None) -> str:
         """Generate video using Dashscope SDK (for older models)."""
         # Prepare arguments
         call_args = {
@@ -934,6 +946,9 @@ class WanxModel(VideoGenModel):
         
         task_id = rsp.output.task_id
         logger.info(f"Task submitted. Task ID: {task_id}")
+        request_id = getattr(rsp, "request_id", None)
+        if callable(on_provider_ids):
+            on_provider_ids("dashscope", task_id, request_id)
         
         # Wait for completion
         rsp = VideoSynthesis.wait(rsp)

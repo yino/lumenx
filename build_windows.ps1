@@ -14,6 +14,9 @@ if (-not (Test-Path "frontend")) {
 
 Push-Location frontend
 
+# Force the static desktop UI variant at build time.
+$env:NEXT_PUBLIC_DEPLOYMENT_MODE = "desktop"
+
 # Check for npm or yarn
 if (Get-Command yarn -ErrorAction SilentlyContinue) {
     Write-Host "   Using yarn to install dependencies..."
@@ -114,7 +117,8 @@ $pyinstallerArgs = @(
     "--name", "TronComic",
     "--windowed",
     "--add-data", "static;static",
-    "--add-data", "src;src",
+    "--add-data", "src/apps/comic_gen/style_presets.json;src/apps/comic_gen",
+    "--add-data", "config/model_catalog/generated/model_catalog.json;config/model_catalog/generated",
     "--add-binary", "bin\ffmpeg.exe;.",
     "--exclude-module", "uvloop",
     "--hidden-import=uvicorn.logging",
@@ -165,7 +169,8 @@ if ($iconParam) {
         "--windowed",
         $iconParam,
         "--add-data", "static;static",
-        "--add-data", "src;src",
+        "--add-data", "src/apps/comic_gen/style_presets.json;src/apps/comic_gen",
+        "--add-data", "config/model_catalog/generated/model_catalog.json;config/model_catalog/generated",
         "--add-binary", "bin\ffmpeg.exe;.",
         "--exclude-module", "uvloop",
         "--hidden-import=uvicorn.logging",
@@ -216,6 +221,13 @@ if (-not (Test-Path "dist_windows")) {
     New-Item -ItemType Directory -Path dist_windows -Force | Out-Null
 }
 Copy-Item -Path dist\* -Destination dist_windows\ -Recurse -Force
+
+Write-Host "7.5. Verifying desktop artifact security..."
+python scripts/verify_desktop_artifact.py "dist_windows\TronComic.exe"
+if ($LASTEXITCODE -ne 0) {
+    Write-Host "Desktop artifact security verification failed" -ForegroundColor Red
+    exit $LASTEXITCODE
+}
 
 Write-Host "======================================"
 Write-Host "Packaging complete!" -ForegroundColor Green

@@ -3,6 +3,7 @@
 import { useState, useEffect } from "react";
 import EnvConfigDialog from "@/components/project/EnvConfigDialog";
 import { api } from "@/lib/api";
+import { IS_CLOUD_DEPLOYMENT } from "@/lib/deployment";
 
 export default function EnvConfigChecker() {
   const [isEnvDialogOpen, setIsEnvDialogOpen] = useState(false);
@@ -10,12 +11,15 @@ export default function EnvConfigChecker() {
   const [hasChecked, setHasChecked] = useState(false);
 
   useEffect(() => {
+    if (IS_CLOUD_DEPLOYMENT) return;
     // 只在客户端执行，且只检查一次
     if (typeof window === 'undefined' || hasChecked) return;
     
     checkEnvConfig();
     setHasChecked(true);
   }, [hasChecked]);
+
+  if (IS_CLOUD_DEPLOYMENT) return null;
 
   const checkEnvConfig = async () => {
     try {

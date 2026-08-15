@@ -1,8 +1,8 @@
 'use client';
 
-import { useEffect, useCallback, useRef } from 'react';
+import { useEffect, useCallback, useRef, useState } from 'react';
 import { useTranslations } from 'next-intl';
-import { Sparkles } from 'lucide-react';
+import { AlertCircle, Clock3, Coins, Sparkles } from 'lucide-react';
 import ModeSelector from './ModeSelector';
 import ModelSelector from './ModelSelector';
 import MediaInput from './MediaInput';
@@ -10,7 +10,14 @@ import PromptInput from './PromptInput';
 import ParameterBar from './ParameterBar';
 import ResultGallery from './ResultGallery';
 import { usePlaygroundStore, type PlaygroundMode, type PlaygroundGeneration, type QueuedRequest } from './usePlaygroundStore';
-import { playgroundApi, type PlaygroundGenerationResponse } from '@/lib/api';
+import {
+  getSafeApiError,
+  playgroundApi,
+  userTicketApi,
+  type PlaygroundGenerationResponse,
+  type UserTicketWallet,
+} from '@/lib/api';
+import { IS_CLOUD_DEPLOYMENT } from '@/lib/deployment';
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -43,6 +50,8 @@ function toGeneration(resp: PlaygroundGenerationResponse): PlaygroundGeneration 
     id: resp.id,
     mode: resp.mode as PlaygroundMode,
     model_id: resp.model_id,
+    actual_model_name: resp.actual_model_name,
+    actual_model_id: resp.actual_model_id,
     prompt: resp.prompt,
     negative_prompt: resp.negative_prompt,
     input_media: resp.input_media,
@@ -50,14 +59,24 @@ function toGeneration(resp: PlaygroundGenerationResponse): PlaygroundGeneration 
     batch_size: resp.batch_size,
     outputs: resp.outputs.map((o) => ({
       id: o.id,
-      media_path: o.media_path,
+      media_reference: o.media_reference,
+      media_id: o.media_id,
+      media_url: o.media_url,
       media_type: o.media_type as 'image' | 'video',
       thumbnail_path: o.thumbnail_path,
       saved_to_library: o.saved_to_library,
     })),
     status: resp.status as PlaygroundGeneration['status'],
+    raw_status: resp.raw_status,
+    status_zh: resp.status_zh,
+    cancellation_requested: resp.cancellation_requested,
+    support_review: resp.support_review,
+    support_review_reason: resp.support_review_reason,
     error: resp.error,
     created_at: resp.created_at,
+    quoted_microtickets: resp.quoted_microtickets,
+    quoted_tickets: resp.quoted_tickets,
+    tokens_per_ticket: resp.tokens_per_ticket,
   };
 }
 
@@ -88,10 +107,22 @@ export default function PlaygroundPage() {
   const maxConcurrent = usePlaygroundStore((s) => s.maxConcurrent);
 
   const pollTimers = useRef<Map<string, ReturnType<typeof setInterval>>>(new Map());
+  const [wallet, setWallet] = useState<UserTicketWallet | null>(null);
+  const [submitError, setSubmitError] = useState<string | null>(null);
+
+  const refreshWallet = useCallback(async () => {
+    if (!IS_CLOUD_DEPLOYMENT) return;
+    try {
+      setWallet(await userTicketApi.getWallet());
+    } catch {
+      // A wallet refresh must not interrupt the active creative workflow.
+    }
+  }, []);
 
   // ─── Fetch initial data on mount ───────────────────────────────────────────
 
   useEffect(() => {
+    void refreshWallet();
     playgroundApi.getHistory().then((items) => {
       setHistory(items.map(toGeneration));
     }).catch((err) => {
@@ -109,6 +140,7 @@ export default function PlaygroundPage() {
           default_mode: t.default_mode as PlaygroundMode | undefined,
           default_model_id: t.default_model_id,
           default_parameters: t.default_parameters,
+          version: t.version,
           created_at: t.created_at,
           updated_at: t.updated_at,
         }))
@@ -117,7 +149,7 @@ export default function PlaygroundPage() {
       console.error('[Playground] Failed to fetch templates:', err);
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [refreshWallet]);
 
   // ─── Cleanup poll timers ───────────────────────────────────────────────────
 
@@ -146,6 +178,7 @@ export default function PlaygroundPage() {
         if (isTerminal) {
           clearInterval(timer);
           pollTimers.current.delete(generationId);
+          void refreshWallet();
         }
       } catch (err) {
         console.error('[Playground] Poll failed for', generationId, err);
@@ -155,12 +188,13 @@ export default function PlaygroundPage() {
     }, POLL_INTERVAL);
 
     pollTimers.current.set(generationId, timer);
-  }, [updateGeneration]);
+  }, [refreshWallet, updateGeneration]);
 
   // ─── Generate handler — enqueue a request; the dispatcher runs it ──────────
 
   const handleGenerate = useCallback(() => {
     if (!prompt.trim()) return;
+    setSubmitError(null);
     // Auto-detect i2i: t2i + reference images -> i2i
     const effectiveMode = (mode === 't2i' && inputMedia.length > 0) ? 'i2i' : mode;
     enqueueRequest({
@@ -180,7 +214,7 @@ export default function PlaygroundPage() {
     try {
       const resp = await playgroundApi.generate({
         mode: req.mode,
-        model_id: req.modelId,
+        model_id: IS_CLOUD_DEPLOYMENT ? undefined : req.modelId,
         prompt: req.prompt,
         negative_prompt: req.negativePrompt || undefined,
         input_media: req.inputMedia.length > 0 ? req.inputMedia : undefined,
@@ -190,14 +224,16 @@ export default function PlaygroundPage() {
       const gen = toGeneration(resp);
       startGeneration(gen);
       removeFromQueue(req.id);
+      void refreshWallet();
       if (gen.status !== 'completed' && gen.status !== 'failed') {
         startPolling(gen.id);
       }
     } catch (err) {
       console.error('[Playground] Dispatch failed:', err);
+      setSubmitError(getSafeApiError(err).message);
       removeFromQueue(req.id);
     }
-  }, [startGeneration, removeFromQueue, startPolling]);
+  }, [refreshWallet, startGeneration, removeFromQueue, startPolling]);
 
   // Pump: dispatch pending requests up to the concurrency limit.
   const pump = useCallback(() => {
@@ -233,7 +269,7 @@ export default function PlaygroundPage() {
       <header className="flex shrink-0 items-center justify-between border-b border-border-subtle px-7 py-5">
         <div className="flex flex-col gap-1">
           <span className="font-mono text-[0.625rem] font-medium uppercase tracking-[0.2em] text-text-muted">
-            FREEFORM STUDIO
+            自由创作台
             <span className="text-primary font-semibold"> · {t('header.eyebrowAccent')}</span>
           </span>
           <div className="flex items-baseline gap-[10px]">
@@ -249,6 +285,19 @@ export default function PlaygroundPage() {
           </p>
         </div>
         <div className="flex items-center gap-3">
+          {IS_CLOUD_DEPLOYMENT && wallet && (
+            <div className="hidden items-center gap-3 rounded-md border border-glass-border bg-glass px-3 py-2 text-xs text-text-secondary sm:flex">
+              <span className="inline-flex items-center gap-1.5">
+                <Coins size={14} className="text-primary" />
+                可用 <strong className="font-mono font-semibold text-foreground">{wallet.available_tickets}</strong>
+              </span>
+              <span className="h-4 w-px bg-border-subtle" />
+              <span className="inline-flex items-center gap-1.5">
+                <Clock3 size={14} className="text-amber-300" />
+                预扣 <strong className="font-mono font-semibold text-foreground">{wallet.held_tickets}</strong>
+              </span>
+            </div>
+          )}
           <span className="atelier-badge rounded border border-glass-border bg-glass px-2 py-1 text-[0.625rem] uppercase tracking-[0.18em] text-text-muted">
             {MODE_LABELS[mode]}
           </span>
@@ -293,13 +342,17 @@ export default function PlaygroundPage() {
             </section>
           )}
 
-          {/* Model & Parameters — merged into one card (mockup) */}
+          {/* Cloud routing is server-owned; only desktop exposes a model picker. */}
           <section className="glass-panel atelier-card rounded-[20px] px-5 py-5 relative z-30">
-            <div className="mb-3 font-mono text-[0.625rem] font-semibold uppercase tracking-[0.16em] text-text-secondary">
-              {t('compose.modelLabel')}
-            </div>
-            <ModelSelector />
-            <div className="my-4 h-px bg-border-subtle" />
+            {!IS_CLOUD_DEPLOYMENT && (
+              <>
+                <div className="mb-3 font-mono text-[0.625rem] font-semibold uppercase tracking-[0.16em] text-text-secondary">
+                  {t('compose.modelLabel')}
+                </div>
+                <ModelSelector />
+                <div className="my-4 h-px bg-border-subtle" />
+              </>
+            )}
             <div className="mb-3 font-mono text-[0.625rem] font-semibold uppercase tracking-[0.16em] text-text-secondary">
               {t('compose.parametersLabel')}
             </div>
@@ -311,6 +364,12 @@ export default function PlaygroundPage() {
 
           {/* Generate CTA (sticky) */}
           <div className="sticky bottom-0 -mx-4 -mb-4 border-t border-glass-border bg-transparent backdrop-blur-md px-4 pb-4 pt-4">
+            {submitError && (
+              <div className="mb-3 flex items-start gap-2 rounded-md border border-red-400/25 bg-red-400/10 px-3 py-2 text-xs leading-5 text-red-200">
+                <AlertCircle size={14} className="mt-0.5 shrink-0" />
+                <span>{submitError}</span>
+              </div>
+            )}
             <button
               type="button"
               onClick={handleGenerate}

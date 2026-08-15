@@ -387,7 +387,7 @@ export default function ArtDirection() {
         <div className="flex flex-col h-full w-full overflow-hidden">
             <StepPageHeader
                 stepNumber={2}
-                englishName="STYLE"
+                englishName="风格定调"
                 title={tStep("styleTitle")}
                 subtitle={tStep("styleSubtitle")}
                 pills={projectStyle?.name ? (
@@ -671,7 +671,7 @@ export default function ArtDirection() {
                             </div>
                             <button
                                 onClick={cancelOverrideConfirm}
-                                aria-label="Close"
+                                aria-label="关闭"
                                 className="p-1.5 rounded-lg hover:bg-hover-bg text-text-muted hover:text-foreground transition-colors"
                             >
                                 <X size={15} />
@@ -831,7 +831,7 @@ function AIRecommendationModal({ style, isSelected, editing, positivePrompt, neg
                             </div>
                         )}
                         <div>
-                            <p className="font-mono text-[0.5625rem] uppercase tracking-[0.18em] text-text-muted mb-3">{ta("keywordsLabel") || "Keywords"}</p>
+                            <p className="font-mono text-[0.5625rem] uppercase tracking-[0.18em] text-text-muted mb-3">{ta("keywordsLabel") || "关键词"}</p>
                             <div className="flex flex-wrap gap-2">
                                 {keywords.map((kw, i) => (
                                     <span key={i} className="text-[0.6875rem] px-2.5 py-1 rounded-md bg-yellow-500/10 text-yellow-300/90 border border-yellow-500/20">

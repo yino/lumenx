@@ -104,7 +104,7 @@ function TaskCard({ task, onRemix }: { task: VideoTask; onRemix: (t: VideoTask) 
                         {task.image_url ? (
                             <img
                                 src={getDisplayUrl(task.image_url)}
-                                alt="Input"
+                                alt="输入素材"
                                 className="w-full h-full object-cover opacity-60"
                             />
                         ) : (
@@ -140,7 +140,7 @@ function TaskCard({ task, onRemix }: { task: VideoTask; onRemix: (t: VideoTask) 
                                 className="text-xs flex items-center gap-1 text-text-secondary hover:text-foreground transition-colors"
                                 title={tv("remixTitle")}
                             >
-                                <RefreshCw size={12} /> Remix
+                                <RefreshCw size={12} /> 复用参数
                             </button>
                         </div>
                     </div>
@@ -150,7 +150,7 @@ function TaskCard({ task, onRemix }: { task: VideoTask; onRemix: (t: VideoTask) 
                         {/* Input Image/Videos (Left) */}
                         <div className="w-1/2 relative border-r border-glass-border">
                             {task.image_url ? (
-                                <img src={getDisplayUrl(task.image_url)} alt="Input" className="w-full h-full object-cover" />
+                                <img src={getDisplayUrl(task.image_url)} alt="输入素材" className="w-full h-full object-cover" />
                             ) : task.reference_video_urls && task.reference_video_urls.length > 0 ? (
                                 /* R2V: Show reference video thumbnails */
                                 <div className="w-full h-full grid grid-cols-2 gap-0.5 bg-purple-900/20">
@@ -170,10 +170,10 @@ function TaskCard({ task, onRemix }: { task: VideoTask; onRemix: (t: VideoTask) 
                                 </div>
                             ) : (
                                 <div className="w-full h-full flex items-center justify-center bg-purple-900/10 text-purple-400/50 text-xs font-bold">
-                                    R2V Input
+                                    R2V 输入
                                 </div>
                             )}
-                            <div className="absolute top-2 left-2 bg-surface px-1.5 py-0.5 rounded text-[0.625rem] text-text-secondary">Input</div>
+                            <div className="absolute top-2 left-2 bg-surface px-1.5 py-0.5 rounded text-[0.625rem] text-text-secondary">输入</div>
                         </div>
 
                         {/* Output Video (Right) */}
@@ -186,10 +186,10 @@ function TaskCard({ task, onRemix }: { task: VideoTask; onRemix: (t: VideoTask) 
                                 />
                             ) : (
                                 <div className="w-full h-full flex items-center justify-center text-red-500 text-xs">
-                                    Error
+                                    生成失败
                                 </div>
                             )}
-                            <div className="absolute top-2 right-2 bg-primary/80 px-1.5 py-0.5 rounded text-[0.625rem] text-foreground">Result</div>
+                            <div className="absolute top-2 right-2 bg-primary/80 px-1.5 py-0.5 rounded text-[0.625rem] text-foreground">结果</div>
                         </div>
                     </div>
 

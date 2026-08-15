@@ -11,7 +11,7 @@ from ...utils import get_logger
 logger = get_logger(__name__)
 
 
-class PlaygroundStorage:
+class DesktopPlaygroundRepository:
     HISTORY_PATH = "output/playground_history.json"
     TEMPLATES_PATH = "output/playground_templates.json"
 
@@ -141,3 +141,7 @@ class PlaygroundStorage:
                 self._save_templates()
                 return True
         return False
+
+
+# Compatibility alias for extensions importing the pre-adapter class name.
+PlaygroundStorage = DesktopPlaygroundRepository

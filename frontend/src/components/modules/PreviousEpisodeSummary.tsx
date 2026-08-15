@@ -70,7 +70,7 @@ export default function PreviousEpisodeSummary({ scriptId }: PreviousEpisodeSumm
             const result = await api.generateNextEpisodeHook(scriptId);
             setHookData(prev => prev ? { ...prev, hook: result.hook, stale: false } : prev);
         } catch (err: any) {
-            setError(err?.response?.data?.detail || err?.message || "Generate failed");
+            setError(err?.response?.data?.detail || err?.message || "生成失败");
         } finally {
             setRunningOp(`hookGen:${scriptId}`, false);
         }
@@ -85,7 +85,7 @@ export default function PreviousEpisodeSummary({ scriptId }: PreviousEpisodeSumm
             .then(d => { if (!cancelled) setData(d); })
             .catch(err => {
                 if (cancelled) return;
-                setError(err?.response?.data?.detail || err?.message || "Load failed");
+                setError(err?.response?.data?.detail || err?.message || "加载失败");
             })
             .finally(() => { if (!cancelled) setLoading(false); });
         return () => { cancelled = true; };
@@ -99,7 +99,7 @@ export default function PreviousEpisodeSummary({ scriptId }: PreviousEpisodeSumm
             const result = await api.generatePreviousEpisodeSummary(scriptId);
             setData(prev => prev ? { ...prev, ai_summary: result.ai_summary, ai_summary_stale: false } : prev);
         } catch (err: any) {
-            setError(err?.response?.data?.detail || err?.message || "Generate failed");
+            setError(err?.response?.data?.detail || err?.message || "生成失败");
         } finally {
             setRunningOp(`summaryGen:${scriptId}`, false);
         }
@@ -156,7 +156,7 @@ export default function PreviousEpisodeSummary({ scriptId }: PreviousEpisodeSumm
                                         setHookData(prev => prev ? { ...prev, hook: hookDraft.trim() || null, stale: false } : prev);
                                         setHookEditing(false);
                                     } catch (err: any) {
-                                        setError(err?.response?.data?.detail || err?.message || "Save failed");
+                                        setError(err?.response?.data?.detail || err?.message || "保存失败");
                                     } finally { setHookSaving(false); }
                                 }}
                             />
@@ -166,7 +166,7 @@ export default function PreviousEpisodeSummary({ scriptId }: PreviousEpisodeSumm
                     <div className="px-5 py-5 space-y-5">
                         {/* Previous episode meta */}
                         <div className="flex items-center gap-2 text-[0.6875rem] font-mono uppercase tracking-[0.16em] text-text-muted">
-                            <span className="text-primary">PREV</span>
+                            <span className="text-primary">上一集</span>
                             <span aria-hidden="true" className="h-px w-2 bg-glass-border" />
                             <span className="truncate text-text-secondary">{data.previous_episode_title || data.previous_episode_id}</span>
                         </div>
@@ -227,7 +227,7 @@ export default function PreviousEpisodeSummary({ scriptId }: PreviousEpisodeSumm
                                                     setData(prev => prev ? { ...prev, ai_summary: draft.trim() || null, ai_summary_stale: false } : prev);
                                                     setEditing(false);
                                                 } catch (err: any) {
-                                                    setError(err?.response?.data?.detail || err?.message || "Save failed");
+                                                    setError(err?.response?.data?.detail || err?.message || "保存失败");
                                                 } finally { setSavingEdit(false); }
                                             }}
                                         >
@@ -296,7 +296,7 @@ export default function PreviousEpisodeSummary({ scriptId }: PreviousEpisodeSumm
                                     setHookData(prev => prev ? { ...prev, hook: hookDraft.trim() || null, stale: false } : prev);
                                     setHookEditing(false);
                                 } catch (err: any) {
-                                    setError(err?.response?.data?.detail || err?.message || "Save failed");
+                                    setError(err?.response?.data?.detail || err?.message || "保存失败");
                                 } finally { setHookSaving(false); }
                             }}
                         />

@@ -11,6 +11,7 @@ import { coverGradient, GRAIN_URL } from "@/lib/atelierCover";
 import { rovingKeyDown } from "@/lib/a11y";
 import AssetInspector from "./AssetInspector";
 import NewLibraryAssetDialog from "./NewLibraryAssetDialog";
+import { getAssetUrl } from "@/lib/utils";
 
 type AssetTab = "characters" | "scenes" | "props";
 type TypeFilter = AssetTab | "all";
@@ -46,13 +47,17 @@ interface RenderGroup {
 
 /** 取图：character 走 characterImageUrl（reference_sheet→full_body→legacy）；scene/prop 用 image_asset。 */
 function getImageUrl(asset: Character | Scene | Prop, type: AssetTab): string | undefined {
-  if (type === "characters") return characterImageUrl(asset as Character);
+  if (type === "characters") {
+    const reference = characterImageUrl(asset as Character);
+    return reference ? getAssetUrl(reference) : undefined;
+  }
   const a = asset as Scene | Prop;
   if (a.image_asset?.variants?.length) {
     const sel = a.image_asset.variants.find((v) => v.id === a.image_asset?.selected_id);
-    return sel?.url || a.image_asset.variants[0]?.url;
+    const reference = sel?.url || a.image_asset.variants[0]?.url;
+    return reference ? getAssetUrl(reference) : undefined;
   }
-  return a.image_url;
+  return a.image_url ? getAssetUrl(a.image_url) : undefined;
 }
 
 function variantCount(asset: Character | Scene | Prop, type: AssetTab): number {
@@ -306,7 +311,7 @@ export default function AssetLibraryPage() {
       <header className="px-4 md:px-7 pt-5 md:pt-6 pb-3 flex items-end gap-5">
         <div className="flex-1 min-w-0">
           <div className="font-mono text-[0.625rem] font-medium uppercase tracking-[0.2em] text-text-muted">
-            ASSET LIBRARY · <span className="text-primary font-semibold">{t("gallery") || "画廊"}</span>
+            资产库 · <span className="text-primary font-semibold">{t("gallery") || "画廊"}</span>
           </div>
           <h1 className="text-[1.625rem] md:text-[2.125rem] font-display atelier-display font-semibold text-foreground leading-tight tracking-tight mt-1">
             {t("title")}

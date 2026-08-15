@@ -1,5 +1,7 @@
-import axios from "axios";
+import axiosFactory from "axios";
+import type { AxiosError, InternalAxiosRequestConfig } from "axios";
 import { DEFAULT_I2V_MODEL_ID } from "@/lib/modelCatalog";
+import { IS_CLOUD_DEPLOYMENT, withoutCloudModelOverrides } from "@/lib/deployment";
 
 // Dynamic API URL detection (no port enumeration):
 // 1. Explicit override: NEXT_PUBLIC_API_URL (any env / proxy setup).
@@ -10,14 +12,18 @@ import { DEFAULT_I2V_MODEL_ID } from "@/lib/modelCatalog";
 const BACKEND_PORT = process.env.NEXT_PUBLIC_BACKEND_PORT || "17177";
 
 const getApiUrl = (): string => {
-    // Explicit override always wins (strip any trailing slash).
-    const override = process.env.NEXT_PUBLIC_API_URL;
-    if (override && override.trim()) {
-        return override.trim().replace(/\/+$/, "");
-    }
-
     if (typeof window !== 'undefined') {
         const { protocol, hostname, port } = window.location;
+
+        // Hosted builds keep browser credentials strictly same-origin.
+        if (IS_CLOUD_DEPLOYMENT && process.env.NODE_ENV !== 'development') {
+            return `${window.location.origin}/api/v1`;
+        }
+
+        const override = process.env.NEXT_PUBLIC_API_URL;
+        if (override && override.trim()) {
+            return override.trim().replace(/\/+$/, "");
+        }
 
         // Dev server: backend lives on a different port regardless of which
         // dev port Next.js picked (3008/3009/3018/...).
@@ -29,14 +35,1491 @@ const getApiUrl = (): string => {
         return `${protocol}//${hostname}${port ? ':' + port : ''}`;
     }
 
-    // SSR fallback
-    return `http://localhost:${BACKEND_PORT}`;
+    // Cloud routes are client-authenticated and same-origin. An empty SSR base
+    // avoids embedding a localhost authority in exported cloud assets.
+    return IS_CLOUD_DEPLOYMENT ? "" : `http://localhost:${BACKEND_PORT}`;
 };
 
 export const API_URL = getApiUrl();
 
+const getCookieValue = (name: string): string | null => {
+    if (typeof document === "undefined") return null;
+    const prefix = `${encodeURIComponent(name)}=`;
+    const match = document.cookie
+        .split(";")
+        .map((item) => item.trim())
+        .find((item) => item.startsWith(prefix));
+    return match ? decodeURIComponent(match.slice(prefix.length)) : null;
+};
+
+export const SESSION_EXPIRED_EVENT = "lumenx:session-expired";
+
+let activeWorkspaceId: string | null = null;
+const MEDIA_REFERENCE_PREFIX = "media:";
+const MEDIA_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+interface CachedMediaAccess {
+    url: string;
+    expiresAt: number;
+}
+
+const mediaAccessCache = new Map<string, CachedMediaAccess>();
+const mediaAccessRequests = new Map<string, Promise<string>>();
+const resourceVersions = new Map<string, number>();
+
+type VersionedResourceKind = "project" | "series" | "asset";
+
+function resourceVersionKey(kind: VersionedResourceKind, id: string): string {
+    return `${activeWorkspaceId || "no-workspace"}:${kind}:${id}`;
+}
+
+function rememberResourceVersion(
+    kind: VersionedResourceKind,
+    id: unknown,
+    version: unknown,
+): void {
+    if (typeof id !== "string" || !id) return;
+    const parsedVersion = typeof version === "number" ? version : Number(version);
+    if (!Number.isInteger(parsedVersion) || parsedVersion < 1) return;
+    resourceVersions.set(resourceVersionKey(kind, id), parsedVersion);
+}
+
+export function toMediaReference(mediaId: string): string {
+    return `${MEDIA_REFERENCE_PREFIX}${mediaId}`;
+}
+
+export function parseMediaReference(reference: string | null | undefined): string | null {
+    if (!reference?.startsWith(MEDIA_REFERENCE_PREFIX)) return null;
+    const mediaId = reference.slice(MEDIA_REFERENCE_PREFIX.length);
+    return MEDIA_ID_PATTERN.test(mediaId) ? mediaId : null;
+}
+
+function mediaCacheKey(mediaId: string): string {
+    return `${activeWorkspaceId || "no-workspace"}:${mediaId}`;
+}
+
+export function getCachedMediaUrl(reference: string | null | undefined): string | null {
+    const mediaId = parseMediaReference(reference);
+    if (!mediaId) return null;
+    const cached = mediaAccessCache.get(mediaCacheKey(mediaId));
+    if (!cached || cached.expiresAt <= Date.now() + 5_000) return null;
+    return cached.url;
+}
+
+export function setActiveWorkspaceId(workspaceId: string | null): void {
+    if (activeWorkspaceId !== workspaceId) {
+        mediaAccessCache.clear();
+        mediaAccessRequests.clear();
+        resourceVersions.clear();
+    }
+    activeWorkspaceId = workspaceId;
+}
+
+export function getActiveWorkspaceId(): string | null {
+    return activeWorkspaceId;
+}
+
+export function createIdempotencyKey(scope = "ai"): string {
+    const randomPart =
+        typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
+            ? crypto.randomUUID()
+            : `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
+    return `${scope}:${randomPart}`;
+}
+
+export interface SafeAPIError {
+    code?: string;
+    message: string;
+    status?: number;
+    correlationId?: string;
+}
+
+const API_ERROR_MESSAGES: Record<string, string> = {
+    ACCESS_DENIED: "当前操作没有权限",
+    ACCOUNT_SUSPENDED: "账号已停用，请联系平台管理员",
+    ADMIN_REQUIRED: "当前账号没有此操作权限",
+    AI_NEW_TASKS_DISABLED: "AI 新任务已暂停，已有任务仍可查询和处理",
+    AI_TASK_NOT_FOUND: "AI 任务不存在或无权访问",
+    AI_CONFIGURATION_UNAVAILABLE: "AI 服务配置暂不可用，请稍后重试",
+    AI_CONTEXT_INVALID: "请选择有效的工作区",
+    AI_REQUEST_INVALID: "AI 请求参数无效，请检查后重试",
+    AI_RESERVATION_CONFLICT: "算力券预扣状态已变化，请刷新后重试",
+    AI_RESOURCE_NOT_FOUND: "AI 请求资源不存在或无权访问",
+    AI_TASK_CONFLICT: "AI 任务状态已变化，请刷新后重试",
+    AUTH_REQUIRED: "登录状态已失效，请重新登录",
+    CSRF_INVALID: "安全校验失败，请刷新页面后重试",
+    CONFIGURATION_CONFLICT: "配置状态已变化，请刷新后重试",
+    CONFIGURATION_INVALID: "配置内容不符合要求，请检查后重试",
+    CONFIGURATION_NOT_FOUND: "配置版本不存在",
+    CONTENT_INVALID: "内容不符合要求，请检查后重试",
+    CONTENT_NOT_FOUND: "内容不存在或无权访问",
+    CONTENT_VERSION_CONFLICT: "内容已被更新，请刷新后重试",
+    CONTENT_VERSION_REQUIRED: "内容版本信息缺失，请刷新后重试",
+    IDEMPOTENCY_CONFLICT: "请求标识已被其他操作使用，请刷新后重试",
+    INSUFFICIENT_TICKET_BALANCE: "算力券余额不足，请联系平台管理员补充",
+    TICKET_BALANCE_INSUFFICIENT: "算力券余额不足，请联系平台管理员补充",
+    INVALID_CREDENTIALS: "手机号或密码不正确",
+    MEDIA_NOT_FOUND: "媒体不存在或无权访问",
+    MEDIA_INVALID: "媒体文件不符合要求，请检查后重试",
+    MEDIA_STATE_CONFLICT: "媒体状态已变化，请刷新后重试",
+    MEDIA_STORAGE_UNAVAILABLE: "媒体存储暂不可用，请稍后重试",
+    PHONE_ALREADY_REGISTERED: "该手机号已注册，请直接登录",
+    RATE_LIMITED: "操作过于频繁，请稍后再试",
+    REGISTRATION_DISABLED: "注册暂未开放，请稍后再试",
+    INVITATION_INVALID: "邀请码无效或已失效",
+    RUNTIME_POLICY_UNAVAILABLE: "平台运行策略暂不可用，请稍后再试",
+    REQUEST_CONFLICT: "内容已发生变化，请刷新后重试",
+    REQUEST_INVALID: "请求参数无效，请检查后重试",
+    RESET_CREDENTIAL_INVALID: "重置凭据无效或已过期",
+    RESOURCE_NOT_FOUND: "内容不存在或无权访问",
+    SESSION_EXPIRED: "登录状态已失效，请重新登录",
+    SESSION_REVOKED: "当前登录已失效，请重新登录",
+    VALIDATION_ERROR: "提交的信息不符合要求，请检查后重试",
+    INTERNAL_ERROR: "服务暂时不可用，请稍后重试",
+    SERVICE_UNAVAILABLE: "服务暂时不可用，请稍后重试",
+    TICKET_ADJUSTMENT_CONFLICT: "算力券调整无法完成，请刷新后重试",
+    TICKET_HISTORY_INVALID: "算力券记录查询参数无效",
+    TICKET_WALLET_NOT_FOUND: "算力券账户不存在",
+    USER_NOT_FOUND: "用户不存在",
+    WORKSPACE_CONTEXT_INVALID: "请选择有效的工作区",
+    WORKSPACE_CONFLICT: "工作区已发生变化，请刷新后重试",
+    WORKSPACE_NOT_FOUND: "工作区不存在或无权访问",
+    IMPORT_VALIDATION_FAILED: "本地数据预检未通过，请检查导入源",
+    IMPORT_CONFLICT: "导入批次或目标数据已发生变化，请重新预检",
+};
+
+const HAS_CHINESE = /[\u3400-\u9fff]/;
+const MUTATION_METHODS = new Set(["post", "put", "patch", "delete"]);
+const PLAINTEXT_SECRET_FIELDS = new Set([
+    "access_key",
+    "access_key_id",
+    "access_key_secret",
+    "access_token",
+    "api_key",
+    "api_secret",
+    "authorization",
+    "bearer_token",
+    "credential",
+    "credentials",
+    "password_secret",
+    "secret",
+    "secret_key",
+]);
+
+function canonicalFieldName(name: string): string {
+    return name
+        .replace(/([a-z0-9])([A-Z])/g, "$1_$2")
+        .replace(/[^a-zA-Z0-9]+/g, "_")
+        .toLowerCase();
+}
+
+function isPlaintextSecretField(name: string): boolean {
+    const canonical = canonicalFieldName(name);
+    return (
+        PLAINTEXT_SECRET_FIELDS.has(canonical) ||
+        canonical.endsWith("_api_key") ||
+        canonical.endsWith("_secret_key") ||
+        canonical.endsWith("_access_token")
+    );
+}
+
+function stripPlaintextSecrets(value: unknown): unknown {
+    if (!IS_CLOUD_DEPLOYMENT) return value;
+    if (Array.isArray(value)) return value.map(stripPlaintextSecrets);
+    if (!value || typeof value !== "object") return value;
+    if (typeof FormData !== "undefined" && value instanceof FormData) return value;
+    if (Object.getPrototypeOf(value) !== Object.prototype) return value;
+    return Object.fromEntries(
+        Object.entries(value as Record<string, unknown>)
+            .filter(([key]) => !isPlaintextSecretField(key))
+            .map(([key, item]) => [key, stripPlaintextSecrets(item)]),
+    );
+}
+
+const CLOUD_AI_ROUTE_PATTERNS = [
+    /^\/playground\/generate$/,
+    /^\/series\/[^/]+\/assets\/generate$/,
+    /^\/projects\/[^/]+\/(?:extract_preview|generate_assets|generate_storyboard|generate_video|generate_audio)$/,
+    /^\/projects\/[^/]+\/(?:video_tasks|dialogue_audio\/batch)$/,
+    /^\/projects\/[^/]+\/(?:storyboard\/(?:analyze|refine_prompt|refine_batch|render))$/,
+    /^\/projects\/[^/]+\/frames\/[^/]+\/(?:refine|audio|dub\/(?:preview|apply))$/,
+    /^\/projects\/[^/]+\/mix\/(?:generate_sfx|generate_bgm)$/,
+    /^\/projects\/[^/]+\/assets\/(?:generate|generate_motion_ref)$/,
+    /^\/projects\/[^/]+\/assets\/[^/]+\/[^/]+\/generate_video$/,
+    /^\/projects\/[^/]+\/(?:previous_episode\/summary|art_direction\/analyze|reparse)$/,
+    /^\/video\/(?:polish_prompt|polish_r2v_prompt)$/,
+    /^\/voice\/(?:preview|clone|design\/preview|design\/translate)$/,
+];
+
+function requestPathname(url: string | undefined): string {
+    if (!url) return "";
+    try {
+        const pathname = new URL(
+            url,
+            typeof window !== "undefined" ? window.location.origin : "http://localhost",
+        ).pathname;
+        if (IS_CLOUD_DEPLOYMENT && pathname.startsWith("/api/v1/")) {
+            return pathname.slice("/api/v1".length);
+        }
+        return pathname;
+    } catch {
+        return url.split("?", 1)[0];
+    }
+}
+
+function isCloudAIRequest(url: string | undefined): boolean {
+    if (!IS_CLOUD_DEPLOYMENT) return false;
+    const pathname = requestPathname(url);
+    return (
+        (pathname === "/projects" || pathname === "/projects/") ||
+        CLOUD_AI_ROUTE_PATTERNS.some((pattern) => pattern.test(pathname))
+    );
+}
+
+function rememberAssetVersions(value: unknown): void {
+    if (Array.isArray(value)) {
+        value.forEach(rememberAssetVersions);
+        return;
+    }
+    if (!value || typeof value !== "object") return;
+    const payload = value as Record<string, unknown>;
+    if (typeof payload.asset_record_id === "string") {
+        rememberResourceVersion("asset", payload.id, payload.version);
+    }
+    Object.values(payload).forEach(rememberAssetVersions);
+}
+
+function rememberResponseVersions(url: string | undefined, value: unknown): void {
+    rememberAssetVersions(value);
+    const pathname = requestPathname(url);
+    const rememberDocuments = (
+        kind: "project" | "series",
+        documents: unknown,
+    ): void => {
+        if (Array.isArray(documents)) {
+            documents.forEach((document) => {
+                if (document && typeof document === "object") {
+                    const item = document as Record<string, unknown>;
+                    rememberResourceVersion(kind, item.id, item.version);
+                }
+            });
+        }
+    };
+
+    if (/^\/projects\/?$/.test(pathname)) {
+        rememberDocuments("project", value);
+        return;
+    }
+    if (/^\/series\/?$/.test(pathname)) {
+        rememberDocuments("series", value);
+        return;
+    }
+    if (!value || typeof value !== "object" || Array.isArray(value)) return;
+    const payload = value as Record<string, unknown>;
+    if (typeof payload.asset_record_id === "string") return;
+
+    const projectMatch = pathname.match(/^\/projects\/([^/]+)/);
+    if (projectMatch) {
+        rememberResourceVersion("project", decodeURIComponent(projectMatch[1]), payload.version);
+        return;
+    }
+    const seriesMatch = pathname.match(/^\/series\/([^/]+)/);
+    if (seriesMatch) {
+        rememberResourceVersion("series", decodeURIComponent(seriesMatch[1]), payload.version);
+    }
+}
+
+function requestAssetId(pathname: string, data: unknown): string | null {
+    const payload = data && typeof data === "object" && !Array.isArray(data)
+        ? data as Record<string, unknown>
+        : null;
+    if (pathname.includes("/assets/") && typeof payload?.asset_id === "string") {
+        return payload.asset_id;
+    }
+    const scopedAsset = pathname.match(
+        /^\/(?:projects|series)\/[^/]+\/(?:characters|scenes|props)\/([^/]+)(?:\/(?:voice|voice_params))?$/,
+    );
+    if (scopedAsset) return decodeURIComponent(scopedAsset[1]);
+    const uploadedAsset = pathname.match(
+        /^\/projects\/[^/]+\/assets\/[^/]+\/([^/]+)\/upload$/,
+    );
+    if (uploadedAsset) return decodeURIComponent(uploadedAsset[1]);
+    const seriesAsset = pathname.match(
+        /^\/series\/[^/]+\/assets\/[^/]+\/([^/]+)$/,
+    );
+    if (seriesAsset) return decodeURIComponent(seriesAsset[1]);
+    const libraryAsset = pathname.match(/^\/library\/assets\/[^/]+\/([^/]+)$/);
+    if (libraryAsset) return decodeURIComponent(libraryAsset[1]);
+    const customVoice = pathname.match(/^\/series\/[^/]+\/custom_voices\/([^/]+)$/);
+    return customVoice ? decodeURIComponent(customVoice[1]) : null;
+}
+
+function requestVersionKey(url: string | undefined, data: unknown): string | null {
+    const pathname = requestPathname(url);
+    const assetId = requestAssetId(pathname, data);
+    if (assetId) return resourceVersionKey("asset", assetId);
+    const projectMatch = pathname.match(/^\/projects\/([^/]+)/);
+    if (projectMatch) {
+        return resourceVersionKey("project", decodeURIComponent(projectMatch[1]));
+    }
+    const seriesMatch = pathname.match(/^\/series\/([^/]+)/);
+    if (seriesMatch) {
+        return resourceVersionKey("series", decodeURIComponent(seriesMatch[1]));
+    }
+    return null;
+}
+
+function convertCloudMediaReferences(value: unknown): unknown {
+    const mediaIds = new Set<string>();
+    const convert = (item: unknown): unknown => {
+        if (typeof item === "string") {
+            const mediaId = parseMediaReference(item);
+            if (mediaId) {
+                mediaIds.add(mediaId);
+                return undefined;
+            }
+            return item;
+        }
+        if (Array.isArray(item)) {
+            const converted = item
+                .map(convert)
+                .filter((entry) => entry !== undefined);
+            return converted.length > 0 ? converted : undefined;
+        }
+        if (!item || typeof item !== "object") return item;
+        if (typeof FormData !== "undefined" && item instanceof FormData) return item;
+        if (Object.getPrototypeOf(item) !== Object.prototype) return item;
+        return Object.fromEntries(
+            Object.entries(item as Record<string, unknown>)
+                .map(([key, entry]) => [key, convert(entry)] as const)
+                .filter(([, entry]) => entry !== undefined),
+        );
+    };
+
+    const converted = convert(value);
+    if (!converted || typeof converted !== "object" || Array.isArray(converted)) {
+        return converted;
+    }
+    const payload = converted as Record<string, unknown>;
+    const existing = Array.isArray(payload.media_ids)
+        ? payload.media_ids.map(String)
+        : [];
+    if (mediaIds.size > 0) {
+        payload.media_ids = Array.from(new Set([...existing, ...Array.from(mediaIds)]));
+    }
+    return payload;
+}
+
+function sanitizeRequestData(url: string | undefined, value: unknown): unknown {
+    const withoutSecrets = stripPlaintextSecrets(value);
+    if (!IS_CLOUD_DEPLOYMENT || url?.includes("/admin/configuration")) {
+        return withoutSecrets;
+    }
+    const withoutOverrides = withoutCloudModelOverrides(withoutSecrets);
+    return isCloudAIRequest(url)
+        ? convertCloudMediaReferences(withoutOverrides)
+        : withoutOverrides;
+}
+
+function serverErrorPayload(value: unknown): {
+    code?: string;
+    message?: string;
+    correlationId?: string;
+} {
+    if (!value || typeof value !== "object") return {};
+    const payload = value as Record<string, unknown>;
+    const nestedDetail = payload.detail && typeof payload.detail === "object"
+        ? payload.detail as Record<string, unknown>
+        : undefined;
+    const detail = typeof payload.detail === "string" ? payload.detail : undefined;
+    return {
+        code:
+            typeof payload.code === "string"
+                ? payload.code
+                : typeof nestedDetail?.code === "string"
+                  ? nestedDetail.code
+                  : undefined,
+        message:
+            typeof payload.message === "string"
+                ? payload.message
+                : typeof nestedDetail?.message === "string"
+                  ? nestedDetail.message
+                  : detail,
+        correlationId:
+            typeof payload.correlation_id === "string"
+                ? payload.correlation_id
+                : typeof nestedDetail?.correlation_id === "string"
+                  ? nestedDetail.correlation_id
+                : undefined,
+    };
+}
+
+function safeErrorFromResponse(
+    status: number | undefined,
+    data: unknown,
+    headerCorrelationId?: string,
+): SafeAPIError {
+    const payload = serverErrorPayload(data);
+    const mapped = payload.code ? API_ERROR_MESSAGES[payload.code] : undefined;
+    const safeServerMessage =
+        payload.message && HAS_CHINESE.test(payload.message) ? payload.message : undefined;
+    const statusMessage =
+        status === 401
+            ? "登录状态已失效，请重新登录"
+            : status === 403
+              ? "当前操作没有权限"
+              : status === 404
+                ? "请求的内容不存在"
+                : status === 409
+                  ? "内容已发生变化，请刷新后重试"
+                  : status === 422
+                    ? "提交的信息不符合要求，请检查后重试"
+                    : status && status >= 500
+                      ? "服务暂时不可用，请稍后重试"
+                      : "暂时无法完成操作，请稍后重试";
+    return {
+        code: payload.code,
+        message: mapped || safeServerMessage || statusMessage,
+        status,
+        correlationId: payload.correlationId || headerCorrelationId,
+    };
+}
+
+function emitSessionExpired(error: SafeAPIError): void {
+    if (typeof window === "undefined") return;
+    window.dispatchEvent(new CustomEvent(SESSION_EXPIRED_EVENT, { detail: error }));
+}
+
+export function getSafeApiError(error: unknown): SafeAPIError {
+    if (axiosFactory.isAxiosError(error)) {
+        const correlationId = error.response?.headers?.["x-correlation-id"];
+        return safeErrorFromResponse(
+            error.response?.status,
+            error.response?.data,
+            typeof correlationId === "string" ? correlationId : undefined,
+        );
+    }
+    if (error instanceof APIRequestError) {
+        return {
+            code: error.code,
+            message: error.message,
+            status: error.status,
+            correlationId: error.correlationId,
+        };
+    }
+    return { message: "网络连接异常，请检查网络后重试" };
+}
+
+export const apiClient = axiosFactory.create({
+    baseURL: API_URL || undefined,
+    timeout: 60_000,
+    withCredentials: true,
+});
+
+apiClient.interceptors.request.use((config: InternalAxiosRequestConfig) => {
+    config.withCredentials = true;
+    const method = (config.method || "get").toLowerCase();
+    const csrfToken = getCookieValue("lumenx_csrf");
+    if (MUTATION_METHODS.has(method) && csrfToken) {
+        config.headers.set("X-CSRF-Token", csrfToken);
+    }
+    if (IS_CLOUD_DEPLOYMENT) {
+        config.headers.delete("Authorization");
+        config.headers.delete("X-API-Key");
+        if (activeWorkspaceId) {
+            config.headers.set("X-Workspace-ID", activeWorkspaceId);
+        } else {
+            config.headers.delete("X-Workspace-ID");
+        }
+        config.data = sanitizeRequestData(config.url, config.data);
+        if (
+            MUTATION_METHODS.has(method) &&
+            !isCloudAIRequest(config.url) &&
+            !config.headers.get("If-Match")
+        ) {
+            const versionKey = requestVersionKey(config.url, config.data);
+            const version = versionKey ? resourceVersions.get(versionKey) : undefined;
+            if (version) config.headers.set("If-Match", String(version));
+        }
+        if (isCloudAIRequest(config.url) && !config.headers.get("Idempotency-Key")) {
+            const payloadKey =
+                config.data && typeof config.data === "object"
+                    ? (config.data as Record<string, unknown>).idempotency_key
+                    : undefined;
+            config.headers.set(
+                "Idempotency-Key",
+                typeof payloadKey === "string" && payloadKey
+                    ? payloadKey
+                    : createIdempotencyKey("ai"),
+            );
+        }
+    }
+    return config;
+});
+
+apiClient.interceptors.response.use(
+    async (response) => {
+        if (IS_CLOUD_DEPLOYMENT) {
+            rememberResponseVersions(response.config.url, response.data);
+            await prefetchMediaReferences(response.data);
+        }
+        return response;
+    },
+    (error: AxiosError) => {
+        const safeError = getSafeApiError(error);
+        error.message = safeError.message;
+        if (error.response?.data && typeof error.response.data === "object") {
+            Object.assign(error.response.data, {
+                code: safeError.code,
+                message: safeError.message,
+                detail: safeError.message,
+                correlation_id: safeError.correlationId,
+            });
+        }
+        if (safeError.status === 401 || safeError.code === "ACCOUNT_SUSPENDED") {
+            emitSessionExpired(safeError);
+        }
+        return Promise.reject(error);
+    },
+);
+
+export class APIRequestError extends Error {
+    constructor(
+        message: string,
+        readonly status: number,
+        readonly code?: string,
+        readonly correlationId?: string,
+    ) {
+        super(message);
+        this.name = "APIRequestError";
+    }
+}
+
+export async function apiFetch(
+    input: RequestInfo | URL,
+    init: RequestInit = {},
+): Promise<Response> {
+    const method = (init.method || "GET").toLowerCase();
+    const headers = new Headers(init.headers);
+    const csrfToken = getCookieValue("lumenx_csrf");
+    if (MUTATION_METHODS.has(method) && csrfToken) {
+        headers.set("X-CSRF-Token", csrfToken);
+    }
+    if (IS_CLOUD_DEPLOYMENT) {
+        headers.delete("Authorization");
+        headers.delete("X-API-Key");
+        if (activeWorkspaceId) headers.set("X-Workspace-ID", activeWorkspaceId);
+        else headers.delete("X-Workspace-ID");
+    }
+
+    let body = init.body;
+    let versionPayload: unknown;
+    if (
+        IS_CLOUD_DEPLOYMENT &&
+        typeof body === "string" &&
+        headers.get("Content-Type")?.includes("application/json")
+    ) {
+        try {
+            const parsed = JSON.parse(body);
+            const sanitized = sanitizeRequestData(String(input), parsed);
+            versionPayload = sanitized;
+            body = JSON.stringify(sanitized);
+            if (isCloudAIRequest(String(input)) && !headers.has("Idempotency-Key")) {
+                const payloadKey =
+                    sanitized && typeof sanitized === "object"
+                        ? (sanitized as Record<string, unknown>).idempotency_key
+                        : undefined;
+                headers.set(
+                    "Idempotency-Key",
+                    typeof payloadKey === "string" && payloadKey
+                        ? payloadKey
+                        : createIdempotencyKey("ai"),
+                );
+            }
+        } catch {
+            // Keep malformed JSON unchanged so the server returns canonical validation.
+        }
+    }
+    if (
+        IS_CLOUD_DEPLOYMENT &&
+        MUTATION_METHODS.has(method) &&
+        !isCloudAIRequest(String(input)) &&
+        !headers.has("If-Match")
+    ) {
+        const versionKey = requestVersionKey(String(input), versionPayload);
+        const version = versionKey ? resourceVersions.get(versionKey) : undefined;
+        if (version) headers.set("If-Match", String(version));
+    }
+    if (IS_CLOUD_DEPLOYMENT && isCloudAIRequest(String(input)) && !headers.has("Idempotency-Key")) {
+        headers.set("Idempotency-Key", createIdempotencyKey("ai"));
+    }
+
+    const response = await globalThis.fetch(input, {
+        ...init,
+        body,
+        credentials: "include",
+        headers,
+    });
+    if (response.ok) {
+        if (
+            IS_CLOUD_DEPLOYMENT &&
+            response.headers.get("content-type")?.includes("application/json")
+        ) {
+            try {
+                const responseData = await response.clone().json();
+                rememberResponseVersions(String(input), responseData);
+                await prefetchMediaReferences(responseData);
+            } catch {
+                // Media prefetch is best-effort and must not mask a valid response.
+            }
+        }
+        return response;
+    }
+
+    let data: unknown;
+    try {
+        data = await response.clone().json();
+    } catch {
+        data = undefined;
+    }
+    const safeError = safeErrorFromResponse(
+        response.status,
+        data,
+        response.headers.get("x-correlation-id") || undefined,
+    );
+    if (safeError.status === 401 || safeError.code === "ACCOUNT_SUSPENDED") {
+        emitSessionExpired(safeError);
+    }
+    throw new APIRequestError(
+        safeError.message,
+        safeError.status || response.status,
+        safeError.code,
+        safeError.correlationId,
+    );
+}
+
+const authenticatedMutationConfig = () => {
+    const csrfToken = getCookieValue("lumenx_csrf");
+    return {
+        withCredentials: true,
+        headers: csrfToken ? { "X-CSRF-Token": csrfToken } : undefined,
+    };
+};
+
+export interface AuthUser {
+    id: string;
+    phone: string;
+    phone_verified: boolean;
+    phone_verification_status: string;
+    is_platform_admin: boolean;
+    default_workspace_id: string;
+}
+
+export interface AuthResponse {
+    user: AuthUser;
+}
+
+export interface AuthSession {
+    id: string;
+    current: boolean;
+    created_at: string;
+    last_seen_at: string;
+    idle_expires_at: string;
+    absolute_expires_at: string;
+    revoked_at?: string | null;
+    user_agent?: string | null;
+}
+
+export interface AuthAPIError {
+    code?: string;
+    message: string;
+}
+
+export type RegistrationMode = "disabled" | "invite_only" | "open" | "verified_open";
+
+export interface RegistrationPolicy {
+    mode: RegistrationMode;
+    verification_available: boolean;
+}
+
+export interface UserWorkspace {
+    id: string;
+    name: string;
+    version: number;
+    deleted: boolean;
+    retention_expires_at: string | null;
+}
+
+export const authApi = {
+    registrationPolicy: () =>
+        apiClient
+            .get<RegistrationPolicy>(`${API_URL}/auth/registration-policy`, {
+                timeout: 10_000,
+            })
+            .then((response) => response.data),
+    currentUser: () =>
+        apiClient
+            .get<AuthResponse>(`${API_URL}/auth/me`, {
+                withCredentials: true,
+                timeout: 10_000,
+            })
+            .then((response) => response.data),
+    login: (phone: string, password: string) =>
+        apiClient
+            .post<AuthResponse>(
+                `${API_URL}/auth/login`,
+                { phone, password },
+                { withCredentials: true, timeout: 15_000 },
+            )
+            .then((response) => response.data),
+    register: (phone: string, password: string, invitationCode?: string) =>
+        apiClient
+            .post<AuthResponse>(
+                `${API_URL}/auth/register`,
+                { phone, password, invitation_code: invitationCode || undefined },
+                { withCredentials: true, timeout: 15_000 },
+            )
+            .then((response) => response.data),
+    logout: () =>
+        apiClient
+            .post<{ message: string }>(`${API_URL}/auth/logout`)
+            .then((response) => response.data),
+    changePassword: (currentPassword: string, newPassword: string) =>
+        apiClient
+            .post<{ message: string }>(`${API_URL}/auth/password`, {
+                current_password: currentPassword,
+                new_password: newPassword,
+            })
+            .then((response) => response.data),
+    listSessions: () =>
+        apiClient
+            .get<AuthSession[]>(`${API_URL}/auth/sessions`)
+            .then((response) => response.data),
+    revokeSession: (sessionId: string) =>
+        apiClient
+            .delete<{ message: string }>(`${API_URL}/auth/sessions/${sessionId}`)
+            .then((response) => response.data),
+    revokeAllSessions: () =>
+        apiClient
+            .post<{ message: string }>(`${API_URL}/auth/sessions/revoke-all`)
+            .then((response) => response.data),
+};
+
+export const workspaceApi = {
+    list: (includeDeleted = false) =>
+        apiClient
+            .get<UserWorkspace[]>(`${API_URL}/workspaces`, {
+                params: { include_deleted: includeDeleted },
+            })
+            .then((response) => response.data),
+    create: (name: string) =>
+        apiClient
+            .post<UserWorkspace>(`${API_URL}/workspaces`, { name })
+            .then((response) => response.data),
+    select: (workspaceId: string) =>
+        apiClient
+            .post<UserWorkspace>(`${API_URL}/workspaces/${workspaceId}/select`)
+            .then((response) => response.data),
+    rename: (workspaceId: string, name: string, expectedVersion: number) =>
+        apiClient
+            .patch<UserWorkspace>(`${API_URL}/workspaces/${workspaceId}`, {
+                name,
+                expected_version: expectedVersion,
+            })
+            .then((response) => response.data),
+    remove: (workspaceId: string) =>
+        apiClient
+            .delete<{ message: string }>(`${API_URL}/workspaces/${workspaceId}`)
+            .then((response) => response.data),
+    restore: (workspaceId: string) =>
+        apiClient
+            .post<UserWorkspace>(`${API_URL}/workspaces/${workspaceId}/restore`)
+            .then((response) => response.data),
+};
+
+export interface MediaUploadResponse {
+    id: string;
+    mime_type: string;
+    size_bytes: number;
+    checksum_sha256: string;
+}
+
+export interface MediaMetadata extends MediaUploadResponse {
+    project_id: string | null;
+    lifecycle_state: string;
+    provenance: Record<string, unknown>;
+    created_at: string;
+}
+
+export interface MediaAccessResponse {
+    media_id: string;
+    url: string;
+    expires_at: string;
+}
+
+export const mediaApi = {
+    upload: async (file: File, projectId?: string): Promise<MediaUploadResponse> => {
+        const formData = new FormData();
+        formData.append("file", file);
+        const response = await apiClient.post<MediaUploadResponse>(`${API_URL}/media`, formData, {
+            params: projectId ? { project_id: projectId } : undefined,
+            headers: { "Content-Type": "multipart/form-data" },
+        });
+        await resolveMediaUrl(toMediaReference(response.data.id));
+        return response.data;
+    },
+    metadata: (mediaId: string) =>
+        apiClient
+            .get<MediaMetadata>(`${API_URL}/media/${mediaId}`)
+            .then((response) => response.data),
+    access: (mediaId: string, expiresSeconds = 300) =>
+        apiClient
+            .get<MediaAccessResponse>(`${API_URL}/media/${mediaId}/access`, {
+                params: { expires_seconds: expiresSeconds },
+            })
+            .then((response) => response.data),
+    remove: (mediaId: string) =>
+        apiClient
+            .delete<{ status: string; id: string }>(`${API_URL}/media/${mediaId}`)
+            .then((response) => response.data),
+};
+
+export async function resolveMediaUrl(reference: string): Promise<string> {
+    const mediaId = parseMediaReference(reference);
+    if (!mediaId) return reference;
+    const key = mediaCacheKey(mediaId);
+    const cached = mediaAccessCache.get(key);
+    if (cached && cached.expiresAt > Date.now() + 30_000) return cached.url;
+
+    const pending = mediaAccessRequests.get(key);
+    if (pending) return pending;
+
+    const request = mediaApi
+        .access(mediaId)
+        .then((access) => {
+            const parsedExpiry = Date.parse(access.expires_at);
+            mediaAccessCache.set(key, {
+                url: access.url,
+                expiresAt: Number.isFinite(parsedExpiry)
+                    ? parsedExpiry
+                    : Date.now() + 240_000,
+            });
+            return access.url;
+        })
+        .finally(() => mediaAccessRequests.delete(key));
+    mediaAccessRequests.set(key, request);
+    return request;
+}
+
+export async function prefetchMediaReferences(value: unknown): Promise<void> {
+    const references = new Set<string>();
+    const visit = (item: unknown): void => {
+        if (typeof item === "string") {
+            if (parseMediaReference(item)) references.add(item);
+            return;
+        }
+        if (Array.isArray(item)) {
+            item.forEach(visit);
+            return;
+        }
+        if (!item || typeof item !== "object") return;
+        Object.values(item as Record<string, unknown>).forEach(visit);
+    };
+    visit(value);
+    await Promise.allSettled(Array.from(references, resolveMediaUrl));
+}
+
+export function getSafeAuthError(error: unknown): AuthAPIError {
+    const safeError = getSafeApiError(error);
+    return { code: safeError.code, message: safeError.message };
+}
+
 export type ProviderMode = "dashscope" | "vendor";
 export type SeedanceProviderMode = "ark" | "mulerouter";
+
+export type AdminAICapability =
+    | "script.analysis"
+    | "prompt.polish"
+    | "image.t2i"
+    | "image.i2i"
+    | "video.t2v"
+    | "video.i2v"
+    | "video.r2v"
+    | "video.v2v"
+    | "speech.tts"
+    | "audio.sfx";
+
+export interface AdminParameterRule {
+    name: string;
+    value_type: "string" | "integer" | "number" | "boolean";
+    required?: boolean;
+    minimum?: number | null;
+    maximum?: number | null;
+    choices?: Array<string | number | boolean> | null;
+}
+
+export interface AdminModelRoute {
+    capability: AdminAICapability;
+    display_name_zh: string;
+    provider: string;
+    provider_model_id: string;
+    enabled: boolean;
+    is_primary: boolean;
+    priority: number;
+    default_parameters: Record<string, string | number | boolean>;
+    parameter_schema: AdminParameterRule[];
+    metering_formula: Record<string, unknown> & { kind: "llm" | "image" | "video" | "speech" };
+    fallback_policy: {
+        enabled: boolean;
+        eligible_error_codes: string[];
+        max_attempts: number;
+        require_nonbillable_previous_attempt: boolean;
+    };
+    secret_ref: string;
+}
+
+export interface AdminPlatformConfig {
+    tokens_per_ticket: number;
+    registration_initial_grant_microtickets: number;
+    session_idle_seconds: number;
+    session_absolute_seconds: number;
+    max_sessions_per_user: number;
+    max_ai_concurrency_per_user: number;
+    exposed_capabilities: AdminAICapability[];
+    feature_flags: {
+        registration_mode: RegistrationMode;
+        new_ai_tasks_enabled: boolean;
+    };
+    operational: {
+        signed_media_url_seconds: number;
+        soft_delete_retention_days: number;
+        stale_hold_minutes: number;
+    };
+}
+
+export interface AdminDeploymentState {
+    worker_concurrency: number;
+    authority: "environment_or_compose";
+    activation_required: boolean;
+    deployment_mode: "desktop" | "cloud" | "test" | "unknown";
+    object_store_adapter: "oss" | "deterministic" | "unknown";
+    provider_adapter: "production" | "deterministic" | "unknown";
+    test_adapters_enabled: boolean;
+    oss_private: boolean;
+    registration_emergency_disabled: boolean;
+    new_ai_tasks_emergency_disabled: boolean;
+    resource_fingerprints: {
+        postgresql: string | null;
+        redis: string | null;
+        oss_bucket: string | null;
+        provider_account: string | null;
+    };
+}
+
+export interface AdminConfigurationVersion {
+    id: string;
+    version_number: number;
+    status: "draft" | "active" | "superseded" | "disabled";
+    schema_version: number;
+    reason: string;
+    platform: AdminPlatformConfig;
+    routes: AdminModelRoute[];
+    created_by_user_id: string;
+    created_at: string;
+    activated_at?: string | null;
+    superseded_at?: string | null;
+}
+
+export interface AdminConfigurationDraft {
+    reason: string;
+    platform: AdminPlatformConfig;
+    routes: AdminModelRoute[];
+}
+
+export const adminConfigurationApi = {
+    getDeploymentState: () =>
+        apiClient
+            .get<AdminDeploymentState>(`${API_URL}/admin/configuration/deployment-state`, {
+                withCredentials: true,
+            })
+            .then((response) => response.data),
+    listVersions: () =>
+        apiClient
+            .get<AdminConfigurationVersion[]>(`${API_URL}/admin/configuration/versions`, {
+                withCredentials: true,
+            })
+            .then((response) => response.data),
+    getActive: () =>
+        apiClient
+            .get<AdminConfigurationVersion>(`${API_URL}/admin/configuration/active`, {
+                withCredentials: true,
+            })
+            .then((response) => response.data),
+    getVersion: (versionId: string) =>
+        apiClient
+            .get<AdminConfigurationVersion>(
+                `${API_URL}/admin/configuration/versions/${versionId}`,
+                { withCredentials: true },
+            )
+            .then((response) => response.data),
+    createVersion: (draft: AdminConfigurationDraft) =>
+        apiClient
+            .post<AdminConfigurationVersion>(
+                `${API_URL}/admin/configuration/versions`,
+                draft,
+                authenticatedMutationConfig(),
+            )
+            .then((response) => response.data),
+    validateVersion: (versionId: string) =>
+        apiClient
+            .post<{ valid: true; message: string; configuration: AdminConfigurationVersion }>(
+                `${API_URL}/admin/configuration/versions/${versionId}/validate`,
+                undefined,
+                authenticatedMutationConfig(),
+            )
+            .then((response) => response.data),
+    activateVersion: (versionId: string, reason: string) =>
+        apiClient
+            .post<AdminConfigurationVersion>(
+                `${API_URL}/admin/configuration/versions/${versionId}/activate`,
+                { reason },
+                authenticatedMutationConfig(),
+            )
+            .then((response) => response.data),
+    disableVersion: (versionId: string, reason: string) =>
+        apiClient
+            .post<AdminConfigurationVersion>(
+                `${API_URL}/admin/configuration/versions/${versionId}/disable`,
+                { reason },
+                authenticatedMutationConfig(),
+            )
+            .then((response) => response.data),
+    rollbackVersion: (versionId: string, reason: string) =>
+        apiClient
+            .post<AdminConfigurationVersion>(
+                `${API_URL}/admin/configuration/versions/${versionId}/rollback`,
+                { reason },
+                authenticatedMutationConfig(),
+            )
+            .then((response) => response.data),
+};
+
+export type AdminTicketOperation = "grant" | "debit" | "compensation";
+
+export interface AdminTicketWallet {
+    user_id: string;
+    available_microtickets: string;
+    held_microtickets: string;
+    total_microtickets: string;
+    available_tickets: string;
+    held_tickets: string;
+    total_tickets: string;
+    version: number;
+}
+
+export interface AdminTicketLedgerItem {
+    id: string;
+    entry_type: "grant" | "hold" | "settlement" | "release" | "adjustment" | "compensation";
+    amount_microtickets: string;
+    amount_tickets: string;
+    available_delta: string;
+    held_delta: string;
+    available_after: string;
+    held_after: string;
+    reason?: string | null;
+    actor_user_id?: string | null;
+    correlation: Record<string, unknown>;
+    created_at: string;
+}
+
+export interface AdminTicketWalletView {
+    wallet: AdminTicketWallet;
+    ledger: AdminTicketLedgerItem[];
+    total: number;
+}
+
+export const adminTicketApi = {
+    getWallet: (userId: string, offset = 0, limit = 50) =>
+        apiClient
+            .get<AdminTicketWalletView>(`${API_URL}/admin/tickets/users/${userId}`, {
+                params: { offset, limit },
+                withCredentials: true,
+            })
+            .then((response) => response.data),
+    adjust: (
+        userId: string,
+        operation: AdminTicketOperation,
+        amountTickets: string,
+        reason: string,
+    ) => {
+        const endpoint = operation === "compensation" ? "compensate" : operation;
+        return apiClient
+            .post<{ message: string; wallet: AdminTicketWallet }>(
+                `${API_URL}/admin/tickets/users/${userId}/${endpoint}`,
+                { amount_tickets: amountTickets, reason },
+                authenticatedMutationConfig(),
+            )
+            .then((response) => response.data);
+    },
+};
+
+export type AdminUserStatus = "active" | "suspended";
+
+export interface AdminUserItem {
+    id: string;
+    phone: string;
+    status: AdminUserStatus;
+    status_zh: string;
+    phone_verified: boolean;
+    is_platform_admin: boolean;
+    available_tickets: string;
+    held_tickets: string;
+    created_at: string;
+    updated_at: string;
+}
+
+export interface AdminCreatedUser {
+    id: string;
+    workspace_id: string;
+    phone: string;
+    status: "active";
+}
+
+export interface AdminActualModel {
+    display_name: string;
+    model_id: string;
+    provider: string;
+}
+
+export interface AdminTaskItem {
+    id: string;
+    user_id: string;
+    user_phone: string;
+    workspace_id: string;
+    project_id?: string | null;
+    capability: string;
+    status: string;
+    status_zh: string;
+    quoted_tickets: string;
+    provider_billable: boolean;
+    cancellation_requested: boolean;
+    support_review_reason?: string | null;
+    safe_error_message?: string | null;
+    actual_model: AdminActualModel;
+    created_at: string;
+    updated_at: string;
+    completed_at?: string | null;
+}
+
+export interface AdminUsageItem {
+    id: string;
+    user_id: string;
+    user_phone: string;
+    workspace_id: string;
+    project_id?: string | null;
+    task_id: string;
+    capability: string;
+    outcome: string;
+    outcome_zh: string;
+    metering_tokens: string;
+    tokens_per_ticket: string;
+    charged_tickets: string;
+    created_at: string;
+}
+
+export interface AdminAuditEventItem {
+    id: string;
+    actor_user_id?: string | null;
+    target_user_id?: string | null;
+    workspace_id?: string | null;
+    action: string;
+    target_type: string;
+    target_id?: string | null;
+    reason?: string | null;
+    correlation_id: string;
+    created_at: string;
+}
+
+export interface AdminImportBatchItem {
+    id: string;
+    actor_admin_user_id: string;
+    target_user_id: string;
+    target_workspace_id: string;
+    source_fingerprint: string;
+    status: string;
+    status_zh: string;
+    has_dry_run_report: boolean;
+    has_result_report: boolean;
+    has_error_report: boolean;
+    created_at: string;
+    started_at?: string | null;
+    completed_at?: string | null;
+    reverted_at?: string | null;
+    rollback_reason?: string | null;
+}
+
+export interface AdminInvitation {
+    id: string;
+    phone: string;
+    status: "active" | "consumed" | "revoked" | "expired";
+    expires_at: string;
+    created_at: string;
+    consumed_at?: string | null;
+    revoked_at?: string | null;
+    issue_reason: string;
+    revoke_reason?: string | null;
+    invitation_code?: string | null;
+}
+
+export interface AdminImportIssue {
+    code: string;
+    message: string;
+    source_key: string;
+    blocking: boolean;
+}
+
+export interface AdminImportDryRunResult {
+    batch_id: string;
+    message: string;
+    ready: boolean;
+    source_fingerprint: string;
+    planned_counts: Record<string, number>;
+    media_bytes: number;
+    issues: AdminImportIssue[];
+}
+
+export interface AdminImportBatchDetail {
+    id: string;
+    status: string;
+    source_fingerprint: string;
+    target_user_id: string;
+    target_workspace_id: string;
+    item_status_counts: Record<string, number>;
+    dry_run_report?: AdminImportDryRunResult | null;
+    result_report?: Record<string, unknown> | null;
+    error_report?: Record<string, unknown> | null;
+    created_at: string;
+    started_at?: string | null;
+    completed_at?: string | null;
+    reverted_at?: string | null;
+    rollback_reason?: string | null;
+}
+
+export interface AdminPage<T> {
+    items: T[];
+    total: number;
+    offset: number;
+    limit: number;
+}
+
+export interface AdminUsagePage extends AdminPage<AdminUsageItem> {
+    total_metering_tokens: string;
+    total_charged_tickets: string;
+}
+
+export const adminPlatformApi = {
+    listInvitations: () =>
+        apiClient
+            .get<AdminInvitation[]>(`${API_URL}/auth/admin/invitations`, {
+                withCredentials: true,
+            })
+            .then((response) => response.data),
+    createInvitation: (phone: string, expiresAt: string, reason: string) =>
+        apiClient
+            .post<AdminInvitation>(
+                `${API_URL}/auth/admin/invitations`,
+                { phone, expires_at: expiresAt, reason },
+                authenticatedMutationConfig(),
+            )
+            .then((response) => response.data),
+    revokeInvitation: (invitationId: string, reason: string) =>
+        apiClient
+            .post<AdminInvitation>(
+                `${API_URL}/auth/admin/invitations/${invitationId}/revoke`,
+                { reason },
+                authenticatedMutationConfig(),
+            )
+            .then((response) => response.data),
+    listUsers: (params: { status?: AdminUserStatus; query?: string; offset?: number; limit?: number } = {}) =>
+        apiClient
+            .get<AdminPage<AdminUserItem>>(`${API_URL}/admin/users`, {
+                params,
+                withCredentials: true,
+            })
+            .then((response) => response.data),
+    createUser: (phone: string, password: string, reason: string) =>
+        apiClient
+            .post<AdminCreatedUser>(
+                `${API_URL}/admin/users`,
+                { phone, password, reason },
+                authenticatedMutationConfig(),
+            )
+            .then((response) => response.data),
+    listTasks: (params: { status?: string; user_id?: string; offset?: number; limit?: number } = {}) =>
+        apiClient
+            .get<AdminPage<AdminTaskItem>>(`${API_URL}/admin/tasks`, {
+                params,
+                withCredentials: true,
+            })
+            .then((response) => response.data),
+    listUsage: (params: { outcome?: string; user_id?: string; offset?: number; limit?: number } = {}) =>
+        apiClient
+            .get<AdminUsagePage>(`${API_URL}/admin/usage`, {
+                params,
+                withCredentials: true,
+            })
+            .then((response) => response.data),
+    listAuditEvents: (params: { action?: string; offset?: number; limit?: number } = {}) =>
+        apiClient
+            .get<AdminPage<AdminAuditEventItem>>(`${API_URL}/admin/audit-events`, {
+                params,
+                withCredentials: true,
+            })
+            .then((response) => response.data),
+    listImportBatches: (params: { status?: string; offset?: number; limit?: number } = {}) =>
+        apiClient
+            .get<AdminPage<AdminImportBatchItem>>(`${API_URL}/admin/import-batches`, {
+                params,
+                withCredentials: true,
+            })
+            .then((response) => response.data),
+    dryRunImport: (payload: {
+        target_user_id: string;
+        target_workspace_id: string;
+        source_directory: string;
+        include_playground: boolean;
+        missing_media_policy: "reject" | "clear";
+    }) =>
+        apiClient
+            .post<AdminImportDryRunResult>(
+                `${API_URL}/admin/imports/dry-run`,
+                payload,
+                authenticatedMutationConfig(),
+            )
+            .then((response) => response.data),
+    getImportBatch: (batchId: string) =>
+        apiClient
+            .get<AdminImportBatchDetail>(`${API_URL}/admin/imports/${batchId}`, {
+                withCredentials: true,
+            })
+            .then((response) => response.data),
+    executeImport: (batchId: string) =>
+        apiClient
+            .post<Record<string, unknown>>(
+                `${API_URL}/admin/imports/${batchId}/execute`,
+                {},
+                authenticatedMutationConfig(),
+            )
+            .then((response) => response.data),
+    rollbackImport: (batchId: string, reason: string) =>
+        apiClient
+            .post<{ message: string; reverted_items: number; preserved_items: number }>(
+                `${API_URL}/admin/imports/${batchId}/rollback`,
+                { reason },
+                authenticatedMutationConfig(),
+            )
+            .then((response) => response.data),
+    updateUserStatus: (userId: string, status: AdminUserStatus, reason: string) =>
+        apiClient
+            .post<{ message: string }>(
+                `${API_URL}/auth/admin/users/${userId}/${status === "active" ? "reactivate" : "suspend"}`,
+                { reason },
+                authenticatedMutationConfig(),
+            )
+            .then((response) => response.data),
+    revokeUserSessions: (userId: string, reason: string) =>
+        apiClient
+            .post<{ message: string }>(
+                `${API_URL}/auth/admin/users/${userId}/revoke-sessions`,
+                { reason },
+                authenticatedMutationConfig(),
+            )
+            .then((response) => response.data),
+    issueResetCredential: (userId: string, reason: string) =>
+        apiClient
+            .post<{ credential: string; expires_at: string }>(
+                `${API_URL}/auth/admin/users/${userId}/reset-credentials`,
+                { reason },
+                authenticatedMutationConfig(),
+            )
+            .then((response) => response.data),
+};
+
+export interface UserTicketWallet {
+    available_microtickets: string;
+    held_microtickets: string;
+    total_microtickets: string;
+    available_tickets: string;
+    held_tickets: string;
+    total_tickets: string;
+    version: number;
+}
+
+export interface UserTicketLedgerItem {
+    id: string;
+    entry_type: string;
+    operation_zh: string;
+    workspace_id?: string | null;
+    project_id?: string | null;
+    task_id?: string | null;
+    metering_tokens?: string | null;
+    amount_microtickets: string;
+    amount_tickets: string;
+    display_delta_microtickets: string;
+    display_delta_tickets: string;
+    available_after: string;
+    held_after: string;
+    available_after_tickets: string;
+    held_after_tickets: string;
+    status: string;
+    status_zh: string;
+    reason?: string | null;
+    created_at: string;
+}
+
+export interface UserTicketUsageItem {
+    id: string;
+    workspace_id: string;
+    project_id?: string | null;
+    task_id: string;
+    capability: string;
+    outcome: string;
+    status_zh: string;
+    metering_tokens: string;
+    charged_microtickets: string;
+    charged_tickets: string;
+    tokens_per_ticket: string;
+    created_at: string;
+}
+
+export interface UserTicketHistoryResponse<T> {
+    view: "ledger" | "usage";
+    items: T[];
+    total: number;
+    offset: number;
+    limit: number;
+}
+
+export const userTicketApi = {
+    getWallet: () =>
+        apiClient
+            .get<UserTicketWallet>(`${API_URL}/wallet`, { withCredentials: true })
+            .then((response) => response.data),
+    getLedger: (offset = 0, limit = 20) =>
+        apiClient
+            .get<UserTicketHistoryResponse<UserTicketLedgerItem>>(`${API_URL}/wallet/history`, {
+                params: { view: "ledger", offset, limit },
+                withCredentials: true,
+            })
+            .then((response) => response.data),
+    getUsage: (offset = 0, limit = 20) =>
+        apiClient
+            .get<UserTicketHistoryResponse<UserTicketUsageItem>>(`${API_URL}/wallet/history`, {
+                params: { view: "usage", offset, limit },
+                withCredentials: true,
+            })
+            .then((response) => response.data),
+};
 
 /**
  * PR-3g #3 · TTS voice metadata returned by GET /voices.
@@ -164,6 +1647,180 @@ export interface VideoTask {
     provider_request_id?: string | null;
 }
 
+export type AIServerTaskStatus =
+    | "reserved"
+    | "queued"
+    | "running"
+    | "provider_succeeded"
+    | "succeeded"
+    | "failed"
+    | "cancelled"
+    | "support_review";
+
+export interface AITaskStatusResponse {
+    id: string;
+    workspace_id: string;
+    project_id?: string | null;
+    capability: string;
+    status: AIServerTaskStatus;
+    status_zh: string;
+    quoted_microtickets: string;
+    quoted_tickets: string;
+    cancellation_requested: boolean;
+    support_review: boolean;
+    safe_error?: { code?: string | null; message?: string | null } | null;
+    media_ids: string[];
+    created_at?: string | null;
+    updated_at?: string | null;
+    started_at?: string | null;
+    completed_at?: string | null;
+    actual_model?: { display_name: string; model_id: string };
+    tokens_per_ticket?: string;
+}
+
+export interface AITaskDetailResponse extends AITaskStatusResponse {
+    attempts: Array<{
+        id: string;
+        attempt_number: number;
+        status: string;
+        model_id?: string | null;
+        created_at?: string | null;
+        started_at?: string | null;
+        completed_at?: string | null;
+    }>;
+    billing: {
+        hold_ids: string[];
+        open_hold_ids: string[];
+        usage_event_ids: string[];
+    };
+}
+
+export interface ClientAITask extends Omit<AITaskStatusResponse, "status"> {
+    status: "pending" | "processing" | "completed" | "failed";
+    raw_status: AIServerTaskStatus;
+    media_references: string[];
+    image_url?: string;
+    video_url?: string;
+    audio_url?: string;
+    result_url?: string;
+    error?: string;
+}
+
+export interface AITaskListResponse {
+    items: ClientAITask[];
+    total: number;
+    offset: number;
+    limit: number;
+}
+
+export type ClientAITaskDetail = ClientAITask &
+    Omit<AITaskDetailResponse, keyof AITaskStatusResponse>;
+
+export interface SubmittedAITaskResponse {
+    task_id: string;
+    attempt_id?: string;
+    status: AIServerTaskStatus;
+    capability?: string;
+    quoted_microtickets?: string;
+    quoted_tickets?: string;
+    tokens_per_ticket?: string;
+    actual_model?: { display_name?: string; model_id?: string };
+    reused?: boolean;
+    dispatched?: boolean;
+}
+
+function normalizeLegacyTaskStatus(
+    status: string,
+): "pending" | "processing" | "completed" | "failed" {
+    if (status === "reserved" || status === "queued" || status === "pending") {
+        return "pending";
+    }
+    if (status === "running" || status === "provider_succeeded" || status === "processing") {
+        return "processing";
+    }
+    if (status === "succeeded" || status === "completed") return "completed";
+    return "failed";
+}
+
+async function projectAITask(task: AITaskStatusResponse): Promise<ClientAITask> {
+    const mediaReferences = (task.media_ids || []).map(toMediaReference);
+    await prefetchMediaReferences(mediaReferences);
+    const primaryMedia = mediaReferences[0];
+    const capability = task.capability || "";
+    const error = task.safe_error?.message || undefined;
+    return {
+        ...task,
+        status: normalizeLegacyTaskStatus(task.status),
+        raw_status: task.status,
+        media_references: mediaReferences,
+        ...(primaryMedia ? { result_url: primaryMedia } : {}),
+        ...(primaryMedia && capability.startsWith("video.")
+            ? { video_url: primaryMedia }
+            : {}),
+        ...(primaryMedia && (capability.startsWith("speech.") || capability.startsWith("audio."))
+            ? { audio_url: primaryMedia }
+            : {}),
+        ...(primaryMedia && !capability.startsWith("video.") && !capability.startsWith("speech.") && !capability.startsWith("audio.")
+            ? { image_url: primaryMedia }
+            : {}),
+        ...(error ? { error } : {}),
+    };
+}
+
+export function normalizeSubmittedAITaskResponse<T>(value: T): T {
+    if (!value || typeof value !== "object" || !("task_id" in value)) return value;
+    const submitted = value as unknown as SubmittedAITaskResponse;
+    return {
+        ...submitted,
+        id: submitted.task_id,
+        _task_id: submitted.task_id,
+        raw_status: submitted.status,
+        status: normalizeLegacyTaskStatus(submitted.status),
+    } as T;
+}
+
+export const aiTaskApi = {
+    list: async (params: { status?: AIServerTaskStatus; offset?: number; limit?: number } = {}): Promise<AITaskListResponse> => {
+        const response = await apiClient.get<{
+            items: AITaskStatusResponse[];
+            total: number;
+            offset: number;
+            limit: number;
+        }>(`${API_URL}/ai/tasks`, { params });
+        return {
+            ...response.data,
+            items: await Promise.all(response.data.items.map(projectAITask)),
+        };
+    },
+    getStatus: async (taskId: string): Promise<ClientAITask> => {
+        const response = await apiClient.get<AITaskStatusResponse>(
+            `${API_URL}/ai/tasks/${taskId}/status`,
+        );
+        return projectAITask(response.data);
+    },
+    getDetail: async (taskId: string): Promise<ClientAITaskDetail> => {
+        const response = await apiClient.get<AITaskDetailResponse>(
+            `${API_URL}/ai/tasks/${taskId}`,
+        );
+        return {
+            ...response.data,
+            ...await projectAITask(response.data),
+        } as ClientAITaskDetail;
+    },
+    cancel: async (taskId: string) => {
+        const response = await apiClient.post<AITaskStatusResponse & {
+            cancellation_outcome: string;
+            message: string;
+            released_microtickets: string;
+            released_tickets: string;
+        }>(`${API_URL}/ai/tasks/${taskId}/cancel`);
+        return {
+            ...response.data,
+            ...await projectAITask(response.data),
+        };
+    },
+};
+
 // ─── Storyboard Schema v2 types ─────────────────────────────────────────────
 
 export interface DialogueStructured {
@@ -216,58 +1873,66 @@ export interface RefineSSEEvent {
 
 export const api = {
     createProject: async (title: string, text: string, skipAnalysis: boolean = false, workflowMode: string = "r2v", seriesId?: string) => {
-        const res = await axios.post(`${API_URL}/projects`, { title, text, workflow_mode: workflowMode, series_id: seriesId }, {
+        const res = await apiClient.post(`${API_URL}/projects`, { title, text, workflow_mode: workflowMode, series_id: seriesId }, {
             params: { skip_analysis: skipAnalysis }
         });
         return { ...res.data, originalText: res.data.original_text };
     },
 
     getProjects: async () => {
-        const res = await axios.get(`${API_URL}/projects/`);
+        const res = await apiClient.get(`${API_URL}/projects/`);
         return res.data.map((p: any) => ({ ...p, originalText: p.original_text }));
     },
 
     getProject: async (scriptId: string) => {
-        const res = await axios.get(`${API_URL}/projects/${scriptId}`);
-        return { ...res.data, originalText: res.data.original_text };
+        const res = await apiClient.get(`${API_URL}/projects/${scriptId}`);
+        if (!IS_CLOUD_DEPLOYMENT) {
+            return { ...res.data, originalText: res.data.original_text };
+        }
+        const assets = await apiClient.get(`${API_URL}/projects/${scriptId}/assets`);
+        return {
+            ...res.data,
+            ...assets.data,
+            originalText: res.data.original_text,
+        };
     },
 
     deleteProject: async (scriptId: string) => {
-        const res = await axios.delete(`${API_URL}/projects/${scriptId}`);
+        const res = await apiClient.delete(`${API_URL}/projects/${scriptId}`);
         return res.data;
     },
 
     /** Toggle the user-starred (featured) flag on a project. Returns the
      *  updated Script. No request body — the backend flips the current flag. */
     toggleProjectStarred: async (scriptId: string) => {
-        const res = await axios.post(`${API_URL}/projects/${scriptId}/toggle_starred`);
+        const res = await apiClient.post(`${API_URL}/projects/${scriptId}/toggle_starred`);
         return res.data;
     },
 
     reparseProject: async (scriptId: string, text: string) => {
-        const res = await axios.put(`${API_URL}/projects/${scriptId}/reparse`, { text });
+        const res = await apiClient.put(`${API_URL}/projects/${scriptId}/reparse`, { text });
         return { ...res.data, originalText: res.data.original_text };
     },
 
     extractPreview: async (scriptId: string, text: string) => {
-        const res = await axios.post(`${API_URL}/projects/${scriptId}/extract_preview`, { text });
+        const res = await apiClient.post(`${API_URL}/projects/${scriptId}/extract_preview`, { text });
         return res.data as { characters: any[]; scenes: any[]; props: any[] };
     },
 
     /** Persist `original_text` without LLM reparse. Used for textarea
      *  blur-saves so navigation/reload doesn't drop in-progress drafts. */
     updateScriptText: async (scriptId: string, text: string) => {
-        const res = await axios.put(`${API_URL}/projects/${scriptId}/text`, { text });
+        const res = await apiClient.put(`${API_URL}/projects/${scriptId}/text`, { text });
         return { ...res.data, originalText: res.data.original_text };
     },
 
     syncDescriptions: async (scriptId: string) => {
-        const res = await axios.post(`${API_URL}/projects/${scriptId}/sync_descriptions`);
+        const res = await apiClient.post(`${API_URL}/projects/${scriptId}/sync_descriptions`);
         return res.data;
     },
 
     generateAssets: async (scriptId: string) => {
-        const res = await axios.post(`${API_URL}/projects/${scriptId}/generate_assets`);
+        const res = await apiClient.post(`${API_URL}/projects/${scriptId}/generate_assets`);
         return res.data;
     },
 
@@ -307,7 +1972,7 @@ export const api = {
         // off); explicit boolean is user's Advanced-section choice.
         watermark?: boolean
     ) => {
-        const res = await axios.post(`${API_URL}/projects/${id}/video_tasks`, {
+        const res = await apiClient.post(`${API_URL}/projects/${id}/video_tasks`, withoutCloudModelOverrides({
             image_url,
             prompt,
             duration,
@@ -335,8 +2000,8 @@ export const api = {
             ratio,
             watermark,
             workbench_tab: workbenchTab,
-        });
-        return res.data;
+        }));
+        return normalizeSubmittedAITaskResponse(res.data);
     },
 
     /** Upload an external image as a T2I首帧 candidate for an I2V flow.
@@ -353,7 +2018,7 @@ export const api = {
     uploadT2IFrame: async (scriptId: string, frameId: string, file: File) => {
         const formData = new FormData();
         formData.append("file", file);
-        const res = await axios.post(
+        const res = await apiClient.post(
             `${API_URL}/projects/${scriptId}/frames/${frameId}/upload_t2i`,
             formData,
             { headers: { "Content-Type": "multipart/form-data" } },
@@ -378,7 +2043,7 @@ export const api = {
             workbench_generate_count?: number;
         },
     ) => {
-        const res = await axios.patch(
+        const res = await apiClient.patch(
             `${API_URL}/projects/${scriptId}/frames/${frameId}/workbench`,
             patch,
         );
@@ -389,12 +2054,25 @@ export const api = {
     uploadFile: async (file: File) => {
         const formData = new FormData();
         formData.append("file", file);
-        const response = await fetch(`${API_URL}/upload`, {
+        const response = await apiFetch(`${API_URL}/upload`, {
             method: "POST",
             body: formData,
         });
-        if (!response.ok) throw new Error("Failed to upload file");
-        return response.json();
+        if (!response.ok) throw new Error("文件上传失败");
+        const uploaded = await response.json();
+        if (IS_CLOUD_DEPLOYMENT && uploaded?.id) {
+            const mediaReference = toMediaReference(uploaded.id);
+            const accessUrl = await resolveMediaUrl(mediaReference);
+            return {
+                ...uploaded,
+                media_id: uploaded.id,
+                media_reference: mediaReference,
+                path: mediaReference,
+                url: mediaReference,
+                access_url: accessUrl,
+            };
+        }
+        return uploaded;
     },
 
     /** Lightweight liveness probe + log path. Used by the Diagnose UI
@@ -407,7 +2085,7 @@ export const api = {
         log_dir: string;
         studio_projects: number;
     }> => {
-        const res = await axios.get(`${API_URL}/health`, { timeout: 5000 });
+        const res = await apiClient.get(`${API_URL}/health`, { timeout: 5000 });
         return res.data;
     },
 
@@ -421,7 +2099,7 @@ export const api = {
         };
         status?: string;
     }> => {
-        const res = await axios.get(`${API_URL}/system/check`, { timeout: 10000 });
+        const res = await apiClient.get(`${API_URL}/system/check`, { timeout: 10000 });
         return res.data;
     },
 
@@ -436,7 +2114,7 @@ export const api = {
         errors: string[];
         missing: boolean;
     }> => {
-        const res = await axios.get(`${API_URL}/diagnose/log_tail`, {
+        const res = await apiClient.get(`${API_URL}/diagnose/log_tail`, {
             params: { lines },
             timeout: 8000,
         });
@@ -452,7 +2130,7 @@ export const api = {
         taskId: string,
         payload: { is_starred?: boolean; label?: string | null; clear_label?: boolean },
     ) => {
-        const res = await axios.patch(
+        const res = await apiClient.patch(
             `${API_URL}/projects/${scriptId}/video_tasks/${taskId}/annotate`,
             payload,
         );
@@ -463,7 +2141,8 @@ export const api = {
      *  keeps going; this just unblocks the local UI. Already-completed
      *  tasks are a 404 no-op. */
     cancelVideoTask: async (scriptId: string, taskId: string) => {
-        const res = await axios.post(
+        if (IS_CLOUD_DEPLOYMENT) return aiTaskApi.cancel(taskId);
+        const res = await apiClient.post(
             `${API_URL}/projects/${scriptId}/video_tasks/${taskId}/cancel`,
         );
         return res.data;
@@ -491,7 +2170,7 @@ export const api = {
             params.append("description", description);
         }
 
-        const response = await fetch(
+        const response = await apiFetch(
             `${API_URL}/projects/${scriptId}/assets/${assetType}/${assetId}/upload?${params.toString()}`,
             {
                 method: "POST",
@@ -508,7 +2187,7 @@ export const api = {
     },
 
     generateAsset: async (scriptId: string, assetId: string, assetType: string, stylePreset: string, stylePrompt?: string, generationType: string = "all", prompt: string = "", applyStyle: boolean = true, negativePrompt: string = "", batchSize: number = 1, modelName?: string, aspectRatio?: string) => {
-        const res = await axios.post(`${API_URL}/projects/${scriptId}/assets/generate`, {
+        const res = await apiClient.post(`${API_URL}/projects/${scriptId}/assets/generate`, withoutCloudModelOverrides({
             asset_id: assetId,
             asset_type: assetType,
             style_preset: stylePreset,
@@ -520,25 +2199,27 @@ export const api = {
             batch_size: batchSize,
             model_name: modelName,
             aspect_ratio: aspectRatio,
-        });
-        return res.data;
+        }));
+        return normalizeSubmittedAITaskResponse(res.data);
     },
 
     getTaskStatus: async (taskId: string) => {
-        const res = await axios.get(`${API_URL}/tasks/${taskId}`);
+        if (IS_CLOUD_DEPLOYMENT) return aiTaskApi.getStatus(taskId);
+        const res = await apiClient.get(`${API_URL}/tasks/${taskId}`);
         return res.data;
     },
 
     getVideoTaskStatus: async (scriptId: string, taskId: string) => {
-        const res = await axios.get(
+        if (IS_CLOUD_DEPLOYMENT) return aiTaskApi.getStatus(taskId);
+        const res = await apiClient.get(
             `${API_URL}/projects/${scriptId}/video_tasks/${taskId}`,
         );
         return res.data;
     },
 
     generateAssetVideo: async (scriptId: string, assetType: string, assetId: string, data: { prompt?: string, duration?: number, aspect_ratio?: string }) => {
-        const res = await axios.post(`${API_URL}/projects/${scriptId}/assets/${assetType}/${assetId}/generate_video`, data);
-        return res.data;
+        const res = await apiClient.post(`${API_URL}/projects/${scriptId}/assets/${assetType}/${assetId}/generate_video`, data);
+        return normalizeSubmittedAITaskResponse(res.data);
     },
 
     /**
@@ -554,7 +2235,7 @@ export const api = {
         duration: number = 5,
         batchSize: number = 1
     ): Promise<any & { _task_id?: string }> => {
-        const res = await axios.post(`${API_URL}/projects/${scriptId}/assets/generate_motion_ref`, {
+        const res = await apiClient.post(`${API_URL}/projects/${scriptId}/assets/generate_motion_ref`, {
             asset_id: assetId,
             asset_type: assetType,
             prompt,
@@ -562,16 +2243,16 @@ export const api = {
             duration,
             batch_size: batchSize
         });
-        return res.data;
+        return normalizeSubmittedAITaskResponse(res.data);
     },
 
     deleteAssetVideo: async (scriptId: string, assetType: string, assetId: string, videoId: string) => {
-        const res = await axios.delete(`${API_URL}/projects/${scriptId}/assets/${assetType}/${assetId}/videos/${videoId}`);
+        const res = await apiClient.delete(`${API_URL}/projects/${scriptId}/assets/${assetType}/${assetId}/videos/${videoId}`);
         return res.data;
     },
 
     toggleAssetLock: async (scriptId: string, assetId: string, assetType: string) => {
-        const res = await axios.post(`${API_URL}/projects/${scriptId}/assets/toggle_lock`, {
+        const res = await apiClient.post(`${API_URL}/projects/${scriptId}/assets/toggle_lock`, {
             asset_id: assetId,
             asset_type: assetType
         });
@@ -579,7 +2260,7 @@ export const api = {
     },
 
     toggleAssetStarred: async (scriptId: string, assetId: string, assetType: string) => {
-        const res = await axios.post(`${API_URL}/projects/${scriptId}/assets/toggle_starred`, {
+        const res = await apiClient.post(`${API_URL}/projects/${scriptId}/assets/toggle_starred`, {
             asset_id: assetId,
             asset_type: assetType
         });
@@ -587,7 +2268,7 @@ export const api = {
     },
 
     toggleSeriesAssetStarred: async (seriesId: string, assetId: string, assetType: string) => {
-        const res = await axios.post(`${API_URL}/series/${seriesId}/assets/toggle_starred`, {
+        const res = await apiClient.post(`${API_URL}/series/${seriesId}/assets/toggle_starred`, {
             asset_id: assetId,
             asset_type: assetType
         });
@@ -595,16 +2276,19 @@ export const api = {
     },
 
     updateAssetImage: async (scriptId: string, assetId: string, assetType: string, imageUrl: string) => {
-        const res = await axios.post(`${API_URL}/projects/${scriptId}/assets/update_image`, {
+        const mediaId = parseMediaReference(imageUrl);
+        const res = await apiClient.post(`${API_URL}/projects/${scriptId}/assets/update_image`, {
             asset_id: assetId,
             asset_type: assetType,
-            image_url: imageUrl
+            ...(IS_CLOUD_DEPLOYMENT && mediaId
+                ? { media_id: mediaId }
+                : { image_url: imageUrl })
         });
         return res.data;
     },
 
     selectAssetVariant: async (scriptId: string, assetId: string, assetType: string, variantId: string, generationType?: string) => {
-        const res = await axios.post(`${API_URL}/projects/${scriptId}/assets/variant/select`, {
+        const res = await apiClient.post(`${API_URL}/projects/${scriptId}/assets/variant/select`, {
             asset_id: assetId,
             asset_type: assetType,
             variant_id: variantId,
@@ -614,7 +2298,7 @@ export const api = {
     },
 
     deleteAssetVariant: async (scriptId: string, assetId: string, assetType: string, variantId: string) => {
-        const res = await axios.post(`${API_URL}/projects/${scriptId}/assets/variant/delete`, {
+        const res = await apiClient.post(`${API_URL}/projects/${scriptId}/assets/variant/delete`, {
             asset_id: assetId,
             asset_type: assetType,
             variant_id: variantId
@@ -623,7 +2307,7 @@ export const api = {
     },
 
     favoriteAssetVariant: async (scriptId: string, assetId: string, assetType: string, variantId: string, isFavorited: boolean, generationType?: string) => {
-        const res = await axios.post(`${API_URL}/projects/${scriptId}/assets/variant/favorite`, {
+        const res = await apiClient.post(`${API_URL}/projects/${scriptId}/assets/variant/favorite`, {
             asset_id: assetId,
             asset_type: assetType,
             variant_id: variantId,
@@ -645,7 +2329,10 @@ export const api = {
         imageModel?: string,
         r2vModel?: string,
     ) => {
-        const res = await axios.post(`${API_URL}/projects/${scriptId}/model_settings`, {
+        if (IS_CLOUD_DEPLOYMENT) {
+            throw new Error("云端模型由平台统一配置");
+        }
+        const res = await apiClient.post(`${API_URL}/projects/${scriptId}/model_settings`, {
             t2i_model: t2iModel,
             i2i_model: i2iModel,
             i2v_model: i2vModel,
@@ -660,12 +2347,12 @@ export const api = {
     },
 
     getPromptConfig: async (scriptId: string) => {
-        const res = await axios.get(`${API_URL}/projects/${scriptId}/prompt_config`);
+        const res = await apiClient.get(`${API_URL}/projects/${scriptId}/prompt_config`);
         return res.data;
     },
 
     updatePromptConfig: async (scriptId: string, config: { storyboard_polish?: string; video_polish?: string; r2v_polish?: string; entity_extraction?: string; style_analysis?: string; storyboard_extraction?: string }) => {
-        const res = await axios.put(`${API_URL}/projects/${scriptId}/prompt_config`, config);
+        const res = await apiClient.put(`${API_URL}/projects/${scriptId}/prompt_config`, withoutCloudModelOverrides(config));
         return res.data;
     },
 
@@ -675,7 +2362,7 @@ export const api = {
      *  this; on save it stores "" for any field still equal to its default
      *  (delta semantics → backend uses the built-in). */
     fetchPromptDefaults: async (): Promise<Record<string, string>> => {
-        const res = await axios.get<Record<string, string>>(`${API_URL}/prompt_defaults`);
+        const res = await apiClient.get<Record<string, string>>(`${API_URL}/prompt_defaults`);
         return res.data;
     },
 
@@ -683,7 +2370,7 @@ export const api = {
         // Manual pick — sets frame.is_video_pinned=true so future
         // auto_select_latest_video calls (fired by R2V poll completion)
         // skip this frame.
-        const res = await axios.post(`${API_URL}/projects/${scriptId}/frames/${frameId}/select_video`, {
+        const res = await apiClient.post(`${API_URL}/projects/${scriptId}/frames/${frameId}/select_video`, {
             video_id: videoId
         });
         return res.data;
@@ -693,32 +2380,32 @@ export const api = {
         // Fire-and-forget on every R2V poll completion. Backend picks the
         // latest completed task for this frame and updates frame.video_url
         // unless the user has pinned a different take.
-        const res = await axios.post(`${API_URL}/projects/${scriptId}/frames/${frameId}/auto_select_latest_video`);
+        const res = await apiClient.post(`${API_URL}/projects/${scriptId}/frames/${frameId}/auto_select_latest_video`);
         return res.data;
     },
 
     unpinVideo: async (scriptId: string, frameId: string) => {
         // Clear the pin; selected_video_id and video_url stay put until
         // the next auto-select picks a newer completed task.
-        const res = await axios.post(`${API_URL}/projects/${scriptId}/frames/${frameId}/unpin_video`);
+        const res = await apiClient.post(`${API_URL}/projects/${scriptId}/frames/${frameId}/unpin_video`);
         return res.data;
     },
 
     mergeVideos: async (scriptId: string) => {
-        const res = await axios.post(`${API_URL}/projects/${scriptId}/merge`);
+        const res = await apiClient.post(`${API_URL}/projects/${scriptId}/merge`);
         return res.data;
     },
 
     // Art Direction APIs
     analyzeScriptForStyles: async (scriptId: string, scriptText: string) => {
-        const res = await axios.post(`${API_URL}/projects/${scriptId}/art_direction/analyze`, {
+        const res = await apiClient.post(`${API_URL}/projects/${scriptId}/art_direction/analyze`, {
             script_text: scriptText
         });
         return res.data;
     },
 
     saveArtDirection: async (scriptId: string, selectedStyleId: string, styleConfig: any, customStyles: any[] = [], aiRecommendations: any[] = []) => {
-        const res = await axios.post(`${API_URL}/projects/${scriptId}/art_direction/save`, {
+        const res = await apiClient.post(`${API_URL}/projects/${scriptId}/art_direction/save`, {
             selected_style_id: selectedStyleId,
             style_config: styleConfig,
             custom_styles: customStyles,
@@ -728,7 +2415,7 @@ export const api = {
     },
 
     getStylePresets: async () => {
-        const res = await axios.get(`${API_URL}/art_direction/presets`);
+        const res = await apiClient.get(`${API_URL}/art_direction/presets`);
         return res.data;
     },
 
@@ -755,14 +2442,14 @@ export const api = {
         imageUrls: string[] = [],
         polishModel: string = "",
     ) => {
-        const res = await axios.post(`${API_URL}/video/polish_prompt`, {
+        const res = await apiClient.post(`${API_URL}/video/polish_prompt`, withoutCloudModelOverrides({
             draft_prompt: draftPrompt,
             feedback: feedback,
             script_id: scriptId,
             prev_cn: prevCn,
             image_urls: imageUrls,
             polish_model: polishModel,
-        });
+        }));
         return res.data;
     },
     polishR2VPrompt: async (
@@ -774,7 +2461,7 @@ export const api = {
         imageUrls: string[] = [],
         polishModel: string = "",
     ) => {
-        const res = await axios.post(`${API_URL}/video/polish_r2v_prompt`, {
+        const res = await apiClient.post(`${API_URL}/video/polish_r2v_prompt`, withoutCloudModelOverrides({
             draft_prompt: draftPrompt,
             slots: slots,
             feedback: feedback,
@@ -782,11 +2469,11 @@ export const api = {
             prev_cn: prevCn,
             image_urls: imageUrls,
             polish_model: polishModel,
-        });
+        }));
         return res.data;
     },
     updateAssetDescription: async (scriptId: string, assetId: string, assetType: string, description: string) => {
-        const res = await axios.post(`${API_URL}/projects/${scriptId}/assets/update_description`, {
+        const res = await apiClient.post(`${API_URL}/projects/${scriptId}/assets/update_description`, {
             asset_id: assetId,
             asset_type: assetType,
             description: description
@@ -795,7 +2482,7 @@ export const api = {
     },
 
     updateAssetAttributes: async (scriptId: string, assetId: string, assetType: string, attributes: any) => {
-        const res = await axios.post(`${API_URL}/projects/${scriptId}/assets/update_attributes`, {
+        const res = await apiClient.post(`${API_URL}/projects/${scriptId}/assets/update_attributes`, {
             asset_id: assetId,
             asset_type: assetType,
             attributes: attributes
@@ -804,7 +2491,7 @@ export const api = {
     },
 
     toggleFrameLock: async (scriptId: string, frameId: string) => {
-        const res = await axios.post(`${API_URL}/projects/${scriptId}/frames/toggle_lock`, {
+        const res = await apiClient.post(`${API_URL}/projects/${scriptId}/frames/toggle_lock`, {
             frame_id: frameId
         });
         return res.data;
@@ -822,7 +2509,7 @@ export const api = {
         camera_movement_description?: string;
         transition_hint?: string;
     }) => {
-        const res = await axios.post(`${API_URL}/projects/${scriptId}/frames/update`, {
+        const res = await apiClient.post(`${API_URL}/projects/${scriptId}/frames/update`, {
             frame_id: frameId,
             ...data
         });
@@ -830,7 +2517,7 @@ export const api = {
     },
 
     updateProjectStyle: async (scriptId: string, stylePreset: string, stylePrompt?: string) => {
-        const res = await axios.patch(`${API_URL}/projects/${scriptId}/style`, {
+        const res = await apiClient.patch(`${API_URL}/projects/${scriptId}/style`, {
             style_preset: stylePreset,
             style_prompt: stylePrompt
         });
@@ -838,7 +2525,7 @@ export const api = {
     },
 
     renderFrame: async (scriptId: string, frameId: string, compositionData: any, prompt: string, batchSize: number = 1) => {
-        const res = await axios.post(`${API_URL}/projects/${scriptId}/storyboard/render`, {
+        const res = await apiClient.post(`${API_URL}/projects/${scriptId}/storyboard/render`, {
             frame_id: frameId,
             composition_data: compositionData,
             prompt: prompt,
@@ -854,7 +2541,7 @@ export const api = {
      * Replaces existing frames with newly generated ones.
      */
     analyzeToStoryboard: async (scriptId: string, text: string) => {
-        const res = await axios.post(`${API_URL}/projects/${scriptId}/storyboard/analyze`, {
+        const res = await apiClient.post(`${API_URL}/projects/${scriptId}/storyboard/analyze`, {
             text: text
         });
         return res.data;
@@ -865,7 +2552,7 @@ export const api = {
      * Returns { prompt_cn, prompt_en, frame_updated }.
      */
     refineFramePrompt: async (scriptId: string, frameId: string, rawPrompt: string, assets: any[] = [], feedback: string = "") => {
-        const res = await axios.post(`${API_URL}/projects/${scriptId}/storyboard/refine_prompt`, {
+        const res = await apiClient.post(`${API_URL}/projects/${scriptId}/storyboard/refine_prompt`, {
             frame_id: frameId,
             raw_prompt: rawPrompt,
             assets: assets,
@@ -875,12 +2562,12 @@ export const api = {
     },
 
     generateStoryboard: async (scriptId: string) => {
-        const res = await axios.post(`${API_URL}/projects/${scriptId}/generate_storyboard`);
+        const res = await apiClient.post(`${API_URL}/projects/${scriptId}/generate_storyboard`);
         return res.data;
     },
 
     getVoices: async (): Promise<VoiceMeta[]> => {
-        const response = await fetch(`${API_URL}/voices`);
+        const response = await apiFetch(`${API_URL}/voices`);
         if (!response.ok) throw new Error("Failed to fetch voices");
         return response.json();
     },
@@ -899,17 +2586,17 @@ export const api = {
         volume?: number;
         instructions?: string;
     }): Promise<{ url: string; cached: boolean }> => {
-        const response = await fetch(`${API_URL}/voice/preview`, {
+        const response = await apiFetch(`${API_URL}/voice/preview`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
+            body: JSON.stringify(withoutCloudModelOverrides({
                 voice_id: params.voice_id,
                 text: params.text,
                 speed: params.speed ?? 1.0,
                 pitch: params.pitch ?? 1.0,
                 volume: params.volume ?? 50,
                 instructions: params.instructions ?? null,
-            }),
+            })),
         });
         if (!response.ok) {
             const detail = await response.text();
@@ -932,15 +2619,15 @@ export const api = {
         label: string;
         target_model?: string;
     }): Promise<CustomVoice> => {
-        const response = await fetch(`${API_URL}/voice/clone`, {
+        const response = await apiFetch(`${API_URL}/voice/clone`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
+            body: JSON.stringify(withoutCloudModelOverrides({
                 series_id: params.series_id,
                 audio_url: params.audio_url,
                 label: params.label,
                 target_model: params.target_model ?? "cosyvoice-v3.5-plus",
-            }),
+            })),
         });
         if (!response.ok) {
             const detail = await response.text();
@@ -951,14 +2638,14 @@ export const api = {
 
     /** PR-3h · List custom voices (clones + designs) on a series. */
     listCustomVoices: async (seriesId: string): Promise<CustomVoice[]> => {
-        const response = await fetch(`${API_URL}/series/${seriesId}/custom_voices`);
+        const response = await apiFetch(`${API_URL}/series/${seriesId}/custom_voices`);
         if (!response.ok) throw new Error("Failed to list custom voices");
         return response.json();
     },
 
     /** PR-3h · Remove a custom voice. Does NOT delete on dashscope side. */
     deleteCustomVoice: async (seriesId: string, voiceId: string): Promise<{ removed: boolean }> => {
-        const response = await fetch(`${API_URL}/series/${seriesId}/custom_voices/${voiceId}`, {
+        const response = await apiFetch(`${API_URL}/series/${seriesId}/custom_voices/${voiceId}`, {
             method: "DELETE",
         });
         if (!response.ok) throw new Error("Failed to delete custom voice");
@@ -974,14 +2661,14 @@ export const api = {
         preview_text?: string;
         target_model?: string;
     }): Promise<{ voice_id: string; preview_url: string; target_model: string }> => {
-        const response = await fetch(`${API_URL}/voice/design/preview`, {
+        const response = await apiFetch(`${API_URL}/voice/design/preview`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
+            body: JSON.stringify(withoutCloudModelOverrides({
                 voice_prompt: params.voice_prompt,
                 preview_text: params.preview_text ?? "你好，这是一段音色测试。请仔细听一听是否符合预期。",
                 target_model: params.target_model ?? "cosyvoice-v3.5-plus",
-            }),
+            })),
         });
         if (!response.ok) {
             const detail = await response.text();
@@ -998,16 +2685,16 @@ export const api = {
         label: string;
         target_model?: string;
     }): Promise<CustomVoice> => {
-        const response = await fetch(`${API_URL}/voice/design/accept`, {
+        const response = await apiFetch(`${API_URL}/voice/design/accept`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
+            body: JSON.stringify(withoutCloudModelOverrides({
                 series_id: params.series_id,
                 voice_id: params.voice_id,
                 voice_prompt: params.voice_prompt,
                 label: params.label,
                 target_model: params.target_model ?? "cosyvoice-v3.5-plus",
-            }),
+            })),
         });
         if (!response.ok) {
             const detail = await response.text();
@@ -1018,7 +2705,7 @@ export const api = {
 
     /** PR-3i · LLM helper — translate character.description → CosyVoice voice_prompt. */
     translateVoicePrompt: async (description: string): Promise<{ voice_prompt: string }> => {
-        const response = await fetch(`${API_URL}/voice/design/translate`, {
+        const response = await apiFetch(`${API_URL}/voice/design/translate`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ description }),
@@ -1031,7 +2718,7 @@ export const api = {
     },
 
     bindVoice: async (scriptId: string, charId: string, voiceId: string, voiceName: string) => {
-        const response = await fetch(`${API_URL}/projects/${scriptId}/characters/${charId}/voice`, {
+        const response = await apiFetch(`${API_URL}/projects/${scriptId}/characters/${charId}/voice`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ voice_id: voiceId, voice_name: voiceName }),
@@ -1041,7 +2728,7 @@ export const api = {
     },
 
     generateAudio: async (scriptId: string) => {
-        const response = await fetch(`${API_URL}/projects/${scriptId}/generate_audio`, {
+        const response = await apiFetch(`${API_URL}/projects/${scriptId}/generate_audio`, {
             method: "POST",
         });
         if (!response.ok) throw new Error("Failed to generate audio");
@@ -1056,7 +2743,7 @@ export const api = {
         volume: number = 50,
         instructions?: string,
     ) => {
-        const response = await fetch(`${API_URL}/projects/${scriptId}/frames/${frameId}/audio`, {
+        const response = await apiFetch(`${API_URL}/projects/${scriptId}/frames/${frameId}/audio`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ speed, pitch, volume, instructions: instructions || null }),
@@ -1068,7 +2755,7 @@ export const api = {
     /** PR-3j · Generate dialogue audio for every frame with dialogue.
      *  Skips frames whose snapshot hash still matches. */
     generateDialogueAudioBatch: async (scriptId: string): Promise<{ _batch_stats: { generated: number; skipped: number; failed: number; no_voice: number } }> => {
-        const response = await fetch(`${API_URL}/projects/${scriptId}/dialogue_audio/batch`, {
+        const response = await apiFetch(`${API_URL}/projects/${scriptId}/dialogue_audio/batch`, {
             method: "POST",
         });
         if (!response.ok) throw new Error("Failed to generate dialogue audio batch");
@@ -1076,7 +2763,7 @@ export const api = {
     },
 
     previewDub: async (scriptId: string, frameId: string, videoTaskId: string, offsetMs: number = 0) => {
-        const res = await axios.post(`${API_URL}/projects/${scriptId}/frames/${frameId}/dub/preview`, {
+        const res = await apiClient.post(`${API_URL}/projects/${scriptId}/frames/${frameId}/dub/preview`, {
             video_task_id: videoTaskId,
             offset_ms: offsetMs,
         }, { timeout: 120000 });
@@ -1084,18 +2771,18 @@ export const api = {
     },
 
     applyDub: async (scriptId: string, frameId: string) => {
-        const res = await axios.post(`${API_URL}/projects/${scriptId}/frames/${frameId}/dub/apply`);
+        const res = await apiClient.post(`${API_URL}/projects/${scriptId}/frames/${frameId}/dub/apply`);
         return res.data;
     },
 
     revertDub: async (scriptId: string, frameId: string) => {
-        const res = await axios.delete(`${API_URL}/projects/${scriptId}/frames/${frameId}/dub`);
+        const res = await apiClient.delete(`${API_URL}/projects/${scriptId}/frames/${frameId}/dub`);
         return res.data;
     },
 
     /** Schema v2 · Refine a single frame (Phase 2 rich fields). */
     refineSingleFrame: async (scriptId: string, frameId: string) => {
-        const response = await fetch(`${API_URL}/projects/${scriptId}/frames/${frameId}/refine`, {
+        const response = await apiFetch(`${API_URL}/projects/${scriptId}/frames/${frameId}/refine`, {
             method: "POST",
         });
         if (!response.ok) throw new Error("Failed to refine frame");
@@ -1107,7 +2794,7 @@ export const api = {
         scriptId: string,
         onEvent: (event: RefineSSEEvent) => void,
     ): Promise<void> => {
-        const response = await fetch(`${API_URL}/projects/${scriptId}/storyboard/refine_batch`, {
+        const response = await apiFetch(`${API_URL}/projects/${scriptId}/storyboard/refine_batch`, {
             method: "POST",
         });
         if (!response.ok) throw new Error("Failed to start batch refine");
@@ -1137,7 +2824,7 @@ export const api = {
 
     /** PR-3k · BGM preset catalog for Assembly Mix phase. */
     listBgmPresets: async (): Promise<BgmPreset[]> => {
-        const response = await fetch(`${API_URL}/bgm/presets`);
+        const response = await apiFetch(`${API_URL}/bgm/presets`);
         if (!response.ok) throw new Error("Failed to list bgm presets");
         return response.json();
     },
@@ -1149,7 +2836,7 @@ export const api = {
         bgm_volume?: number;
         sfx_volume?: number;
     }) => {
-        const response = await fetch(`${API_URL}/projects/${scriptId}/audio_mix`, {
+        const response = await apiFetch(`${API_URL}/projects/${scriptId}/audio_mix`, {
             method: "PUT",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify(payload),
@@ -1159,7 +2846,7 @@ export const api = {
     },
 
     updateVoiceParams: async (scriptId: string, charId: string, speed: number, pitch: number, volume: number) => {
-        const response = await fetch(`${API_URL}/projects/${scriptId}/characters/${charId}/voice_params`, {
+        const response = await apiFetch(`${API_URL}/projects/${scriptId}/characters/${charId}/voice_params`, {
             method: "PUT",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ speed, pitch, volume }),
@@ -1169,7 +2856,7 @@ export const api = {
     },
 
     exportProject: async (scriptId: string, options: any) => {
-        const response = await fetch(`${API_URL}/projects/${scriptId}/export`, {
+        const response = await apiFetch(`${API_URL}/projects/${scriptId}/export`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify(options),
@@ -1179,29 +2866,29 @@ export const api = {
     },
 
     generateVideo: async (scriptId: string) => {
-        const res = await axios.post(`${API_URL}/projects/${scriptId}/generate_video`);
+        const res = await apiClient.post(`${API_URL}/projects/${scriptId}/generate_video`);
         return res.data;
     },
 
     getEnvConfig: async (): Promise<EnvConfigPayload> => {
-        const res = await axios.get<EnvConfigPayload>(`${API_URL}/config/env`);
+        const res = await apiClient.get<EnvConfigPayload>(`${API_URL}/config/env`);
         return res.data;
     },
 
     saveEnvConfig: async (config: EnvConfigPayload) => {
-        const res = await axios.post(`${API_URL}/config/env`, config, {
+        const res = await apiClient.post(`${API_URL}/config/env`, config, {
             timeout: 60000, // 60 seconds timeout
         });
         return res.data;
     },
 
     triggerMulerunLogin: async () => {
-        const res = await axios.post(`${API_URL}/config/mulerun-login`);
+        const res = await apiClient.post(`${API_URL}/config/mulerun-login`);
         return res.data;
     },
 
     extractLastFrame: async (scriptId: string, frameId: string, videoTaskId: string) => {
-        const res = await axios.post(`${API_URL}/projects/${scriptId}/frames/${frameId}/extract_last_frame`, {
+        const res = await apiClient.post(`${API_URL}/projects/${scriptId}/frames/${frameId}/extract_last_frame`, {
             video_task_id: videoTaskId,
         });
         return res.data;
@@ -1210,7 +2897,7 @@ export const api = {
     uploadFrameImage: async (scriptId: string, frameId: string, file: File) => {
         const formData = new FormData();
         formData.append("file", file);
-        const response = await fetch(
+        const response = await apiFetch(
             `${API_URL}/projects/${scriptId}/frames/${frameId}/upload_image`,
             { method: "POST", body: formData }
         );
@@ -1230,7 +2917,7 @@ export const api = {
         title: string,
         opts: { description?: string; workflow_mode?: string; content_mode?: "scripted" | "freeform"; default_generation_mode?: "r2v" | "i2v" } = {},
     ) => {
-        const response = await axios.post(`${API_URL}/series`, {
+        const response = await apiClient.post(`${API_URL}/series`, {
             title,
             description: opts.description ?? "",
             workflow_mode: opts.workflow_mode ?? "r2v",
@@ -1241,16 +2928,16 @@ export const api = {
     },
 
     createSeries: async (title: string, description?: string, workflowMode?: string) => {
-        const response = await axios.post(`${API_URL}/series`, { title, description, workflow_mode: workflowMode || "r2v" });
+        const response = await apiClient.post(`${API_URL}/series`, { title, description, workflow_mode: workflowMode || "r2v" });
         return response.data;
     },
     listSeries: async () => {
-        const response = await axios.get(`${API_URL}/series`);
+        const response = await apiClient.get(`${API_URL}/series`);
         return response.data;
     },
     /** Core 全局/共享资产池（跨系列/项目聚合）。后端：GET /library/assets → {characters, scenes, props}。 */
     listLibraryAssets: async () => {
-        const res = await axios.get(`${API_URL}/library/assets`);
+        const res = await apiClient.get(`${API_URL}/library/assets`);
         return res.data;
     },
     /** 新建一条全局/共享资产。后端：POST /library/assets。
@@ -1259,18 +2946,30 @@ export const api = {
         assetType: string,
         data: { name: string; description?: string; persona?: string; image_url?: string; voice_id?: string },
     ) => {
-        const res = await axios.post(`${API_URL}/library/assets`, { asset_type: assetType, ...data });
+        const mediaId = parseMediaReference(data.image_url);
+        const payload = { ...data };
+        if (IS_CLOUD_DEPLOYMENT && mediaId) delete payload.image_url;
+        const res = await apiClient.post(`${API_URL}/library/assets`, {
+            asset_type: assetType,
+            ...payload,
+            ...(IS_CLOUD_DEPLOYMENT && mediaId ? { media_id: mediaId } : {}),
+        });
         return res.data;
     },
     /** 上传一张本地图片到全局资产库，返回可被前端加载的 image_url。
      *  后端契约：POST /library/assets/upload，multipart 字段名 "file" → { image_url }。
      *  调用方拿到 image_url 后传给 createLibraryAsset。 */
-    uploadLibraryImage: async (file: File): Promise<{ image_url: string }> => {
+    uploadLibraryImage: async (file: File): Promise<{ image_url: string; media_id?: string }> => {
         const formData = new FormData();
         formData.append("file", file);
-        const res = await axios.post<{ image_url: string }>(`${API_URL}/library/assets/upload`, formData, {
+        const res = await apiClient.post<MediaUploadResponse | { image_url: string }>(`${API_URL}/library/assets/upload`, formData, {
             headers: { "Content-Type": "multipart/form-data" },
         });
+        if ("id" in res.data) {
+            const imageUrl = toMediaReference(res.data.id);
+            await resolveMediaUrl(imageUrl);
+            return { image_url: imageUrl, media_id: res.data.id };
+        }
         return res.data;
     },
     /** 补丁更新全局资产（仅发送的字段生效，PATCH 语义）。后端：PUT /library/assets/{type}/{id}。assetType 单数。 */
@@ -1288,7 +2987,7 @@ export const api = {
             visual_weight?: number;
         },
     ) => {
-        const res = await axios.put(`${API_URL}/library/assets/${assetType}/${assetId}`, patch);
+        const res = await apiClient.put(`${API_URL}/library/assets/${assetType}/${assetId}`, patch);
         return res.data;
     },
     /** 把项目/系列来源资产 deep-copy 提升进全局共享池。后端：POST /library/assets/promote。
@@ -1299,7 +2998,7 @@ export const api = {
         assetType: string,
         assetId: string,
     ) => {
-        const res = await axios.post(`${API_URL}/library/assets/promote`, {
+        const res = await apiClient.post(`${API_URL}/library/assets/promote`, {
             source_kind: sourceKind,
             source_id: sourceId,
             asset_type: assetType,
@@ -1308,14 +3007,16 @@ export const api = {
         return res.data;
     },
     getSeries: async (seriesId: string) => {
-        const response = await axios.get(`${API_URL}/series/${seriesId}`);
-        return response.data;
+        const response = await apiClient.get(`${API_URL}/series/${seriesId}`);
+        if (!IS_CLOUD_DEPLOYMENT) return response.data;
+        const assets = await apiClient.get(`${API_URL}/series/${seriesId}/assets`);
+        return { ...response.data, ...assets.data };
     },
     updateSeries: async (
         seriesId: string,
         data: { title?: string; description?: string; art_direction?: any },
     ) => {
-        const response = await axios.put(`${API_URL}/series/${seriesId}`, data);
+        const response = await apiClient.put(`${API_URL}/series/${seriesId}`, data);
         return response.data;
     },
 
@@ -1335,7 +3036,7 @@ export const api = {
             video_url: string | null;
         }>;
     }> => {
-        const res = await axios.get(`${API_URL}/projects/${scriptId}/previous_episode`);
+        const res = await apiClient.get(`${API_URL}/projects/${scriptId}/previous_episode`);
         return res.data;
     },
 
@@ -1346,7 +3047,7 @@ export const api = {
         previous_episode_id: string;
         previous_episode_title: string;
     }> => {
-        const res = await axios.post(`${API_URL}/projects/${scriptId}/previous_episode/summary`);
+        const res = await apiClient.post(`${API_URL}/projects/${scriptId}/previous_episode/summary`);
         return res.data;
     },
 
@@ -1357,7 +3058,7 @@ export const api = {
         scenes: ReconcileSuggestion[];
         props: ReconcileSuggestion[];
     }> => {
-        const res = await axios.get(`${API_URL}/projects/${scriptId}/reconcile/suggestions`);
+        const res = await apiClient.get(`${API_URL}/projects/${scriptId}/reconcile/suggestions`);
         return res.data;
     },
 
@@ -1370,7 +3071,7 @@ export const api = {
             props?: ReconcileAction[];
         },
     ) => {
-        const res = await axios.post(`${API_URL}/projects/${scriptId}/reconcile/apply`, decisions);
+        const res = await apiClient.post(`${API_URL}/projects/${scriptId}/reconcile/apply`, decisions);
         return res.data;
     },
 
@@ -1380,13 +3081,19 @@ export const api = {
         kind: "characters" | "scenes" | "props",
         data: { name: string; description?: string; persona?: string; image_url?: string; voice_id?: string },
     ) => {
-        const res = await axios.post(`${API_URL}/series/${seriesId}/${kind}`, data);
+        const mediaId = parseMediaReference(data.image_url);
+        const payload = { ...data };
+        if (IS_CLOUD_DEPLOYMENT && mediaId) delete payload.image_url;
+        const res = await apiClient.post(`${API_URL}/series/${seriesId}/${kind}`, {
+            ...payload,
+            ...(IS_CLOUD_DEPLOYMENT && mediaId ? { media_id: mediaId } : {}),
+        });
         return res.data;
     },
 
     /** R2V v2 Phase 2 — clear project-level art_direction (return to series inherit). */
     clearProjectArtDirection: async (scriptId: string) => {
-        const res = await axios.post(`${API_URL}/projects/${scriptId}/art_direction/clear`);
+        const res = await apiClient.post(`${API_URL}/projects/${scriptId}/art_direction/clear`);
         return res.data;
     },
 
@@ -1396,7 +3103,7 @@ export const api = {
         hook: string | null;
         stale: boolean;
     }> => {
-        const res = await axios.get(`${API_URL}/projects/${scriptId}/next_hook`);
+        const res = await apiClient.get(`${API_URL}/projects/${scriptId}/next_hook`);
         return res.data;
     },
 
@@ -1405,13 +3112,13 @@ export const api = {
         hook: string;
         stale: boolean;
     }> => {
-        const res = await axios.post(`${API_URL}/projects/${scriptId}/next_hook`);
+        const res = await apiClient.post(`${API_URL}/projects/${scriptId}/next_hook`);
         return res.data;
     },
 
     /** Manually edit / clear hook cache. */
     updateNextEpisodeHook: async (scriptId: string, hook: string | null) => {
-        const res = await axios.put(`${API_URL}/projects/${scriptId}/next_hook`, { hook });
+        const res = await apiClient.put(`${API_URL}/projects/${scriptId}/next_hook`, { hook });
         return res.data;
     },
 
@@ -1421,57 +3128,60 @@ export const api = {
         appearances: Array<{ episode_id: string; episode_number: number | null; episode_title: string; frame_count: number }>;
         total_frames: number;
     }> => {
-        const res = await axios.get(`${API_URL}/series/${seriesId}/characters/${characterId}/appearances`);
+        const res = await apiClient.get(`${API_URL}/series/${seriesId}/characters/${characterId}/appearances`);
         return res.data;
     },
 
     /** R2V v2 P1-b — manually edit / clear last_episode_summary cache. */
     updateLastEpisodeSummary: async (scriptId: string, aiSummary: string | null) => {
-        const res = await axios.put(`${API_URL}/projects/${scriptId}/last_episode_summary`, {
+        const res = await apiClient.put(`${API_URL}/projects/${scriptId}/last_episode_summary`, {
             ai_summary: aiSummary,
         });
         return res.data;
     },
     deleteSeries: async (seriesId: string) => {
-        const response = await axios.delete(`${API_URL}/series/${seriesId}`);
+        const response = await apiClient.delete(`${API_URL}/series/${seriesId}`);
         return response.data;
     },
 
     // Series Episodes
     getSeriesEpisodes: async (seriesId: string) => {
-        const response = await axios.get(`${API_URL}/series/${seriesId}/episodes`);
+        const response = await apiClient.get(`${API_URL}/series/${seriesId}/episodes`);
         return response.data;
     },
     addEpisodeToSeries: async (seriesId: string, scriptId: string, episodeNumber?: number) => {
-        const response = await axios.post(`${API_URL}/series/${seriesId}/episodes`, { script_id: scriptId, episode_number: episodeNumber });
+        const response = await apiClient.post(`${API_URL}/series/${seriesId}/episodes`, { script_id: scriptId, episode_number: episodeNumber });
         return response.data;
     },
     removeEpisodeFromSeries: async (seriesId: string, scriptId: string) => {
-        const response = await axios.delete(`${API_URL}/series/${seriesId}/episodes/${scriptId}`);
+        const response = await apiClient.delete(`${API_URL}/series/${seriesId}/episodes/${scriptId}`);
         return response.data;
     },
 
     // Series Assets
     getSeriesAssets: async (seriesId: string) => {
-        const response = await axios.get(`${API_URL}/series/${seriesId}/assets`);
+        const response = await apiClient.get(`${API_URL}/series/${seriesId}/assets`);
         return response.data;
     },
     importSeriesAssets: async (seriesId: string, sourceSeriesId: string, assetIds: string[]) => {
-        const response = await axios.post(`${API_URL}/series/${seriesId}/assets/import`, { source_series_id: sourceSeriesId, asset_ids: assetIds });
+        const response = await apiClient.post(`${API_URL}/series/${seriesId}/assets/import`, { source_series_id: sourceSeriesId, asset_ids: assetIds });
         return response.data;
     },
 
     // Series Prompt Config
     getSeriesPromptConfig: async (seriesId: string) => {
-        const response = await axios.get(`${API_URL}/series/${seriesId}/prompt_config`);
+        const response = await apiClient.get(`${API_URL}/series/${seriesId}/prompt_config`);
         return response.data;
     },
     updateSeriesPromptConfig: async (seriesId: string, config: { storyboard_polish?: string; video_polish?: string; r2v_polish?: string; storyboard_extraction?: string }) => {
-        const response = await axios.put(`${API_URL}/series/${seriesId}/prompt_config`, config);
+        const response = await apiClient.put(`${API_URL}/series/${seriesId}/prompt_config`, withoutCloudModelOverrides(config));
         return response.data;
     },
     getSeriesModelSettings: async (seriesId: string) => {
-        const response = await axios.get(`${API_URL}/series/${seriesId}/model_settings`);
+        if (IS_CLOUD_DEPLOYMENT) {
+            throw new Error("云端模型由平台统一配置");
+        }
+        const response = await apiClient.get(`${API_URL}/series/${seriesId}/model_settings`);
         return response.data;
     },
     updateSeriesModelSettings: async (seriesId: string, settings: {
@@ -1484,7 +3194,10 @@ export const api = {
         prop_aspect_ratio?: string;
         storyboard_aspect_ratio?: string;
     }) => {
-        const response = await axios.put(`${API_URL}/series/${seriesId}/model_settings`, settings);
+        if (IS_CLOUD_DEPLOYMENT) {
+            throw new Error("云端模型由平台统一配置");
+        }
+        const response = await apiClient.put(`${API_URL}/series/${seriesId}/model_settings`, settings);
         return response.data;
     },
 
@@ -1500,13 +3213,13 @@ export const api = {
     importFilePreview: async (file: File, suggestedEpisodes: number = 3) => {
         const formData = new FormData();
         formData.append('file', file);
-        const response = await axios.post(`${API_URL}/series/import/preview?suggested_episodes=${suggestedEpisodes}`, formData, {
+        const response = await apiClient.post(`${API_URL}/series/import/preview?suggested_episodes=${suggestedEpisodes}`, formData, {
             headers: { 'Content-Type': 'multipart/form-data' },
         });
         return response.data;
     },
     importFileConfirm: async (data: { title: string; description?: string; text: string; episodes: any[] }) => {
-        const response = await axios.post(`${API_URL}/series/import/confirm`, data);
+        const response = await apiClient.post(`${API_URL}/series/import/confirm`, data);
         return response.data;
     },
 };
@@ -1524,12 +3237,12 @@ export const crudApi = {
         gender?: string;
         clothing?: string;
     }) => {
-        const res = await axios.post(`${API_URL}/projects/${scriptId}/characters`, data);
+        const res = await apiClient.post(`${API_URL}/projects/${scriptId}/characters`, data);
         return res.data;
     },
 
     deleteCharacter: async (scriptId: string, characterId: string) => {
-        const res = await axios.delete(`${API_URL}/projects/${scriptId}/characters/${characterId}`);
+        const res = await apiClient.delete(`${API_URL}/projects/${scriptId}/characters/${characterId}`);
         return res.data;
     },
 
@@ -1540,12 +3253,12 @@ export const crudApi = {
         time_of_day?: string;
         lighting_mood?: string;
     }) => {
-        const res = await axios.post(`${API_URL}/projects/${scriptId}/scenes`, data);
+        const res = await apiClient.post(`${API_URL}/projects/${scriptId}/scenes`, data);
         return res.data;
     },
 
     deleteScene: async (scriptId: string, sceneId: string) => {
-        const res = await axios.delete(`${API_URL}/projects/${scriptId}/scenes/${sceneId}`);
+        const res = await apiClient.delete(`${API_URL}/projects/${scriptId}/scenes/${sceneId}`);
         return res.data;
     },
 
@@ -1554,12 +3267,12 @@ export const crudApi = {
         name: string;
         description?: string;
     }) => {
-        const res = await axios.post(`${API_URL}/projects/${scriptId}/props`, data);
+        const res = await apiClient.post(`${API_URL}/projects/${scriptId}/props`, data);
         return res.data;
     },
 
     deleteProp: async (scriptId: string, propId: string) => {
-        const res = await axios.delete(`${API_URL}/projects/${scriptId}/props/${propId}`);
+        const res = await apiClient.delete(`${API_URL}/projects/${scriptId}/props/${propId}`);
         return res.data;
     },
 
@@ -1574,17 +3287,17 @@ export const crudApi = {
         camera_angle?: string;
         insert_at?: number;
     }) => {
-        const res = await axios.post(`${API_URL}/projects/${scriptId}/frames`, data);
+        const res = await apiClient.post(`${API_URL}/projects/${scriptId}/frames`, data);
         return res.data;
     },
 
     deleteFrame: async (scriptId: string, frameId: string) => {
-        const res = await axios.delete(`${API_URL}/projects/${scriptId}/frames/${frameId}`);
+        const res = await apiClient.delete(`${API_URL}/projects/${scriptId}/frames/${frameId}`);
         return res.data;
     },
 
     copyFrame: async (scriptId: string, frameId: string, insertAt?: number) => {
-        const res = await axios.post(`${API_URL}/projects/${scriptId}/frames/copy`, {
+        const res = await apiClient.post(`${API_URL}/projects/${scriptId}/frames/copy`, {
             frame_id: frameId,
             insert_at: insertAt
         });
@@ -1592,7 +3305,7 @@ export const crudApi = {
     },
 
     reorderFrames: async (scriptId: string, frameIds: string[]) => {
-        const res = await axios.put(`${API_URL}/projects/${scriptId}/frames/reorder`, {
+        const res = await apiClient.put(`${API_URL}/projects/${scriptId}/frames/reorder`, {
             frame_ids: frameIds
         });
         return res.data;
@@ -1603,33 +3316,54 @@ export const crudApi = {
 
 export interface PlaygroundGenerateRequest {
   mode: string;
-  model_id: string;
+  model_id?: string;
   prompt: string;
   negative_prompt?: string;
   input_media?: string[];
-  parameters?: Record<string, any>;
+  parameters?: Record<string, unknown>;
   batch_size?: number;
+  idempotency_key?: string;
+}
+
+export interface PlaygroundOutputResponse {
+  id: string;
+  media_id?: string;
+  media_path?: string;
+  media_reference: string;
+  media_url?: string;
+  media_type: string;
+  thumbnail_path?: string;
+  thumbnail_media_id?: string;
+  saved_asset_id?: string | null;
+  saved_to_library: boolean;
 }
 
 export interface PlaygroundGenerationResponse {
   id: string;
   mode: string;
-  model_id: string;
+  model_id?: string;
+  actual_model_name?: string;
+  actual_model_id?: string;
   prompt: string;
   negative_prompt?: string;
   input_media: string[];
-  parameters: Record<string, any>;
+  input_media_ids?: string[];
+  parameters: Record<string, unknown>;
   batch_size: number;
-  outputs: Array<{
-    id: string;
-    media_path: string;
-    media_type: string;
-    thumbnail_path?: string;
-    saved_to_library: boolean;
-  }>;
+  outputs: PlaygroundOutputResponse[];
   status: string;
+  raw_status?: string;
+  status_zh?: string;
+  cancellation_requested?: boolean;
+  support_review?: boolean;
+  support_review_reason?: string | null;
+  error_code?: string;
   error?: string;
   created_at: string;
+  updated_at?: string;
+  quoted_microtickets?: string;
+  quoted_tickets?: string;
+  tokens_per_ticket?: string;
 }
 
 export interface PlaygroundTemplateResponse {
@@ -1640,48 +3374,191 @@ export interface PlaygroundTemplateResponse {
   negative_prompt?: string;
   default_mode?: string;
   default_model_id?: string;
-  default_parameters: Record<string, any>;
+  default_parameters: Record<string, unknown>;
+  version: number;
   created_at: string;
   updated_at: string;
 }
 
+interface SubmittedPlaygroundTaskResponse {
+  task_id: string;
+  status: string;
+  quoted_microtickets: string;
+  quoted_tickets: string;
+  tokens_per_ticket: string;
+  actual_model?: { display_name?: string; model_id?: string };
+}
+
+function normalizePlaygroundStatus(status: string): string {
+  if (["reserved", "queued"].includes(status)) return "pending";
+  if (["running", "provider_succeeded"].includes(status)) return "processing";
+  if (status === "succeeded") return "completed";
+  if (["cancelled", "support_review"].includes(status)) return "failed";
+  return status;
+}
+
+async function normalizePlaygroundGeneration(
+  source: Omit<PlaygroundGenerationResponse, "outputs" | "input_media"> & {
+    outputs?: Array<Partial<PlaygroundOutputResponse> & { id: string; media_type: string }>;
+    input_media?: string[];
+    input_media_ids?: string[];
+  },
+): Promise<PlaygroundGenerationResponse> {
+  const inputMedia = source.input_media ??
+    (source.input_media_ids || []).map(toMediaReference);
+  const outputs = await Promise.all(
+    (source.outputs || []).map(async (output): Promise<PlaygroundOutputResponse> => {
+      const mediaReference = output.media_id
+        ? toMediaReference(output.media_id)
+        : output.media_reference || output.media_path || "";
+      const mediaUrl = parseMediaReference(mediaReference)
+        ? await resolveMediaUrl(mediaReference).catch(() => undefined)
+        : undefined;
+      return {
+        id: output.id,
+        media_id: output.media_id,
+        media_path: output.media_path,
+        media_reference: mediaReference,
+        media_url: mediaUrl,
+        media_type: output.media_type,
+        thumbnail_path: output.thumbnail_path,
+        thumbnail_media_id: output.thumbnail_media_id,
+        saved_asset_id: output.saved_asset_id,
+        saved_to_library:
+          output.saved_to_library ?? Boolean(output.saved_asset_id),
+      };
+    }),
+  );
+  return {
+    ...source,
+    model_id: source.model_id || source.actual_model_id,
+    input_media: inputMedia,
+    parameters: source.parameters || {},
+    batch_size: source.batch_size || 1,
+    outputs,
+    status: normalizePlaygroundStatus(source.status),
+    raw_status: source.raw_status || source.status,
+  };
+}
+
+function requireCloudMediaIds(references: string[]): string[] {
+  const mediaIds = references.map(parseMediaReference);
+  if (mediaIds.some((mediaId) => mediaId === null)) {
+    throw new APIRequestError("云端创作只允许使用已上传的媒体", 422, "AI_MEDIA_ID_REQUIRED");
+  }
+  return mediaIds as string[];
+}
+
 export const playgroundApi = {
-  generate: (data: PlaygroundGenerateRequest) =>
-    axios.post<PlaygroundGenerationResponse>(API_URL + "/playground/generate", data).then(r => r.data),
+  generate: async (data: PlaygroundGenerateRequest) => {
+    const payload = IS_CLOUD_DEPLOYMENT
+      ? {
+          mode: data.mode,
+          prompt: data.prompt,
+          negative_prompt: data.negative_prompt,
+          media_ids: requireCloudMediaIds(data.input_media || []),
+          parameters: data.parameters,
+          batch_size: data.batch_size,
+          idempotency_key: data.idempotency_key || createIdempotencyKey("playground"),
+        }
+      : data;
+    const response = await apiClient.post<
+      PlaygroundGenerationResponse | SubmittedPlaygroundTaskResponse
+    >(API_URL + "/playground/generate", withoutCloudModelOverrides(payload));
+    if ("task_id" in response.data) {
+      const submitted = response.data;
+      return normalizePlaygroundGeneration({
+        id: submitted.task_id,
+        mode: data.mode,
+        model_id: submitted.actual_model?.model_id,
+        actual_model_name: submitted.actual_model?.display_name,
+        actual_model_id: submitted.actual_model?.model_id,
+        prompt: data.prompt,
+        negative_prompt: data.negative_prompt,
+        input_media_ids: requireCloudMediaIds(data.input_media || []),
+        parameters: data.parameters || {},
+        batch_size: data.batch_size || 1,
+        outputs: [],
+        status: submitted.status,
+        raw_status: submitted.status,
+        created_at: new Date().toISOString(),
+        quoted_microtickets: submitted.quoted_microtickets,
+        quoted_tickets: submitted.quoted_tickets,
+        tokens_per_ticket: submitted.tokens_per_ticket,
+      });
+    }
+    return normalizePlaygroundGeneration(response.data);
+  },
 
-  getHistory: (limit = 50, offset = 0) =>
-    axios.get<PlaygroundGenerationResponse[]>(API_URL + "/playground/history", { params: { limit, offset } }).then(r => r.data),
+  getHistory: async (limit = 50, offset = 0) => {
+    const response = await apiClient.get<PlaygroundGenerationResponse[]>(API_URL + "/playground/history", { params: { limit, offset } });
+    return Promise.all(response.data.map(normalizePlaygroundGeneration));
+  },
 
-  getGeneration: (id: string) =>
-    axios.get<PlaygroundGenerationResponse>(API_URL + "/playground/history/" + id).then(r => r.data),
+  getGeneration: async (id: string) => {
+    const response = await apiClient.get<PlaygroundGenerationResponse>(API_URL + "/playground/history/" + id);
+    return normalizePlaygroundGeneration(response.data);
+  },
 
-  getGenerationStatus: (id: string) =>
-    axios.get<{ id: string; status: string; outputs: any[]; error?: string }>(API_URL + "/playground/history/" + id + "/status").then(r => r.data),
+  getGenerationStatus: async (id: string) => {
+    const response = await apiClient.get<{
+      id: string;
+      status: string;
+      raw_status?: string;
+      status_zh?: string;
+      outputs: PlaygroundOutputResponse[];
+      error_code?: string;
+      error?: string;
+      quoted_microtickets?: string;
+      quoted_tickets?: string;
+      tokens_per_ticket?: string;
+      cancellation_requested?: boolean;
+      support_review?: boolean;
+    }>(API_URL + "/playground/history/" + id + "/status");
+    return {
+      ...response.data,
+      raw_status: response.data.raw_status || response.data.status,
+      status: normalizePlaygroundStatus(response.data.status),
+    };
+  },
+
+  cancelGeneration: (id: string) => aiTaskApi.cancel(id),
 
   deleteGeneration: (id: string) =>
-    axios.delete(API_URL + "/playground/history/" + id).then(r => r.data),
+    apiClient.delete(API_URL + "/playground/history/" + id).then(r => r.data),
 
   saveToLibrary: (generationId: string, outputId: string, category?: string) =>
-    axios.post(API_URL + "/playground/history/" + generationId + "/outputs/" + outputId + "/save-to-library", { category: category || "general" }).then(r => r.data),
+    apiClient.post(API_URL + "/playground/history/" + generationId + "/outputs/" + outputId + "/save-to-library", { category: category || "general" }).then(r => r.data),
 
   getTemplates: () =>
-    axios.get<PlaygroundTemplateResponse[]>(API_URL + "/playground/templates").then(r => r.data),
+    apiClient.get<PlaygroundTemplateResponse[]>(API_URL + "/playground/templates").then(r => r.data),
 
-  createTemplate: (data: { name: string; category?: string; prompt: string; negative_prompt?: string; default_mode?: string; default_model_id?: string; default_parameters?: Record<string, any> }) =>
-    axios.post<PlaygroundTemplateResponse>(API_URL + "/playground/templates", data).then(r => r.data),
+  createTemplate: (data: { name: string; category?: string; prompt: string; negative_prompt?: string; default_mode?: string; default_model_id?: string; default_parameters?: Record<string, unknown> }) =>
+    apiClient.post<PlaygroundTemplateResponse>(API_URL + "/playground/templates", withoutCloudModelOverrides(data)).then(r => r.data),
 
-  updateTemplate: (id: string, data: Partial<{ name: string; category: string; prompt: string; negative_prompt: string; default_mode: string; default_model_id: string; default_parameters: Record<string, any> }>) =>
-    axios.put<PlaygroundTemplateResponse>(API_URL + "/playground/templates/" + id, data).then(r => r.data),
+  updateTemplate: (id: string, version: number, data: Partial<{ name: string; category: string; prompt: string; negative_prompt: string; default_mode: string; default_model_id: string; default_parameters: Record<string, unknown> }>) =>
+    apiClient.put<PlaygroundTemplateResponse>(API_URL + "/playground/templates/" + id, withoutCloudModelOverrides(data), { headers: { "If-Match": String(version) } }).then(r => r.data),
 
-  deleteTemplate: (id: string) =>
-    axios.delete(API_URL + "/playground/templates/" + id).then(r => r.data),
+  deleteTemplate: (id: string, version: number) =>
+    apiClient.delete(API_URL + "/playground/templates/" + id, { headers: { "If-Match": String(version) } }).then(r => r.data),
 
-  // Upload media file for playground input (returns file path)
-  uploadMedia: (file: File) => {
+  uploadMedia: async (file: File) => {
     const formData = new FormData();
     formData.append("file", file);
-    return axios.post<{ path: string }>(API_URL + "/playground/upload", formData, {
+    const response = await apiClient.post<MediaUploadResponse | { path: string }>(API_URL + "/playground/upload", formData, {
       headers: { "Content-Type": "multipart/form-data" },
-    }).then(r => r.data);
+    });
+    if ("id" in response.data) {
+      const mediaReference = toMediaReference(response.data.id);
+      return {
+        ...response.data,
+        media_reference: mediaReference,
+        media_url: await resolveMediaUrl(mediaReference),
+      };
+    }
+    return {
+      ...response.data,
+      media_reference: response.data.path,
+    };
   },
 };

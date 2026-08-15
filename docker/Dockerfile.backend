@@ -13,10 +13,17 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy application code
 COPY src/ src/
+COPY migrations/ migrations/
+COPY alembic.ini alembic.ini
+COPY config/model_catalog/ config/model_catalog/
+COPY scripts/ scripts/
+COPY docker/cloud-entrypoint.sh /usr/local/bin/lumenx-cloud-entrypoint
+RUN chmod +x /usr/local/bin/lumenx-cloud-entrypoint
 
 # Create output directories
 RUN mkdir -p output/uploads output/video output/assets output/storyboard \
-    output/audio output/export output/video_inputs output/outputs/videos
+    output/audio output/export output/video_inputs output/outputs/videos \
+    output/provider-results /provider-results /imports
 
 # Environment
 ENV NO_PROXY="*.aliyuncs.com,localhost,127.0.0.1"
@@ -25,4 +32,5 @@ ENV PYTHONUNBUFFERED=1
 
 EXPOSE 17177
 
-CMD ["python", "-m", "uvicorn", "src.apps.comic_gen.api:app", "--host", "0.0.0.0", "--port", "17177"]
+ENTRYPOINT ["/usr/local/bin/lumenx-cloud-entrypoint"]
+CMD ["python", "-m", "uvicorn", "src.apps.comic_gen.api:app", "--host", "0.0.0.0", "--port", "17177", "--proxy-headers", "--forwarded-allow-ips=*"]

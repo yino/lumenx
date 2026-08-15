@@ -14,6 +14,8 @@ import UploadAssetModal from "../modals/UploadAssetModal";
 import StepHeader from "@/components/shared/StepHeader";
 import WorkflowActionButton from "@/components/shared/WorkflowActionButton";
 
+const assetTypeLabel = (type: string) => type === "character" ? "角色" : type === "scene" ? "场景" : "道具";
+
 export default function ConsistencyVault() {
     const tv = useTranslations("vault");
     const tStep = useTranslations("stepHeader");
@@ -167,7 +169,7 @@ export default function ConsistencyVault() {
     // Delete asset handler
     const handleDeleteAsset = async (assetId: string, type: string) => {
         if (!currentProject) return;
-        if (!confirm(`Are you sure you want to delete this ${type}?`)) return;
+        if (!confirm(`确定要删除这个${assetTypeLabel(type)}吗？`)) return;
 
         try {
             if (type === "character") {
@@ -182,7 +184,7 @@ export default function ConsistencyVault() {
             updateProject(currentProject.id, updatedProject);
         } catch (error) {
             console.error("Failed to delete asset:", error);
-            alert("Failed to delete asset");
+            alert("删除资产失败");
         }
     };
 
@@ -204,7 +206,7 @@ export default function ConsistencyVault() {
             setIsCreateDialogOpen(false);
         } catch (error) {
             console.error("Failed to create asset:", error);
-            alert("Failed to create asset");
+            alert("创建资产失败");
         }
     };
 
@@ -303,7 +305,7 @@ export default function ConsistencyVault() {
 
     const handleDeleteVideo = async (assetId: string, type: string, videoId: string) => {
         if (!currentProject) return;
-        if (!confirm("Are you sure you want to delete this video? This action cannot be undone.")) return;
+        if (!confirm("确定要删除这个视频吗？此操作无法撤销。")) return;
 
         try {
             await api.deleteAssetVideo(currentProject.id, type, assetId, videoId);
@@ -311,7 +313,7 @@ export default function ConsistencyVault() {
             updateProject(currentProject.id, updatedProject);
         } catch (error: any) {
             console.error("Failed to delete video:", error);
-            alert(`Failed to delete video: ${error.message}`);
+            alert(`删除视频失败：${error.message}`);
         }
     };
 
@@ -364,7 +366,7 @@ export default function ConsistencyVault() {
                 stepNumber={3}
                 totalSteps={6}
                 icon={<Users />}
-                englishName="Asset Library"
+                englishName="资产库"
                 title={tStep("vaultTitle")}
                 subtitle={tStep("vaultSubtitle")}
             />
@@ -375,21 +377,21 @@ export default function ConsistencyVault() {
                         active={activeTab === "character"}
                         onClick={() => setActiveTab("character")}
                         icon={<User size={14} />}
-                        label="Characters"
+                        label="角色"
                         count={currentProject?.characters?.length || 0}
                     />
                     <TabButton
                         active={activeTab === "scene"}
                         onClick={() => setActiveTab("scene")}
                         icon={<MapPin size={14} />}
-                        label="Scenes"
+                        label="场景"
                         count={currentProject?.scenes?.length || 0}
                     />
                     <TabButton
                         active={activeTab === "prop"}
                         onClick={() => setActiveTab("prop")}
                         icon={<Box size={14} />}
-                        label="Props"
+                        label="道具"
                         count={currentProject?.props?.length || 0}
                     />
                 </div>
@@ -420,14 +422,14 @@ export default function ConsistencyVault() {
             <div className="flex-1 overflow-y-auto p-6">
                 {!currentProject ? (
                     <div className="flex items-center justify-center h-full text-text-muted">
-                        Loading project...
+                        正在加载项目...
                     </div>
                 ) : assets?.length === 0 ? (
                     <div className="flex flex-col items-center justify-center h-full text-text-muted gap-4">
                         <div className="w-16 h-16 rounded-full bg-glass flex items-center justify-center">
                             {activeTab === "character" ? <User size={32} /> : activeTab === "scene" ? <MapPin size={32} /> : <Box size={32} />}
                         </div>
-                        <p>No {activeTab}s found</p>
+                        <p>暂无{assetTypeLabel(activeTab)}</p>
                     </div>
                 ) : (
                     <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-6">
@@ -457,7 +459,7 @@ export default function ConsistencyVault() {
                         >
                             <div className="flex flex-col items-center gap-3 text-text-secondary group-hover:text-primary transition-colors">
                                 <Plus size={40} />
-                                <span className="text-sm font-medium">Add {activeTab}</span>
+                                <span className="text-sm font-medium">新增{assetTypeLabel(activeTab)}</span>
                             </div>
                         </motion.div>
                     </div>
@@ -612,13 +614,13 @@ function CharacterDetailModal({ asset, type, onClose, onUpdateDescription, onGen
                             onClick={() => setActiveTab("image")}
                             className={`flex-1 p-3 text-sm font-bold transition-colors ${activeTab === "image" ? "text-foreground border-b-2 border-primary bg-glass" : "text-text-muted hover:text-text-secondary"}`}
                         >
-                            Image Reference
+                            图片参考
                         </button>
                         <button
                             onClick={() => setActiveTab("video")}
                             className={`flex-1 p-3 text-sm font-bold transition-colors ${activeTab === "video" ? "text-foreground border-b-2 border-primary bg-glass" : "text-text-muted hover:text-text-secondary"}`}
                         >
-                            Video Reference
+                            视频参考
                         </button>
                     </div>
 
@@ -662,10 +664,10 @@ function CharacterDetailModal({ asset, type, onClose, onUpdateDescription, onGen
                         {/* Description */}
                         <div className="space-y-2">
                             <div className="flex justify-between items-center">
-                                <label className="text-sm font-bold text-text-secondary uppercase">Description</label>
+                                <label className="text-sm font-bold text-text-secondary uppercase">描述</label>
                                 {!isEditing && (
                                     <button onClick={() => setIsEditing(true)} className="text-xs text-primary hover:underline">
-                                        Edit
+                                        编辑
                                     </button>
                                 )}
                             </div>
@@ -677,8 +679,8 @@ function CharacterDetailModal({ asset, type, onClose, onUpdateDescription, onGen
                                         className="w-full h-32 bg-input-bg border border-glass-border rounded-lg p-3 text-sm text-text-secondary resize-none focus:border-primary focus:outline-none"
                                     />
                                     <div className="flex justify-end gap-2">
-                                        <button onClick={() => { setIsEditing(false); setDescription(asset.description); }} className="px-3 py-1.5 text-xs text-text-secondary hover:text-foreground">Cancel</button>
-                                        <button onClick={handleSave} className="px-3 py-1.5 bg-primary text-white text-xs rounded hover:bg-primary/90">Save Description</button>
+                                        <button onClick={() => { setIsEditing(false); setDescription(asset.description); }} className="px-3 py-1.5 text-xs text-text-secondary hover:text-foreground">取消</button>
+                                        <button onClick={handleSave} className="px-3 py-1.5 bg-primary text-white text-xs rounded hover:bg-primary/90">保存描述</button>
                                     </div>
                                 </div>
                             ) : (
@@ -691,12 +693,12 @@ function CharacterDetailModal({ asset, type, onClose, onUpdateDescription, onGen
                         {/* Video Prompt (Only visible in Video Tab) */}
                         {activeTab === "video" && (
                             <div className="space-y-2">
-                                <label className="text-sm font-bold text-text-secondary uppercase">Video Prompt</label>
+                                <label className="text-sm font-bold text-text-secondary uppercase">视频提示词</label>
                                 <textarea
                                     value={videoPrompt}
                                     onChange={(e) => setVideoPrompt(e.target.value)}
                                     className="w-full h-24 bg-input-bg border border-glass-border rounded-lg p-3 text-sm text-text-secondary resize-none focus:border-primary focus:outline-none"
-                                    placeholder="Describe the motion..."
+                                    placeholder="描述想要的动作..."
                                 />
                             </div>
                         )}
@@ -704,7 +706,7 @@ function CharacterDetailModal({ asset, type, onClose, onUpdateDescription, onGen
                         {/* Style Control (Only visible in Image Tab) */}
                         {activeTab === "image" && (
                             <div className="space-y-2">
-                                <label className="text-sm font-bold text-text-secondary uppercase">Style Settings</label>
+                                <label className="text-sm font-bold text-text-secondary uppercase">风格设置</label>
                                 <div className="bg-glass rounded-lg p-3 border border-border-subtle">
                                     <div className="flex items-center gap-2 mb-2">
                                         <input
@@ -715,13 +717,13 @@ function CharacterDetailModal({ asset, type, onClose, onUpdateDescription, onGen
                                             className="rounded border-gray-600 bg-gray-700 text-primary focus:ring-primary"
                                         />
                                         <label htmlFor="applyStyleModal" className="text-sm font-bold text-text-secondary cursor-pointer select-none">
-                                            Apply Art Direction Style
+                                            应用美术指导风格
                                         </label>
                                     </div>
 
                                     {stylePrompt && (
                                         <div className="text-xs text-text-muted font-mono bg-surface p-2 rounded border border-border-subtle">
-                                            <span className="text-primary font-bold">Style:</span> {stylePrompt}
+                                            <span className="text-primary font-bold">风格：</span> {stylePrompt}
                                         </div>
                                     )}
                                 </div>
@@ -735,7 +737,7 @@ function CharacterDetailModal({ asset, type, onClose, onUpdateDescription, onGen
                                     onClick={() => setShowAdvanced(!showAdvanced)}
                                     className="flex items-center gap-2 text-xs font-bold text-text-muted hover:text-foreground transition-colors uppercase"
                                 >
-                                    <span>Advanced Settings (Negative Prompt)</span>
+                                    <span>高级设置（反向提示词）</span>
                                     <ChevronRight size={12} className={`transform transition-transform ${showAdvanced ? 'rotate-90' : ''}`} />
                                 </button>
 
@@ -751,7 +753,7 @@ function CharacterDetailModal({ asset, type, onClose, onUpdateDescription, onGen
                                                 value={negativePrompt}
                                                 onChange={(e) => setNegativePrompt(e.target.value)}
                                                 className="w-full h-24 bg-input-bg border border-glass-border rounded-lg p-3 text-xs text-text-secondary resize-none focus:outline-none focus:border-primary/50 font-mono"
-                                                placeholder="Enter negative prompt..."
+                                                placeholder="输入反向提示词..."
                                             />
                                         </motion.div>
                                     )}
@@ -767,7 +769,7 @@ function CharacterDetailModal({ asset, type, onClose, onUpdateDescription, onGen
                             className="flex-1 py-3 bg-green-600 hover:bg-green-500 text-foreground rounded-xl font-bold flex items-center justify-center gap-2 shadow-lg shadow-green-500/20"
                         >
                             <Check size={18} />
-                            Done
+                            完成
                         </button>
                     </div>
                 </div>
@@ -840,7 +842,7 @@ function ImageWithRetry({ src, alt, className }: { src: string, alt: string, cla
             />
             {error && retryCount >= 10 && (
                 <div className="absolute inset-0 flex items-center justify-center bg-red-500/10 backdrop-blur-sm z-20">
-                    <span className="text-xs text-red-400 font-bold">Failed to load</span>
+                    <span className="text-xs text-red-400 font-bold">加载失败</span>
                 </div>
             )}
         </div>
@@ -868,7 +870,7 @@ function AssetCard({ asset, type, isGenerating, onGenerate, onToggleLock, onClic
             updateProject(currentProject.id, updatedProject);
         } catch (error) {
             console.error("Failed to upload asset image:", error);
-            alert("Failed to upload image");
+            alert("上传图片失败");
         }
     };
 
@@ -903,7 +905,7 @@ function AssetCard({ asset, type, isGenerating, onGenerate, onToggleLock, onClic
             {isGenerating && (
                 <div className="absolute inset-0 z-20 bg-overlay backdrop-blur-sm flex items-center justify-center flex-col gap-2">
                     <RefreshCw className="animate-spin text-primary" size={32} />
-                    <span className="text-xs font-mono text-primary">Generating...</span>
+                    <span className="text-xs font-mono text-primary">生成中...</span>
                 </div>
             )}
 
@@ -915,7 +917,7 @@ function AssetCard({ asset, type, isGenerating, onGenerate, onToggleLock, onClic
                         onDelete();
                     }}
                     className="p-2 rounded-full backdrop-blur-md bg-red-500/20 text-red-400 hover:bg-red-500/40 transition-colors"
-                    title="Delete"
+                    title="删除"
                 >
                     <Trash2 size={14} />
                 </button>
@@ -937,7 +939,7 @@ function AssetCard({ asset, type, isGenerating, onGenerate, onToggleLock, onClic
             <div className="absolute bottom-0 left-0 right-0 p-4 z-30">
                 <h3 className="text-lg font-bold text-foreground mb-1 truncate">{asset.name}</h3>
                 <p className="text-xs text-foreground/80 line-clamp-2 mb-3 h-8">
-                    {asset.description || "No description"}
+                    {asset.description || "暂无描述"}
                 </p>
 
                 <div className="flex gap-2 opacity-0 group-hover:opacity-100 transition-opacity transform translate-y-2 group-hover:translate-y-0">
@@ -953,7 +955,7 @@ function AssetCard({ asset, type, isGenerating, onGenerate, onToggleLock, onClic
                         size="sm"
                         className="flex-1"
                     >
-                        {isGenerating ? "Generating..." : "Generate"}
+                        {isGenerating ? "生成中..." : "生成"}
                     </WorkflowActionButton>
                     <button
                         onClick={(e) => {
@@ -980,7 +982,7 @@ function CreateAssetDialog({ type, onClose, onCreate }: { type: string; onClose:
 
     const handleSubmit = async () => {
         if (!name.trim()) {
-            alert("Name is required");
+            alert("请输入名称");
             return;
         }
         setIsSubmitting(true);
@@ -991,7 +993,7 @@ function CreateAssetDialog({ type, onClose, onCreate }: { type: string; onClose:
         }
     };
 
-    const typeLabel = type === "character" ? "Character" : type === "scene" ? "Scene" : "Prop";
+    const typeLabel = assetTypeLabel(type);
 
     return (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-overlay backdrop-blur-sm p-8">
@@ -1004,7 +1006,7 @@ function CreateAssetDialog({ type, onClose, onCreate }: { type: string; onClose:
                 <div className="p-6 border-b border-glass-border flex justify-between items-center bg-surface">
                     <div className="flex items-center gap-3">
                         <Plus className="text-primary" size={20} />
-                        <h2 className="text-lg font-bold text-foreground">Create New {typeLabel}</h2>
+                        <h2 className="text-lg font-bold text-foreground">新建{typeLabel}</h2>
                     </div>
                     <button onClick={onClose} className="p-2 hover:bg-hover-bg rounded-lg transition-colors">
                         <X size={20} className="text-text-secondary" />
@@ -1013,21 +1015,21 @@ function CreateAssetDialog({ type, onClose, onCreate }: { type: string; onClose:
 
                 <div className="p-6 space-y-4">
                     <div>
-                        <label className="block text-sm font-medium text-text-secondary mb-2">Name *</label>
+                        <label className="block text-sm font-medium text-text-secondary mb-2">名称 *</label>
                         <input
                             type="text"
                             value={name}
                             onChange={(e) => setName(e.target.value)}
-                            placeholder={`Enter ${type} name`}
+                            placeholder={`输入${typeLabel}名称`}
                             className="w-full px-4 py-3 bg-input-bg border border-glass-border rounded-lg text-foreground placeholder-text-muted focus:border-primary/50 focus:outline-none"
                         />
                     </div>
                     <div>
-                        <label className="block text-sm font-medium text-text-secondary mb-2">Description</label>
+                        <label className="block text-sm font-medium text-text-secondary mb-2">描述</label>
                         <textarea
                             value={description}
                             onChange={(e) => setDescription(e.target.value)}
-                            placeholder={`Describe the ${type}...`}
+                            placeholder={`描述${typeLabel}的外观与特征...`}
                             rows={4}
                             className="w-full px-4 py-3 bg-input-bg border border-glass-border rounded-lg text-foreground placeholder-text-muted focus:border-primary/50 focus:outline-none resize-none"
                         />
@@ -1039,7 +1041,7 @@ function CreateAssetDialog({ type, onClose, onCreate }: { type: string; onClose:
                         onClick={onClose}
                         className="px-6 py-2 bg-glass hover:bg-hover-bg text-foreground rounded-lg transition-colors"
                     >
-                        Cancel
+                        取消
                     </button>
                     <button
                         onClick={handleSubmit}
@@ -1047,7 +1049,7 @@ function CreateAssetDialog({ type, onClose, onCreate }: { type: string; onClose:
                         className="px-6 py-2 bg-primary hover:bg-primary/90 text-white rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
                     >
                         {isSubmitting && <RefreshCw size={16} className="animate-spin" />}
-                        Create {typeLabel}
+                        创建{typeLabel}
                     </button>
                 </div>
             </motion.div>

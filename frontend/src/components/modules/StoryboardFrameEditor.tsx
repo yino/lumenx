@@ -132,7 +132,7 @@ export default function StoryboardFrameEditor({ frame: initialFrame, onClose }: 
                             </p>
                             {frame.dialogue && (
                                 <p className="text-xs text-text-secondary italic">
-                                    <span className="font-bold text-text-muted not-italic">{ts("dialogue")}:</span> "{frame.dialogue}"
+                                    <span className="font-bold text-text-muted not-italic">{ts("dialogue")}:</span> “{frame.dialogue}”
                                 </p>
                             )}
                         </div>

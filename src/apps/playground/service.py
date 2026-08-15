@@ -17,7 +17,7 @@ from .models import (
     PlaygroundMode,
     PlaygroundOutput,
 )
-from .storage import PlaygroundStorage
+from ...platform.contracts import PlaygroundRepository
 from ...utils import get_logger
 
 logger = get_logger(__name__)
@@ -33,7 +33,10 @@ class PlaygroundService:
     """High-level service that creates generation records and delegates to
     the correct model adapter for execution."""
 
-    def __init__(self, storage: PlaygroundStorage):
+    def __init__(
+        self,
+        storage: PlaygroundRepository[PlaygroundGeneration, object],
+    ):
         self.storage = storage
         # Lazy-initialised model instances (cached for the lifetime of the service)
         self._wanx_model = None

@@ -50,7 +50,7 @@ export default function Timeline() {
 
                 {/* Video Track */}
                 <div className="h-16 bg-glass rounded-lg relative overflow-hidden group">
-                    <div className="absolute inset-0 flex items-center px-2 text-xs font-medium text-text-muted pointer-events-none">Video 1</div>
+                    <div className="absolute inset-0 flex items-center px-2 text-xs font-medium text-text-muted pointer-events-none">视频 1</div>
                     <div className="absolute left-10 top-1 bottom-1 w-32 bg-blue-500/20 border border-blue-500/50 rounded flex items-center justify-center text-xs text-blue-200">
                         Scene 1
                     </div>
@@ -61,7 +61,7 @@ export default function Timeline() {
 
                 {/* Audio Track */}
                 <div className="h-12 bg-glass rounded-lg relative overflow-hidden">
-                    <div className="absolute inset-0 flex items-center px-2 text-xs font-medium text-text-muted pointer-events-none">Audio 1</div>
+                    <div className="absolute inset-0 flex items-center px-2 text-xs font-medium text-text-muted pointer-events-none">音频 1</div>
                     <div className="absolute left-10 top-1 bottom-1 w-80 bg-green-500/20 border border-green-500/50 rounded flex items-center justify-center text-xs text-green-200">
                         Background Music
                     </div>

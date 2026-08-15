@@ -36,6 +36,8 @@ import CompareModal from "./storyboard-r2v/shot-panel/CompareModal";
 import TaskQueueButton from "./storyboard-r2v/shot-panel/TaskQueueButton";
 import TaskQueuePanel from "./storyboard-r2v/shot-panel/TaskQueuePanel";
 import { GenerationBanner, type BannerState } from "./storyboard-r2v/GenerationBanner";
+import { IS_CLOUD_DEPLOYMENT } from "@/lib/deployment";
+import { clientStorageKey } from "@/lib/clientCacheScope";
 
 export default function StoryboardR2V() {
     const currentProject = useProjectStore((state) => state.currentProject);
@@ -60,9 +62,11 @@ export default function StoryboardR2V() {
     // Global video config (with localStorage persistence for model selection)
     const [videoConfig, setVideoConfig] = useState<VideoConfig>(() => {
         const ls = typeof window !== 'undefined' ? window.localStorage : null;
-        const savedI2v = ls?.getItem('storyboard-r2v-model') ?? null;
-        const savedR2v = ls?.getItem('storyboard-r2v-r2v-model') ?? null;
-        const projectI2v = currentProject?.model_settings?.i2v_model || DEFAULT_I2V_MODEL_ID;
+        const savedI2v = IS_CLOUD_DEPLOYMENT ? null : (ls?.getItem('storyboard-r2v-model') ?? null);
+        const savedR2v = IS_CLOUD_DEPLOYMENT ? null : (ls?.getItem('storyboard-r2v-r2v-model') ?? null);
+        const projectI2v = IS_CLOUD_DEPLOYMENT
+            ? DEFAULT_I2V_MODEL_ID
+            : (currentProject?.model_settings?.i2v_model || DEFAULT_I2V_MODEL_ID);
 
         // I2V — defensive: a cached localStorage model id may have been
         // hidden or removed from the I2V list since it was last
@@ -90,7 +94,7 @@ export default function StoryboardR2V() {
         //   4. catalog DEFAULT_R2V_MODEL_ID
         // Each candidate is validated against VIDEO_R2V_MODELS so a
         // hidden id from any layer falls through cleanly.
-        const projectR2v = currentProject?.model_settings?.r2v_model;
+        const projectR2v = IS_CLOUD_DEPLOYMENT ? undefined : currentProject?.model_settings?.r2v_model;
         const r2vDerived = getR2vRouteModelId(i2vModelId);
         const r2vCandidate = savedR2v || projectR2v || r2vDerived || DEFAULT_R2V_MODEL_ID;
         const r2vOk = VIDEO_R2V_MODELS.find(m => m.id === r2vCandidate);
@@ -109,6 +113,12 @@ export default function StoryboardR2V() {
             duration: defaultDuration,
         };
     });
+
+    useEffect(() => {
+        if (!IS_CLOUD_DEPLOYMENT) return;
+        window.localStorage.removeItem("storyboard-r2v-model");
+        window.localStorage.removeItem("storyboard-r2v-r2v-model");
+    }, []);
 
     // Modal & drawer state (configModalOpen retired with the gear; the
     // old VideoConfigModal mount is gone, replaced by per-shot
@@ -190,7 +200,9 @@ export default function StoryboardR2V() {
     // Issue 16 — per-shot expand state (P plan). Default: all collapsed
     // (browse mode). Set persists per project to localStorage so coming back
     // to the project restores the user's last working layout.
-    const expandStorageKey = currentProject ? `storyboard-r2v-expanded-${currentProject.id}` : null;
+    const expandStorageKey = currentProject
+        ? clientStorageKey(`storyboard-r2v-expanded-${currentProject.id}`)
+        : null;
     const [expandedShots, setExpandedShots] = useState<Set<string>>(() => {
         if (typeof window === "undefined" || !expandStorageKey) return new Set();
         try {
@@ -1567,9 +1579,11 @@ export default function StoryboardR2V() {
                 watermark: next.watermark,
             };
             if (isR2v) {
-                updated.r2vModel = next.model;
-                ls?.setItem("storyboard-r2v-r2v-model", next.model);
-            } else {
+                if (!IS_CLOUD_DEPLOYMENT) {
+                    updated.r2vModel = next.model;
+                    ls?.setItem("storyboard-r2v-r2v-model", next.model);
+                }
+            } else if (!IS_CLOUD_DEPLOYMENT) {
                 updated.model = next.model;
                 ls?.setItem("storyboard-r2v-model", next.model);
             }
@@ -1700,9 +1714,9 @@ export default function StoryboardR2V() {
         setVideoConfig(prev => {
             const updated = { ...prev };
             // Decide which slot the batch's model lives in (I2V or R2V).
-            if (VIDEO_R2V_MODELS.some(m => m.id === first.model)) {
+            if (!IS_CLOUD_DEPLOYMENT && VIDEO_R2V_MODELS.some(m => m.id === first.model)) {
                 updated.r2vModel = first.model!;
-            } else if (VIDEO_I2V_MODELS.some(m => m.id === first.model)) {
+            } else if (!IS_CLOUD_DEPLOYMENT && VIDEO_I2V_MODELS.some(m => m.id === first.model)) {
                 updated.model = first.model!;
             }
             if (first.duration) updated.duration = first.duration;
@@ -1757,7 +1771,7 @@ export default function StoryboardR2V() {
             {/* Unified page header (shared StepPageHeader) */}
             <StepPageHeader
                 stepNumber={4}
-                englishName="STORYBOARD R2V"
+                englishName="分镜转视频 R2V"
                 title={tStep("storyboardTitle")}
                 subtitle={tStep("storyboardSubtitle")}
                 pills={(
@@ -1765,7 +1779,9 @@ export default function StoryboardR2V() {
                         {currentProject?.art_direction?.style_config?.name ? (
                             <StepPill label={t("artStyleLabel")} value={currentProject.art_direction.style_config.name} />
                         ) : null}
-                        <StepPill label={t("currentModel")} value={currentModelName} />
+                        {!IS_CLOUD_DEPLOYMENT && (
+                            <StepPill label={t("currentModel")} value={currentModelName} />
+                        )}
                     </>
                 )}
                 trailing={(
@@ -2195,7 +2211,7 @@ export default function StoryboardR2V() {
                                 <CandidatesSection
                                     shotId={shot.id}
                                     tasks={shotTasks}
-                                    activeModel={paramsState.model}
+                                    activeModel={IS_CLOUD_DEPLOYMENT ? undefined : paramsState.model}
                                     compareSelectedIds={compareSelectedIds}
                                     activeTaskId={currentProject?.frames?.find((f: any) => f.id === shot.id)?.selected_video_id ?? null}
                                     dubbedVideoUrl={currentProject?.frames?.find((f: any) => f.id === shot.id)?.dubbed_video_url}

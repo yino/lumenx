@@ -171,7 +171,7 @@ export default function Cast() {
         <div className="flex h-full w-full flex-col overflow-hidden">
             <StepPageHeader
                 stepNumber={3}
-                englishName="CAST"
+                englishName="角色资产"
                 title={tStep("castTitle")}
                 subtitle={tStep("castSubtitle")}
                 pills={totalCast > 0 ? (
@@ -351,7 +351,7 @@ function AddCastPlaceholderModal({
             const result = await api.uploadFile(file);
             setImageUrl(result.url || "");
         } catch (err: any) {
-            setError(err?.response?.data?.detail || err?.message || "Upload failed");
+            setError(err?.response?.data?.detail || err?.message || "上传失败");
         } finally {
             setUploading(false);
         }
@@ -381,7 +381,7 @@ function AddCastPlaceholderModal({
             reset();
             onClose();
         } catch (err: any) {
-            setError(err?.response?.data?.detail || err?.message || "Create failed");
+            setError(err?.response?.data?.detail || err?.message || "创建失败");
         } finally {
             setSubmitting(false);
         }
@@ -911,7 +911,7 @@ function CastCard({ item, onOpenWorkbench }: { item: CastItem; onOpenWorkbench?:
                         {voiceId && (
                             <button
                                 onClick={(e) => { e.stopPropagation(); handleInlinePreview(); }}
-                                aria-label={playing ? "Stop preview" : "Play preview"}
+                                aria-label={playing ? "停止试听" : "播放试听"}
                                 className={`shrink-0 inline-flex h-6 w-6 items-center justify-center rounded-md border transition-colors ${
                                     playing
                                         ? "border-primary bg-primary/15 text-primary"
@@ -968,7 +968,7 @@ function CharacterHistoryPopover({ seriesId, characterId, onClose }: { seriesId:
         let cancelled = false;
         api.getCharacterAppearances(seriesId, characterId)
             .then(d => { if (!cancelled) setData(d); })
-            .catch(err => { if (!cancelled) setError(err?.response?.data?.detail || err?.message || "Load failed"); })
+            .catch(err => { if (!cancelled) setError(err?.response?.data?.detail || err?.message || "加载失败"); })
             .finally(() => { if (!cancelled) setLoading(false); });
         return () => { cancelled = true; };
     }, [seriesId, characterId]);

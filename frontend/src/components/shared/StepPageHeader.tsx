@@ -42,7 +42,7 @@ export default function StepPageHeader({
             <div className="flex items-start gap-5">
                 <div className="flex-1 min-w-0">
                     <div className="font-mono text-[0.59375rem] font-normal uppercase tracking-[0.22em] text-text-muted">
-                        <span>STEP</span>
+                        <span>步骤</span>
                         <span className="ml-1.5 font-medium text-primary">{stepStr}</span>
                         <span className="mx-1.5">·</span>
                         <span>{englishName}</span>

@@ -1,0 +1,31 @@
+# Stage 1: Build
+FROM node:20-alpine AS builder
+
+WORKDIR /app
+
+COPY frontend/package.json frontend/package-lock.json* ./
+RUN npm install --global npm@10.9.4 --no-audit --no-fund \
+    && npm ci --no-audit --no-fund \
+    && test -x node_modules/.bin/next
+
+COPY frontend/ .
+
+# Build for Docker (override desktop app paths)
+ENV NODE_ENV=production
+ENV DOCKER_BUILD=true
+ENV NEXT_PUBLIC_DEPLOYMENT_MODE=cloud
+RUN npm run build
+
+# Stage 2: Serve with nginx
+FROM nginx:alpine
+
+RUN mkdir -p /etc/nginx/lumenx-compat.d /etc/nginx/snippets
+COPY --from=builder /app/out /usr/share/nginx/html
+COPY docker/nginx.conf /etc/nginx/conf.d/default.conf
+COPY docker/nginx-security-headers.conf /etc/nginx/snippets/lumenx-security-headers.conf
+COPY docker/40-lumenx-api-compat.sh /docker-entrypoint.d/40-lumenx-api-compat.sh
+RUN chmod +x /docker-entrypoint.d/40-lumenx-api-compat.sh
+
+EXPOSE 80
+
+CMD ["nginx", "-g", "daemon off;"]

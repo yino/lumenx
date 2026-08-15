@@ -9,15 +9,18 @@
  * default collapsed.
  */
 import { useCallback, useEffect, useState } from "react";
+import { clientStorageKey } from "@/lib/clientCacheScope";
 
-function key(shotId: string, section: string): string {
-    return `storyboard-shot-panel:${shotId}:${section}`;
+function key(shotId: string, section: string): string | null {
+    return clientStorageKey(`storyboard-shot-panel:${shotId}:${section}`);
 }
 
 function readState(shotId: string, section: string, defaultOpen: boolean): boolean {
     if (typeof window === "undefined") return defaultOpen;
     try {
-        const raw = window.localStorage.getItem(key(shotId, section));
+        const storageKey = key(shotId, section);
+        if (!storageKey) return defaultOpen;
+        const raw = window.localStorage.getItem(storageKey);
         if (raw === "1") return true;
         if (raw === "0") return false;
     } catch {
@@ -56,7 +59,8 @@ export function usePanelSectionState(
         setOpen(next);
         if (typeof window === "undefined") return;
         try {
-            window.localStorage.setItem(key(shotId, section), next ? "1" : "0");
+            const storageKey = key(shotId, section);
+            if (storageKey) window.localStorage.setItem(storageKey, next ? "1" : "0");
         } catch {
             /* ignore */
         }
@@ -82,7 +86,8 @@ export function overridePanelSectionState(
     try {
         for (const sid of shotIds) {
             for (const sec of sections) {
-                window.localStorage.setItem(key(sid, sec), open ? "1" : "0");
+                const storageKey = key(sid, sec);
+                if (storageKey) window.localStorage.setItem(storageKey, open ? "1" : "0");
             }
         }
     } catch {

@@ -1,4 +1,5 @@
 import { create } from 'zustand';
+import { readClientStorage, writeClientStorage } from '@/lib/clientCacheScope';
 
 // ---------------------------------------------------------------------------
 // Featured (best-of-batch) persistence — client-side localStorage only.
@@ -10,7 +11,7 @@ const FEATURED_LS_KEY = 'lumenx:playground:featured';
 function loadFeatured(): Record<string, string> {
   if (typeof window === 'undefined') return {};
   try {
-    return JSON.parse(window.localStorage.getItem(FEATURED_LS_KEY) || '{}') as Record<string, string>;
+    return JSON.parse(readClientStorage(FEATURED_LS_KEY) || '{}') as Record<string, string>;
   } catch {
     return {};
   }
@@ -19,7 +20,7 @@ function loadFeatured(): Record<string, string> {
 function saveFeatured(map: Record<string, string>): void {
   if (typeof window === 'undefined') return;
   try {
-    window.localStorage.setItem(FEATURED_LS_KEY, JSON.stringify(map));
+    writeClientStorage(FEATURED_LS_KEY, JSON.stringify(map));
   } catch {
     /* ignore quota / serialization errors */
   }
@@ -35,14 +36,14 @@ const DEFAULT_CONCURRENCY = 3;
 
 function loadConcurrency(): number {
   if (typeof window === 'undefined') return DEFAULT_CONCURRENCY;
-  const raw = Number(window.localStorage.getItem(CONCURRENCY_LS_KEY));
+  const raw = Number(readClientStorage(CONCURRENCY_LS_KEY));
   return Number.isFinite(raw) && raw >= 1 && raw <= 8 ? raw : DEFAULT_CONCURRENCY;
 }
 
 function saveConcurrency(n: number): void {
   if (typeof window === 'undefined') return;
   try {
-    window.localStorage.setItem(CONCURRENCY_LS_KEY, String(n));
+    writeClientStorage(CONCURRENCY_LS_KEY, String(n));
   } catch {
     /* ignore */
   }
@@ -58,7 +59,9 @@ export type PlaygroundMode = 't2i' | 'i2i' | 't2v' | 'i2v' | 'r2v' | 'v2v';
 
 export interface PlaygroundOutput {
   id: string;
-  media_path: string;
+  media_reference: string;
+  media_id?: string;
+  media_url?: string;
   media_type: 'image' | 'video';
   thumbnail_path?: string;
   saved_to_library: boolean;
@@ -67,7 +70,9 @@ export interface PlaygroundOutput {
 export interface PlaygroundGeneration {
   id: string;
   mode: PlaygroundMode;
-  model_id: string;
+  model_id?: string;
+  actual_model_name?: string;
+  actual_model_id?: string;
   prompt: string;
   negative_prompt?: string;
   input_media: string[];
@@ -75,8 +80,16 @@ export interface PlaygroundGeneration {
   batch_size: number;
   outputs: PlaygroundOutput[];
   status: 'pending' | 'processing' | 'completed' | 'failed';
+  raw_status?: string;
+  status_zh?: string;
+  cancellation_requested?: boolean;
+  support_review?: boolean;
+  support_review_reason?: string | null;
   error?: string;
   created_at: string;
+  quoted_microtickets?: string;
+  quoted_tickets?: string;
+  tokens_per_ticket?: string;
 }
 
 export interface PlaygroundTemplate {
@@ -88,6 +101,7 @@ export interface PlaygroundTemplate {
   default_mode?: PlaygroundMode;
   default_model_id?: string;
   default_parameters: Record<string, any>;
+  version: number;
   created_at: string;
   updated_at: string;
 }
@@ -192,6 +206,7 @@ interface PlaygroundState {
 
   // Actions — reset
   resetInput: () => void;
+  resetForScope: () => void;
 }
 
 // ---------------------------------------------------------------------------
@@ -418,5 +433,27 @@ export const usePlaygroundStore = create<PlaygroundState>((set, get) => ({
       inputMedia: [],
       parameters: {},
       batchSize: DEFAULT_BATCH_SIZE,
+    }),
+  resetForScope: () =>
+    set({
+      mode: DEFAULT_MODE,
+      modelId: DEFAULT_MODEL_ID,
+      prompt: DEFAULT_PROMPT,
+      negativePrompt: '',
+      inputMedia: [],
+      parameters: {},
+      batchSize: DEFAULT_BATCH_SIZE,
+      modelPreferences: {},
+      history: [],
+      templates: [],
+      isGenerating: false,
+      activeGenerationIds: [],
+      showAdvancedParams: false,
+      showTemplateModal: false,
+      showHistoryDrawer: false,
+      favoriteTemplateIds: [],
+      featuredByGen: loadFeatured(),
+      queue: [],
+      maxConcurrent: loadConcurrency(),
     }),
 }));

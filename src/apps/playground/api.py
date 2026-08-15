@@ -15,7 +15,7 @@ from .models import (
     UpdateTemplateRequest,
 )
 from .service import PlaygroundService
-from .storage import PlaygroundStorage
+from .storage import DesktopPlaygroundRepository
 from ...utils import get_logger
 
 logger = get_logger(__name__)
@@ -23,7 +23,7 @@ logger = get_logger(__name__)
 router = APIRouter(tags=["playground"])
 
 # Module-level singletons — initialised when the router is first imported.
-_storage = PlaygroundStorage()
+_storage = DesktopPlaygroundRepository()
 _service = PlaygroundService(_storage)
 
 # ---------------------------------------------------------------------------

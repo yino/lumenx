@@ -14,6 +14,7 @@ from ..utils.media_refs import MEDIA_REF_UNKNOWN, classify_media_ref
 from ..utils.oss_utils import OSSImageUploader
 from ..utils.provider_media import resolve_media_input
 from ..utils.provider_registry import resolve_provider_backend
+from .provider_result import ProviderGenerationResult
 
 logger = get_logger(__name__)
 
@@ -40,6 +41,29 @@ class ImageGenModel(ABC):
         """
         pass
 
+    def generate_with_usage(
+        self,
+        prompt: str,
+        output_path: str,
+        **kwargs,
+    ) -> ProviderGenerationResult:
+        generated_path, elapsed_seconds = self.generate(
+            prompt,
+            output_path,
+            **kwargs,
+        )
+        return ProviderGenerationResult(
+            output_path=generated_path,
+            elapsed_seconds=float(elapsed_seconds),
+            raw_usage={
+                "output_count": kwargs.get(
+                    "output_count",
+                    kwargs.get("count", kwargs.get("n", 1)),
+                ),
+                "resolution": kwargs.get("resolution", kwargs.get("size")),
+            },
+        )
+
 class WanxImageModel(ImageGenModel):
     def __init__(self, config):
         super().__init__(config)
@@ -47,7 +71,7 @@ class WanxImageModel(ImageGenModel):
 
     @property
     def api_key(self):
-        api_key = os.getenv("DASHSCOPE_API_KEY")
+        api_key = self.config.get("api_key") or os.getenv("DASHSCOPE_API_KEY")
         if not api_key:
             logger.warning("Dashscope API Key not found in config or environment variables.")
         return api_key
@@ -83,6 +107,12 @@ class WanxImageModel(ImageGenModel):
         size = kwargs.pop('size', self.params.get('size', '1280*1280'))
         n = kwargs.pop('n', self.params.get('n', 1))
         negative_prompt = kwargs.pop('negative_prompt', None)
+        on_provider_ids = kwargs.pop('on_provider_ids', None)
+        provider_id_options = (
+            {"on_provider_ids": on_provider_ids}
+            if callable(on_provider_ids)
+            else {}
+        )
         # model_name is already handled above, remove from kwargs if present
         kwargs.pop('model_name', None)
         
@@ -108,7 +138,14 @@ class WanxImageModel(ImageGenModel):
                 image_url = self._generate_wan26_http(prompt, size, n, negative_prompt)
             elif final_model_name == 'wan2.6-image':
                 # wan2.6-image for I2I (requires reference images)
-                image_url = self._generate_wan26_image_http(prompt, size, n, negative_prompt, all_ref_paths)
+                image_url = self._generate_wan26_image_http(
+                    prompt,
+                    size,
+                    n,
+                    negative_prompt,
+                    all_ref_paths,
+                    **provider_id_options,
+                )
             elif final_model_name.startswith('wan2.7-image') or final_model_name.startswith('qwen-image'):
                 # Wan2.7-image / Qwen-image via DashScope async HTTP API
                 image_url = self._generate_dashscope_image_http(
@@ -121,6 +158,7 @@ class WanxImageModel(ImageGenModel):
                     seed=kwargs.pop('seed', None),
                     prompt_extend=kwargs.pop('prompt_extend', True),
                     watermark=kwargs.pop('watermark', False),
+                    **provider_id_options,
                 )
             else:
                 # Use SDK for other models
@@ -154,6 +192,7 @@ class WanxImageModel(ImageGenModel):
         seed: int = None,
         prompt_extend: bool = True,
         watermark: bool = False,
+        on_provider_ids=None,
     ) -> str:
         """Generate image using Wan2.7-image / Qwen-image via DashScope async HTTP API."""
         base = get_provider_base_url("DASHSCOPE")
@@ -213,10 +252,13 @@ class WanxImageModel(ImageGenModel):
 
         result = response.json()
         task_id = result.get('output', {}).get('task_id')
+        request_id = result.get('request_id')
         if not task_id:
             raise RuntimeError(f"No task_id in response: {result}")
 
         logger.info(f"Task created: {task_id}")
+        if callable(on_provider_ids):
+            on_provider_ids("dashscope", task_id, request_id)
 
         # Step 2: Poll for task completion
         poll_url = f"{base}/api/v1/tasks/{task_id}"
@@ -344,7 +386,15 @@ class WanxImageModel(ImageGenModel):
         
         return image_url
 
-    def _generate_wan26_image_http(self, prompt: str, size: str, n: int, negative_prompt: str = None, ref_image_paths: list = None) -> str:
+    def _generate_wan26_image_http(
+        self,
+        prompt: str,
+        size: str,
+        n: int,
+        negative_prompt: str = None,
+        ref_image_paths: list = None,
+        on_provider_ids=None,
+    ) -> str:
         """Generate image using Wan 2.6 Image via HTTP API (asynchronous with polling)."""
         base = get_provider_base_url("DASHSCOPE")
         create_url = f"{base}/api/v1/services/aigc/image-generation/generation"
@@ -415,10 +465,13 @@ class WanxImageModel(ImageGenModel):
         
         result = response.json()
         task_id = result.get('output', {}).get('task_id')
+        request_id = result.get('request_id')
         if not task_id:
             raise RuntimeError(f"No task_id in response: {result}")
         
         logger.info(f"Task created: {task_id}")
+        if callable(on_provider_ids):
+            on_provider_ids("dashscope", task_id, request_id)
         
         # Step 2: Poll for task completion
         poll_url = f"{base}/api/v1/tasks/{task_id}"

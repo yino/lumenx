@@ -24,25 +24,25 @@ export interface PromptBuilderRef {
 
 const CAMERA_GROUPS = [
     {
-        label: "Basic Movement (基础运镜)",
+        label: "基础运镜",
         options: [
-            { label: "⬅️ 水平左移 (Pan Left)", value: "camera pans left" },
-            { label: "➡️ 水平右移 (Pan Right)", value: "camera pans right" },
-            { label: "⬆️ 向上推移 (Tilt Up)", value: "camera pans up" },
-            { label: "⬇️ 向下推移 (Tilt Down)", value: "camera pans down" },
-            { label: "🔍+ 镜头推进 (Zoom In)", value: "zoom in, close up" },
-            { label: "🔍- 镜头拉远 (Zoom Out)", value: "zoom out, wide angle" },
+            { label: "⬅️ 水平左移", value: "camera pans left" },
+            { label: "➡️ 水平右移", value: "camera pans right" },
+            { label: "⬆️ 向上推移", value: "camera pans up" },
+            { label: "⬇️ 向下推移", value: "camera pans down" },
+            { label: "🔍+ 镜头推进", value: "zoom in, close up" },
+            { label: "🔍- 镜头拉远", value: "zoom out, wide angle" },
         ]
     },
     {
-        label: "Cinematic (高级/电影感运镜)",
+        label: "高级电影感运镜",
         options: [
-            { label: "🔄 环绕拍摄 (Orbit)", value: "camera orbits around, 360 degree view" },
-            { label: "👀 第一人称 (FPV)", value: "FPV view, first person perspective" },
-            { label: "✈️ 无人机航拍 (Drone)", value: "drone shot, aerial view, fly over" },
-            { label: "🎦 手持晃动 (Handheld)", value: "handheld camera, shaky cam, realistic" },
-            { label: "🏃 跟随运镜 (Tracking)", value: "tracking shot, following the subject" },
-            { label: "📍 固定机位 (Static)", value: "static camera, no movement, tripod shot" },
+            { label: "🔄 环绕拍摄", value: "camera orbits around, 360 degree view" },
+            { label: "👀 第一人称", value: "FPV view, first person perspective" },
+            { label: "✈️ 无人机航拍", value: "drone shot, aerial view, fly over" },
+            { label: "🎦 手持晃动", value: "handheld camera, shaky cam, realistic" },
+            { label: "🏃 跟随运镜", value: "tracking shot, following the subject" },
+            { label: "📍 固定机位", value: "static camera, no movement, tripod shot" },
         ]
     }
 ];

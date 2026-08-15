@@ -17,6 +17,9 @@ fi
 
 cd frontend
 
+# 桌面静态页面不得构建出云端登录、平台凭据或计费回退入口。
+export NEXT_PUBLIC_DEPLOYMENT_MODE=desktop
+
 # 检查 npm 或 yarn
 if command -v yarn &> /dev/null; then
     echo "   使用 yarn 安装依赖..."
@@ -115,7 +118,8 @@ pyinstaller --clean --noconfirm \
     --windowed \
     $ICON_PARAM \
     --add-data "static:static" \
-    --add-data "src:src" \
+    --add-data "src/apps/comic_gen/style_presets.json:src/apps/comic_gen" \
+    --add-data "config/model_catalog/generated/model_catalog.json:config/model_catalog/generated" \
     --add-binary "bin/ffmpeg:." \
     --hidden-import=src \
     --hidden-import=src.apps \
@@ -157,6 +161,9 @@ pyinstaller --clean --noconfirm \
 echo "7. 复制打包结果..."
 mkdir -p dist_mac
 cp -r dist/* dist_mac/
+
+echo "7.5. 验证桌面产物不包含平台密钥或云端运行配置..."
+python scripts/verify_desktop_artifact.py "dist_mac/LumenX Studio.app"
 
 # 创建 DMG 安装包
 echo "8. 创建 DMG 安装包..."

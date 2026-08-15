@@ -5,7 +5,7 @@ import { useTranslations } from "next-intl";
 import { motion, AnimatePresence } from "framer-motion";
 import { Check, Loader2, Film, AlertTriangle, Layout, Clock, FileText, Download, Music, Sliders, Package } from "lucide-react";
 import { useProjectStore } from "@/store/projectStore";
-import { api, type BgmPreset } from "@/lib/api";
+import { api, parseMediaReference, resolveMediaUrl, type BgmPreset } from "@/lib/api";
 import { getAssetUrl, extractErrorDetail } from "@/lib/utils";
 import StepPageHeader, { StepPill } from "@/components/shared/StepPageHeader";
 import SidePanelHeader from "@/components/shared/SidePanelHeader";
@@ -63,7 +63,7 @@ export default function VideoAssembly() {
             console.error("Failed to merge videos:", error);
 
             // Extract detailed error message from backend
-            const errorDetail = extractErrorDetail(error, "Unknown error occurred during video merge");
+            const errorDetail = extractErrorDetail(error, "视频合并时发生未知错误");
 
             setMergeError(errorDetail);
 
@@ -83,9 +83,11 @@ export default function VideoAssembly() {
             const rawPath = currentProject.merged_video_url;
             const cleanPath = rawPath.startsWith("/") ? rawPath.slice(1) : rawPath;
             const isDev = process.env.NODE_ENV === "development";
-            const url = isDev
-                ? `/api-proxy/files/${cleanPath}`
-                : getAssetUrl(rawPath);
+            const url = parseMediaReference(rawPath)
+                ? await resolveMediaUrl(rawPath)
+                : isDev
+                  ? `/api-proxy/files/${cleanPath}`
+                  : getAssetUrl(rawPath);
 
             const response = await fetch(url);
             if (!response.ok) throw new Error(`HTTP ${response.status}`);
@@ -122,7 +124,7 @@ export default function VideoAssembly() {
             <div className="flex-1 flex flex-col min-w-0 overflow-hidden">
                 <StepPageHeader
                     stepNumber={5}
-                    englishName="ASSEMBLY"
+                    englishName="视频组装"
                     title={tStep("assemblyTitle")}
                     subtitle={tStep("assemblySubtitle")}
                     pills={framesTotal > 0 ? (
@@ -230,7 +232,7 @@ export default function VideoAssembly() {
                                             </div>
                                             {frame.dialogue && (
                                                 <div className="flex items-start gap-2 pl-6 border-l-2 border-glass-border ml-1">
-                                                    <p className="text-xs text-text-secondary italic">"{frame.dialogue}"</p>
+                                                    <p className="text-xs text-text-secondary italic">“{frame.dialogue}”</p>
                                                 </div>
                                             )}
                                         </div>
@@ -454,7 +456,7 @@ function MixPhase({
                         }`}
                     >
                         <p className="text-[0.8125rem] font-medium text-foreground">{ta("mixBgmNone")}</p>
-                        <p className="mt-0.5 font-mono text-[0.59375rem] uppercase tracking-[0.14em] text-text-muted">silent</p>
+                        <p className="mt-0.5 font-mono text-[0.59375rem] uppercase tracking-[0.14em] text-text-muted">静音</p>
                     </button>
                     {loading ? (
                         <div className="col-span-3 grid place-items-center py-4 text-text-muted">

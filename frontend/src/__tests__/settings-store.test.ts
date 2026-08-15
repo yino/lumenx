@@ -12,22 +12,13 @@ describe('settingsStore', () => {
         expect(state.theme).toBe(DEFAULT_THEME);
     });
 
-    it('setLocale updates locale', () => {
-        useSettingsStore.getState().setLocale('en');
-        expect(useSettingsStore.getState().locale).toBe('en');
-    });
-
     it('setTheme updates theme', () => {
         useSettingsStore.getState().setTheme('brand-light');
         expect(useSettingsStore.getState().theme).toBe('brand-light');
     });
 
-    it('setLocale rejects invalid values at type level', () => {
-        // Verify type constraint works - both valid locales are accepted
-        useSettingsStore.getState().setLocale('zh');
+    it('locale 始终固定为中文', () => {
         expect(useSettingsStore.getState().locale).toBe('zh');
-        useSettingsStore.getState().setLocale('en');
-        expect(useSettingsStore.getState().locale).toBe('en');
     });
 
     it('setTheme accepts every theme preset', () => {

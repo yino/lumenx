@@ -17,8 +17,8 @@ export default function TaskQueueButton({ inFlightCount, open, onToggle }: TaskQ
             type="button"
             onClick={onToggle}
             aria-pressed={open}
-            aria-label={`Task queue, ${inFlightCount} in flight`}
-            title={`${inFlightCount} task${inFlightCount === 1 ? "" : "s"} in flight`}
+            aria-label={`任务队列，${inFlightCount} 个任务执行中`}
+            title={`${inFlightCount} 个任务执行中`}
             className={`relative inline-flex h-8 items-center gap-1.5 rounded-md border px-2.5 font-mono text-chrome-sm font-medium uppercase transition-colors duration-fast ease-out-quart focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/55 ${
                 open
                     ? "border-primary/55 bg-primary/15 text-primary"
@@ -26,7 +26,7 @@ export default function TaskQueueButton({ inFlightCount, open, onToggle }: TaskQ
             }`}
         >
             <ListChecks size={13} aria-hidden="true" />
-            Queue
+            队列
             {inFlightCount > 0 ? (
                 // P3-5 polish: subtle warm glow + inset highlight,
                 // tabular-nums so the badge width doesn't jitter as

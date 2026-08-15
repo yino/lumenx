@@ -133,25 +133,25 @@ export default function VideoGenerator() {
                 stepNumber={5}
                 totalSteps={6}
                 icon={<Video />}
-                englishName="Motion Generator"
+                englishName="动态生成"
                 title={tStep("motionTitle")}
                 subtitle={tStep("motionSubtitle")}
                 trailing={tasks.length > 0 ? (
                     <span className="font-mono text-[0.625rem] uppercase tracking-[0.18em] text-text-muted">
                         <span className="text-foreground font-medium">{tasks.length}</span>
-                        <span className="ml-1.5">shots</span>
+                        <span className="ml-1.5">个镜头</span>
                         {doneCount > 0 ? (
                             <>
                                 <span className="mx-1.5 text-text-muted/40">·</span>
                                 <span className="text-primary">{doneCount}</span>
-                                <span className="ml-1.5">done</span>
+                                <span className="ml-1.5">已完成</span>
                             </>
                         ) : null}
                         {queueCount > 0 ? (
                             <>
                                 <span className="mx-1.5 text-text-muted/40">·</span>
                                 <span className="text-foreground">{queueCount}</span>
-                                <span className="ml-1.5">in queue</span>
+                                <span className="ml-1.5">排队中</span>
                             </>
                         ) : null}
                     </span>

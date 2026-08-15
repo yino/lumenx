@@ -34,8 +34,8 @@ class TestModelCatalog:
             "t2i_model": "wan2.7-image-pro",
             "i2i_model": "wan2.7-image-pro",
             "image_model": "wan2.7-image-pro",
-            "i2v_model": "happyhorse-1.0-i2v",
-            "r2v_model": "wan2.7-r2v",
+            "i2v_model": "happyhorse-1.1-i2v",
+            "r2v_model": "happyhorse-1.1-r2v",
         }
 
         models = catalog["models"]
@@ -51,13 +51,9 @@ class TestModelCatalog:
         assert "viduq3-pro-i2v" in models
         assert "pixverse-v4-i2v" in models
 
-        assert models["wan2.6-i2v"]["ui"]["visible_in"] == [
-            "project_settings",
-            "series_settings",
-            "video_sidebar",
-            "global_settings",
-        ]
-        assert models["wan2.6-r2v"]["status"] == "hidden"
+        assert models["wan2.6-i2v"]["status"] == "deprecated"
+        assert models["wan2.6-i2v"]["ui"]["visible_in"] == []
+        assert models["wan2.6-r2v"]["status"] == "deprecated"
         assert models["wan2.6-r2v"]["ui"]["visible_in"] == []
 
     def test_repo_catalog_emits_additive_mode_aware_sections(self):
@@ -141,8 +137,8 @@ class TestModelCatalog:
 
         assert defaults.t2i_model == "wan2.7-image-pro"
         assert defaults.i2i_model == "wan2.7-image-pro"
-        assert defaults.i2v_model == "happyhorse-1.0-i2v"
-        assert defaults.r2v_model == "wan2.7-r2v"
+        assert defaults.i2v_model == "happyhorse-1.1-i2v"
+        assert defaults.r2v_model == "happyhorse-1.1-r2v"
 
     def test_validation_report_passes_for_repo_catalog(self):
         catalog = build_catalog_dict(MODEL_CATALOG_ROOT)
@@ -167,10 +163,8 @@ class TestModelCatalog:
     def test_validation_report_detects_default_visibility_regression(self):
         catalog = build_catalog_dict(MODEL_CATALOG_ROOT)
         broken_catalog = deepcopy(catalog)
-        # Target the current default I2V model (happyhorse-1.0-i2v after
-        # the 2026-05-26 catalog meta switch) so the validation actually
-        # fires — the previous default (wan2.7-i2v) is no longer authoritative.
-        broken_catalog["models"]["happyhorse-1.0-i2v"]["ui"]["visible_in"] = [
+        # Target the current default I2V model so the visibility validation fires.
+        broken_catalog["models"]["happyhorse-1.1-i2v"]["ui"]["visible_in"] = [
             "project_settings",
             "series_settings",
             "global_settings",

@@ -48,7 +48,7 @@ export default function SectionShell({
                         type="button"
                         onClick={onToggle}
                         aria-expanded={open}
-                        aria-label={open ? "Collapse section" : "Expand section"}
+                        aria-label={open ? "收起区域" : "展开区域"}
                         className="-m-1 grid h-7 w-7 place-items-center rounded text-text-muted transition-colors duration-fast ease-out-quart hover:bg-hover-bg hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/55"
                     >
                         {open ? (

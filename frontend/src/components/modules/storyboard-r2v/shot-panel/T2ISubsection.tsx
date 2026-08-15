@@ -211,7 +211,7 @@ function Hero({
                 <div className="relative grid h-[88px] w-[120px] shrink-0 place-items-center overflow-hidden rounded-md border border-glass-border bg-black/40">
                     {generating ? (
                         <PendingTaskAffordance
-                            statusLabel={inFlightStatus === "pending" ? "Queued" : "Generating"}
+                            statusLabel={inFlightStatus === "pending" ? "排队中" : "生成中"}
                             taskId={inFlightTaskId}
                             compact
                         />
@@ -534,7 +534,7 @@ function Compact({
                             hovered={false}
                             onHover={() => { /* noop */ }}
                             badge="storyboard"
-                            ariaLabel="Storyboard frame (active)"
+                            ariaLabel="当前分镜画面"
                             title={t("t2iStoryboardBadgeTooltip")}
                         />
                     ) : null}
@@ -551,8 +551,8 @@ function Compact({
                                 onRemove={() => onRemove(idx)}
                                 hovered={hoveredIdx === idx}
                                 onHover={(v) => setHoveredIdx(v ? idx : (cur) => (cur === idx ? null : cur))}
-                                ariaLabel={`T2I candidate ${idx + 1}${active ? " (active)" : ""}`}
-                                title={active ? "Active · click ✕ to remove" : "Click to make active"}
+                                ariaLabel={`T2I 候选图 ${idx + 1}${active ? "（当前）" : ""}`}
+                                title={active ? "当前候选图 · 点击 ✕ 移除" : "点击设为当前候选图"}
                             />
                         );
                     })}
@@ -679,7 +679,7 @@ function ThumbButton({
                 <span
                     aria-hidden="true"
                     className="pointer-events-none absolute left-0.5 top-0.5 grid h-4 w-4 place-items-center rounded bg-black/65 text-text-secondary"
-                    title="From Storyboard stage"
+                    title="来自分镜阶段"
                 >
                     <Pin size={9} aria-hidden="true" />
                 </span>
@@ -688,8 +688,8 @@ function ThumbButton({
                 <span
                     role="button"
                     tabIndex={0}
-                    aria-label="Delete candidate"
-                    title="Delete"
+                    aria-label="删除候选图"
+                    title="删除"
                     onClick={(e) => { e.stopPropagation(); onRemove(); }}
                     onKeyDown={(e) => {
                         if (e.key === "Enter" || e.key === " ") {
@@ -738,15 +738,15 @@ function SinglePreview({ url, isStoryboard, onRemove, storyboardBadgeText }: Sin
                     title={storyboardBadgeText}
                 >
                     <Pin size={9} aria-hidden="true" />
-                    storyboard
+                    分镜
                 </span>
             ) : null}
             {onRemove && hovered ? (
                 <button
                     type="button"
                     onClick={(e) => { e.stopPropagation(); onRemove(); }}
-                    aria-label="Delete candidate"
-                    title="Delete"
+                    aria-label="删除候选图"
+                    title="删除"
                     className="absolute left-1 top-1 grid h-6 w-6 cursor-pointer place-items-center rounded-full bg-black/75 text-foreground transition-colors duration-fast ease-out-quart hover:bg-status-failed-fg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-status-failed-border"
                 >
                     <X size={11} aria-hidden="true" />
@@ -777,27 +777,27 @@ function ActivePreview({
                 {activeUrl ? (
                     <PreviewImage
                         src={activeUrl}
-                        alt="Active first frame"
+                        alt="当前首帧"
                         className="h-full w-full"
                     />
                 ) : (
                     <div className="grid h-full w-full place-items-center font-mono text-chrome-sm font-medium uppercase text-text-muted">
-                        no frame yet
+                        暂无首帧
                     </div>
                 )}
                 {isStoryboard ? (
                     <span
                         className="pointer-events-none absolute left-1 top-1 inline-flex items-center gap-1 rounded bg-black/65 px-1.5 py-0.5 font-mono text-[0.625rem] font-medium uppercase text-text-secondary"
-                        title="From Storyboard stage"
+                        title="来自分镜阶段"
                     >
                         <Pin size={9} aria-hidden="true" />
-                        storyboard
+                        分镜
                     </span>
                 ) : null}
                 {generating && !activeUrl ? (
                     <div className="absolute inset-0 grid place-items-center bg-black/65 backdrop-blur-[1px]">
                         <PendingTaskAffordance
-                            statusLabel={inFlightStatus === "pending" ? "Queued" : "Generating"}
+                            statusLabel={inFlightStatus === "pending" ? "排队中" : "生成中"}
                             taskId={inFlightTaskId}
                             compact
                         />

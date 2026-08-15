@@ -24,6 +24,7 @@ import { useTranslations } from "next-intl";
 import type { I2VModelConfig, DurationConfig, ModelParamSupport } from "@/lib/modelCatalog";
 import { usePanelSectionState } from "./usePanelSectionState";
 import SectionShell from "./SectionShell";
+import { IS_CLOUD_DEPLOYMENT } from "@/lib/deployment";
 // PR-3c · Loader2/Sparkles/WorkflowActionButton removed with the Generate
 // CTA — generation lives in ShotCard's inline row now.
 
@@ -175,7 +176,7 @@ export default function ParamsSection({
             title={title}
             open={open}
             onToggle={() => setOpen(!open)}
-            subtitle={activeModel ? `${activeModel.name}` : undefined}
+            subtitle={!IS_CLOUD_DEPLOYMENT && activeModel ? `${activeModel.name}` : undefined}
             trailing={inFlightCount > 0 ? (
                 <span className="rounded-full border border-status-processing-border bg-status-processing-bg px-1.5 py-0.5 text-[0.5625rem] font-semibold leading-none text-status-processing-fg">
                     {`${inFlightCount} ${t("inFlightShort")}`}
@@ -184,7 +185,7 @@ export default function ParamsSection({
         >
             <div className="space-y-3">
                 {/* Model picker — dropdown (scales past a pill wall). */}
-                <ParamRow label="Model">
+                {!IS_CLOUD_DEPLOYMENT && <ParamRow label="Model">
                     <div className="relative">
                         <button
                             ref={trigRef}
@@ -230,7 +231,7 @@ export default function ParamsSection({
                             document.body
                         )}
                     </div>
-                </ParamRow>
+                </ParamRow>}
 
                 {/* Duration */}
                 <ParamRow label="Duration">
@@ -301,7 +302,7 @@ export default function ParamsSection({
                                             type="text"
                                             value={params.negativePrompt ?? ""}
                                             onChange={(e) => set("negativePrompt", e.target.value)}
-                                            placeholder="things to avoid…"
+                                            placeholder="输入需要避免的内容…"
                                             className="w-full rounded-lg border border-glass-border bg-surface-inset px-2.5 py-1.5 font-sans text-body-sm text-foreground placeholder:text-text-muted outline-none transition-colors duration-fast ease-out-quart focus:border-primary/55 focus-visible:ring-2 focus-visible:ring-primary/45"
                                         />
                                     </ParamRow>
@@ -329,8 +330,8 @@ export default function ParamsSection({
                                                     const parsed = parseInt(v, 10);
                                                     set("seed", Number.isNaN(parsed) ? undefined : parsed);
                                                 }}
-                                                placeholder="random"
-                                                aria-label="Random seed (leave blank for provider default)"
+                                                placeholder="随机"
+                                                aria-label="随机种子（留空使用供应商默认值）"
                                                 className="w-32 rounded-lg border border-glass-border bg-surface-inset px-2 py-1.5 font-mono text-body-sm text-foreground placeholder:text-text-muted outline-none transition-colors duration-fast ease-out-quart focus:border-primary/55 focus-visible:ring-2 focus-visible:ring-primary/45"
                                             />
                                             {/* Dice = randomize. Lucide icon for
@@ -340,9 +341,9 @@ export default function ParamsSection({
                                             <button
                                                 type="button"
                                                 onClick={() => set("seed", Math.floor(Math.random() * 1_000_000_000))}
-                                                aria-label="Generate random seed"
+                                                aria-label="生成随机种子"
                                                 className="grid h-8 w-8 place-items-center rounded text-text-muted transition-colors duration-fast ease-out-quart hover:bg-hover-bg hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/55"
-                                                title="New random seed"
+                                                title="生成新随机种子"
                                             >
                                                 <Dices size={15} aria-hidden="true" />
                                             </button>
@@ -354,8 +355,8 @@ export default function ParamsSection({
                                                 <button
                                                     type="button"
                                                     onClick={() => set("seed", undefined)}
-                                                    aria-label="Clear seed"
-                                                    title="Clear (random)"
+                                                    aria-label="清除随机种子"
+                                                    title="清除（随机）"
                                                     className="grid h-8 w-8 place-items-center rounded text-text-muted transition-colors duration-fast ease-out-quart hover:bg-hover-bg hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/55"
                                                 >
                                                     <X size={13} aria-hidden="true" />
@@ -394,7 +395,7 @@ export default function ParamsSection({
                                     </ParamRow>
                                 ) : null}
                                 {modelParams.sound ? (
-                                    <ParamRow label="Sound">
+                                    <ParamRow label="声音">
                                         <ToggleControl
                                             value={!!params.sound}
                                             onChange={(v) => set("sound", v)}
@@ -402,7 +403,7 @@ export default function ParamsSection({
                                     </ParamRow>
                                 ) : null}
                                 {modelParams.viduAudio ? (
-                                    <ParamRow label="Vidu audio">
+                                    <ParamRow label="Vidu 音频">
                                         <ToggleControl
                                             value={!!params.viduAudio}
                                             onChange={(v) => set("viduAudio", v)}
@@ -410,7 +411,7 @@ export default function ParamsSection({
                                     </ParamRow>
                                 ) : null}
                                 {modelParams.promptExtend ? (
-                                    <ParamRow label="Prompt extend">
+                                    <ParamRow label="提示词扩展">
                                         <ToggleControl
                                             value={!!params.promptExtend}
                                             onChange={(v) => set("promptExtend", v)}
@@ -418,7 +419,7 @@ export default function ParamsSection({
                                     </ParamRow>
                                 ) : null}
                                 {modelParams.watermark ? (
-                                    <ParamRow label="Watermark">
+                                    <ParamRow label="水印">
                                         <ToggleControl
                                             value={!!params.watermark}
                                             onChange={(v) => set("watermark", v)}
@@ -426,7 +427,7 @@ export default function ParamsSection({
                                     </ParamRow>
                                 ) : null}
                                 {modelParams.shotType ? (
-                                    <ParamRow label="Shot type">
+                                    <ParamRow label="镜头类型">
                                         <PillCluster
                                             options={typeof modelParams.shotType === "boolean"
                                                 ? ["single", "multi"]
@@ -556,7 +557,7 @@ function DurationControl({
                 step={cfg.step}
                 value={value}
                 onChange={(e) => onChange(parseInt(e.target.value, 10))}
-                aria-label="Duration in seconds (drag to adjust)"
+                aria-label="时长，单位为秒（拖动调整）"
                 className="h-1.5 flex-1 cursor-pointer appearance-none rounded-full bg-elevated accent-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/55"
             />
             <div className="flex shrink-0 items-center gap-0.5">
@@ -581,7 +582,7 @@ function DurationControl({
                         const clamped = clamp(parsed);
                         if (clamped !== value) onChange(clamped);
                     }}
-                    aria-label={`Duration in seconds (type a value between ${cfg.min} and ${cfg.max})`}
+                    aria-label={`时长，单位为秒（输入 ${cfg.min} 到 ${cfg.max} 之间的值）`}
                     className="w-12 rounded border border-glass-border bg-surface-inset px-1.5 py-0.5 text-right font-mono text-body-sm tabular-nums text-foreground outline-none transition-colors duration-fast ease-out-quart focus:border-primary/55 focus-visible:ring-1 focus-visible:ring-primary/45 [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
                 />
                 <span className="font-mono text-body-sm text-text-muted">s</span>

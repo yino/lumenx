@@ -6,6 +6,7 @@ import { X, FileText, RotateCcw, ChevronDown, ChevronRight, Loader2 } from 'luci
 import { useTranslations } from 'next-intl';
 import { useProjectStore } from '@/store/projectStore';
 import { api } from '@/lib/api';
+import { IS_CLOUD_DEPLOYMENT } from '@/lib/deployment';
 
 interface PromptConfigModalProps {
     isOpen: boolean;
@@ -140,7 +141,7 @@ export default function PromptConfigModal({ isOpen, onClose }: PromptConfigModal
                                 {/* Issue 13: polish 用的 LLM 模型选择。优先项目级 → 系列级 →
                                     LLMAdapter 默认（qwen3.6-plus）。三个推荐选项都是
                                     vision-capable，能让带首帧/参考图的润色更准确。 */}
-                                <div className="space-y-2">
+                                {!IS_CLOUD_DEPLOYMENT && <div className="space-y-2">
                                     <div>
                                         <h3 className="text-sm font-bold text-foreground">Polish 模型</h3>
                                         <p className="text-[0.625rem] text-text-muted mt-0.5">
@@ -158,7 +159,7 @@ export default function PromptConfigModal({ isOpen, onClose }: PromptConfigModal
                                         <option value="kimi-k2.6">kimi-k2.6 · Moonshot Kimi K2.6（视觉）</option>
                                     </select>
                                     <div className="border-b border-border-subtle pt-1" />
-                                </div>
+                                </div>}
 
                                 {SECTIONS.map((section) => (
                                     <div key={section.key} className="space-y-2">

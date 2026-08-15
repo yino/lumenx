@@ -9,15 +9,18 @@ const nextConfig = {
     distDir: isProd ? (isDocker ? 'out' : '../static') : undefined,
     basePath: isProd && !isDocker ? '/static' : undefined,
     assetPrefix: isProd && !isDocker ? '/static' : undefined,
-    // Dev-only: proxy /api-proxy/* to backend to avoid CORS issues (e.g. file downloads)
-    async rewrites() {
-        return isProd ? [] : [
-            {
-                source: '/api-proxy/:path*',
-                destination: `${BACKEND_URL}/:path*`,
-            },
-        ];
-    },
+    // Dev-only: proxy /api-proxy/* to backend to avoid CORS issues (e.g. file downloads).
+    // Static exports must not declare rewrites, even when the returned list is empty.
+    ...(!isProd && {
+        async rewrites() {
+            return [
+                {
+                    source: '/api-proxy/:path*',
+                    destination: `${BACKEND_URL}/:path*`,
+                },
+            ];
+        },
+    }),
     eslint: {
         ignoreDuringBuilds: true,
     },

@@ -13,6 +13,7 @@ import {
     VIDEO_R2V_MODELS,
 } from "@/lib/modelCatalog";
 import GroupedModelGrid from "@/components/common/GroupedModelGrid";
+import { IS_CLOUD_DEPLOYMENT } from "@/lib/deployment";
 
 export interface VideoConfig {
     /** Active I2V model id (used by t2i_i2v shots). */
@@ -203,9 +204,11 @@ export default function VideoConfigModal({ isOpen, onClose, config, onConfigChan
                                     <h2 className="text-[0.9375rem] font-semibold text-foreground tracking-tight">
                                         {t("videoSettings")}
                                     </h2>
-                                    <p className="text-[0.6875rem] text-text-muted mt-0.5 tracking-wide font-medium">
-                                        {currentModelConfig?.name}
-                                    </p>
+                                    {!IS_CLOUD_DEPLOYMENT && (
+                                        <p className="text-[0.6875rem] text-text-muted mt-0.5 tracking-wide font-medium">
+                                            {currentModelConfig?.name}
+                                        </p>
+                                    )}
                                 </div>
                             </div>
                             <motion.button
@@ -222,7 +225,7 @@ export default function VideoConfigModal({ isOpen, onClose, config, onConfigChan
                         {/* Content — Staggered sections */}
                         <div className="flex-1 overflow-y-auto px-7 py-7 space-y-9">
                             {/* Model Selection */}
-                            <motion.section
+                            {!IS_CLOUD_DEPLOYMENT && <motion.section
                                 custom={0}
                                 variants={sectionVariants}
                                 initial="hidden"
@@ -240,7 +243,7 @@ export default function VideoConfigModal({ isOpen, onClose, config, onConfigChan
                                     selectedId={activeModelId}
                                     onSelect={(id) => updateDraft(modelKey, id)}
                                 />
-                            </motion.section>
+                            </motion.section>}
 
                             {/* Duration */}
                             <motion.section
@@ -268,7 +271,7 @@ export default function VideoConfigModal({ isOpen, onClose, config, onConfigChan
                                                 <span className="text-3xl font-bold text-foreground tabular-nums tracking-tight">
                                                     {dc.value}
                                                 </span>
-                                                <span className="text-sm text-text-muted font-medium">sec</span>
+                                                <span className="text-sm text-text-muted font-medium">秒</span>
                                             </div>
                                         );
                                     }

@@ -288,7 +288,7 @@ class TestModelSettingsIntegration:
         # moved to happyhorse-1.0-i2v, i2i default unified with t2i on
         # wan2.7-image-pro).
         assert s.model_settings.t2i_model == "wan2.7-image-pro"
-        assert s.model_settings.i2v_model == "happyhorse-1.0-i2v"
+        assert s.model_settings.i2v_model == "happyhorse-1.1-i2v"
 
     def test_update_series_model_settings_via_pipeline(self, pipeline):
         """Pipeline update_series should accept model_settings changes."""

@@ -1,0 +1,23 @@
+{
+  "environment": "lumenx-staging",
+  "reviewed_by": "release-owner",
+  "reviewed_at": "2026-08-15T00:00:00+00:00",
+  "resources": {
+    "postgresql": {
+      "staging_fingerprint": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+      "production_fingerprint": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    },
+    "redis": {
+      "staging_fingerprint": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+      "production_fingerprint": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+    },
+    "oss_bucket": {
+      "staging_fingerprint": "sha256:3333333333333333333333333333333333333333333333333333333333333333",
+      "production_fingerprint": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+    },
+    "provider_account": {
+      "staging_fingerprint": "sha256:4444444444444444444444444444444444444444444444444444444444444444",
+      "production_fingerprint": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+    }
+  }
+}

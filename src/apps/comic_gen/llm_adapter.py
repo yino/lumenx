@@ -17,6 +17,7 @@ import logging
 from typing import Dict, List, Optional, Any
 
 from ...utils.endpoints import get_provider_base_url
+from ...models.provider_result import ProviderTextResult
 
 logger = logging.getLogger(__name__)
 
@@ -24,13 +25,25 @@ logger = logging.getLogger(__name__)
 class LLMAdapter:
     """Unified LLM call interface supporting DashScope and OpenAI-compatible APIs."""
 
-    def __init__(self):
-        self.provider = os.getenv("LLM_PROVIDER", "dashscope").lower()
+    def __init__(
+        self,
+        *,
+        provider: Optional[str] = None,
+        api_key: Optional[str] = None,
+        base_url: Optional[str] = None,
+        model: Optional[str] = None,
+    ):
+        self.provider = (provider or os.getenv("LLM_PROVIDER", "dashscope")).lower()
+        self.api_key = api_key
+        self.base_url = base_url
+        self.model = model
         self._client = None
         logger.info(f"LLM Adapter initialized with provider: {self.provider}")
 
     @property
     def is_configured(self) -> bool:
+        if self.api_key:
+            return True
         if self.provider == "openai":
             return bool(os.getenv("OPENAI_API_KEY"))
         return bool(os.getenv("DASHSCOPE_API_KEY"))
@@ -47,14 +60,20 @@ class LLMAdapter:
 
             if self.provider == "openai":
                 self._client = OpenAI(
-                    api_key=os.getenv("OPENAI_API_KEY"),
-                    base_url=os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1"),
+                    api_key=self.api_key or os.getenv("OPENAI_API_KEY"),
+                    base_url=(
+                        self.base_url
+                        or os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1")
+                    ),
                 )
             else:
                 # DashScope uses OpenAI-compatible endpoint
                 self._client = OpenAI(
-                    api_key=os.getenv("DASHSCOPE_API_KEY"),
-                    base_url=f"{get_provider_base_url('DASHSCOPE')}/compatible-mode/v1",
+                    api_key=self.api_key or os.getenv("DASHSCOPE_API_KEY"),
+                    base_url=(
+                        self.base_url
+                        or f"{get_provider_base_url('DASHSCOPE')}/compatible-mode/v1"
+                    ),
                 )
         return self._client
 
@@ -64,6 +83,8 @@ class LLMAdapter:
     _DASHSCOPE_MODEL_FALLBACK_CHAIN = ["qwen3.7-plus", "qwen3.6-plus", "qwen-plus"]
 
     def _get_default_model(self) -> str:
+        if self.model:
+            return self.model
         if self.provider == "openai":
             return os.getenv("OPENAI_MODEL", "gpt-4o")
         return self._DASHSCOPE_MODEL_FALLBACK_CHAIN[0]
@@ -88,20 +109,42 @@ class LLMAdapter:
         Raises:
             RuntimeError: If the API call fails.
         """
+        return self.chat_with_usage(
+            messages,
+            model=model,
+            response_format=response_format,
+        ).content
+
+    def chat_with_usage(
+        self,
+        messages: List[Dict[str, str]],
+        model: Optional[str] = None,
+        response_format: Optional[Dict[str, str]] = None,
+    ) -> ProviderTextResult:
         client = self._get_client()
 
         # 显式 model override 路径：单次尝试，失败就抛。
         if model:
-            return self._chat_once(client, model, messages, response_format)
+            return self._chat_once_with_usage(client, model, messages, response_format)
 
         # Provider 默认路径：DashScope 走 fallback chain，OpenAI 单次尝试。
         if self.provider == "openai":
-            return self._chat_once(client, self._get_default_model(), messages, response_format)
+            return self._chat_once_with_usage(
+                client,
+                self._get_default_model(),
+                messages,
+                response_format,
+            )
 
         last_err: Optional[Exception] = None
         for idx, candidate in enumerate(self._DASHSCOPE_MODEL_FALLBACK_CHAIN):
             try:
-                return self._chat_once(client, candidate, messages, response_format)
+                return self._chat_once_with_usage(
+                    client,
+                    candidate,
+                    messages,
+                    response_format,
+                )
             except RuntimeError as e:
                 # 仅在 "模型不存在 / 不可用" 类错误时回退；其他错误（鉴权、限流、网络）
                 # 直接抛，不浪费第二次重试。判定关键字宽松匹配 DashScope 文案。
@@ -129,6 +172,20 @@ class LLMAdapter:
         messages: List[Dict[str, str]],
         response_format: Optional[Dict[str, str]],
     ) -> str:
+        return self._chat_once_with_usage(
+            client,
+            model,
+            messages,
+            response_format,
+        ).content
+
+    def _chat_once_with_usage(
+        self,
+        client,
+        model: str,
+        messages: List[Dict[str, str]],
+        response_format: Optional[Dict[str, str]],
+    ) -> ProviderTextResult:
         kwargs: Dict[str, Any] = {
             "model": model,
             "messages": messages,
@@ -138,7 +195,39 @@ class LLMAdapter:
 
         try:
             response = client.chat.completions.create(**kwargs)
-            return response.choices[0].message.content
+            usage = getattr(response, "usage", None)
+            if isinstance(usage, dict):
+                input_tokens = usage.get("prompt_tokens", usage.get("input_tokens"))
+                output_tokens = usage.get(
+                    "completion_tokens",
+                    usage.get("output_tokens"),
+                )
+            else:
+                input_tokens = getattr(
+                    usage,
+                    "prompt_tokens",
+                    getattr(usage, "input_tokens", None),
+                )
+                output_tokens = getattr(
+                    usage,
+                    "completion_tokens",
+                    getattr(usage, "output_tokens", None),
+                )
+            if not isinstance(input_tokens, int) or not isinstance(output_tokens, int):
+                raise RuntimeError("供应商响应缺少 token 用量")
+            request_id = getattr(response, "_request_id", None) or getattr(
+                response,
+                "id",
+                None,
+            )
+            return ProviderTextResult(
+                content=response.choices[0].message.content,
+                raw_usage={
+                    "input_tokens": input_tokens,
+                    "output_tokens": output_tokens,
+                },
+                provider_request_id=str(request_id) if request_id else None,
+            )
         except Exception as e:
             provider_label = "DashScope" if self.provider != "openai" else "OpenAI"
             raise RuntimeError(f"{provider_label} API error: {e}") from e

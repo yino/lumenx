@@ -19,6 +19,12 @@ import type { GlobalTab } from "@/components/layout/GlobalSidebar";
 import dynamic from "next/dynamic";
 import { api } from "@/lib/api";
 import { useTranslations } from "next-intl";
+import AuthGate from "@/components/auth/AuthGate";
+import WorkspaceGate from "@/components/workspace/WorkspaceGate";
+import { useWorkspaceStore } from "@/store/workspaceStore";
+import { readClientStorage, writeClientStorage } from "@/lib/clientCacheScope";
+import { canAccessAdminRoute, parseAdminSection, type AdminSection } from "@/lib/adminRoute";
+import { useAuthStore } from "@/store/authStore";
 
 const ProjectClient = dynamic(() => import("@/components/project/ProjectClient"), { ssr: false });
 const SeriesDetailPage = dynamic(() => import("@/components/series/SeriesDetailPage"), { ssr: false });
@@ -26,6 +32,8 @@ const ImportFileDialog = dynamic(() => import("@/components/series/ImportFileDia
 const SettingsPage = dynamic(() => import("@/components/settings/SettingsPage"), { ssr: false });
 const AssetLibraryPage = dynamic(() => import("@/components/library/AssetLibraryPage"), { ssr: false });
 const PlaygroundPage = dynamic(() => import("@/components/modules/playground/PlaygroundPage"), { ssr: false });
+const PlatformAdminPage = dynamic(() => import("@/components/admin/PlatformAdminPage"), { ssr: false });
+const WalletPage = dynamic(() => import("@/components/wallet/WalletPage"), { ssr: false });
 
 // ── Create Series Dialog ──
 function CreateSeriesDialog({ isOpen, onClose }: { isOpen: boolean; onClose: () => void }) {
@@ -453,14 +461,15 @@ function EpisodeBreadcrumbWrapper({ seriesId, episodeId }: { seriesId: string; e
 }
 
 // ── Main Component ──
-export default function Home() {
+function StudioApplication() {
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [dialogSeries, setDialogSeries] = useState<{ id: string; title: string } | null>(null);
   const [isSeriesDialogOpen, setIsSeriesDialogOpen] = useState(false);
   const [isImportDialogOpen, setIsImportDialogOpen] = useState(false);
   const [isSyncing, setIsSyncing] = useState(false);
   const [showCreateDropdown, setShowCreateDropdown] = useState(false);
-  const [currentView, setCurrentView] = useState<'home' | 'project' | 'series' | 'series-episode' | 'library' | 'settings' | 'playground'>('home');
+  const [currentView, setCurrentView] = useState<'home' | 'project' | 'series' | 'series-episode' | 'library' | 'settings' | 'playground' | 'wallet' | 'admin'>('home');
+  const [adminSection, setAdminSection] = useState<AdminSection>('users');
   const [activeTab, setActiveTab] = useState<GlobalTab>("workspace");
   const [wsSearch, setWsSearch] = useState("");
   const online = useOnline();
@@ -473,6 +482,11 @@ export default function Home() {
   const [, setEpisodesLoading] = useState(false);
   const projects = useProjectStore((state) => state.projects);
   const seriesList = useProjectStore((state) => state.seriesList);
+  const currentWorkspaceId = useWorkspaceStore((state) => state.currentWorkspaceId);
+  const currentWorkspace = useWorkspaceStore((state) =>
+    state.workspaces.find((workspace) => workspace.id === state.currentWorkspaceId),
+  );
+  const user = useAuthStore((state) => state.user);
   const deleteProject = useProjectStore((state) => state.deleteProject);
   const setProjects = useProjectStore((state) => state.setProjects);
   const fetchSeriesList = useProjectStore((state) => state.fetchSeriesList);
@@ -481,21 +495,32 @@ export default function Home() {
 
   // Sync projects and series from backend on mount
   useEffect(() => {
+    useProjectStore.setState({
+      projects: [],
+      seriesList: [],
+      currentProject: null,
+      currentSeries: null,
+      selectedFrameId: null,
+    });
+    setSeriesEpisodes({});
+    setWsSearch("");
+    setWsStatus("all");
     syncProjects();
     fetchSeriesList();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [currentWorkspaceId]);
 
   // Hydrate the persisted gallery/list view preference (client-only to avoid
   // an SSR/CSR mismatch — default stays "gallery" on first paint).
   useEffect(() => {
     try {
-      const saved = localStorage.getItem(WS_VIEW_KEY);
+      const saved = readClientStorage(WS_VIEW_KEY);
       if (saved === "gallery" || saved === "list") setViewMode(saved);
+      else setViewMode("gallery");
     } catch {
       /* localStorage unavailable — keep default */
     }
-  }, []);
+  }, [currentWorkspaceId]);
 
   // Load episodes for all series when seriesList changes
   useEffect(() => {
@@ -532,9 +557,7 @@ export default function Home() {
     setIsSyncing(true);
     try {
       const backendProjects = await api.getProjects();
-      if (backendProjects && backendProjects.length > 0) {
-        setProjects(backendProjects);
-      }
+      setProjects(backendProjects || []);
     } catch (error) {
       console.error("Failed to sync projects from backend:", error);
       toast.error(t("toastProjectsSyncFailed"), {
@@ -561,6 +584,30 @@ export default function Home() {
   useEffect(() => {
     const handleHashChange = () => {
       const hash = window.location.hash;
+      const requestedAdminSection = parseAdminSection(hash);
+      if (requestedAdminSection) {
+        if (!canAccessAdminRoute(Boolean(user?.is_platform_admin))) {
+          window.location.hash = '#/';
+          setCurrentView('home');
+          setActiveTab('workspace');
+          return;
+        }
+        setCurrentView('admin');
+        setAdminSection(requestedAdminSection);
+        setActiveTab('admin');
+        setProjectId(null);
+        setSeriesId(null);
+        setEpisodeId(null);
+        return;
+      }
+      if (hash === '#/wallet') {
+        setCurrentView('wallet');
+        setActiveTab('wallet');
+        setProjectId(null);
+        setSeriesId(null);
+        setEpisodeId(null);
+        return;
+      }
       // Match #/series/{id}/episode/{eid} first (more specific)
       const seriesEpisodeMatch = hash.match(/^#\/series\/([^/]+)\/episode\/([^/]+)$/);
       if (seriesEpisodeMatch) {
@@ -622,7 +669,7 @@ export default function Home() {
     handleHashChange();
     window.addEventListener('hashchange', handleHashChange);
     return () => window.removeEventListener('hashchange', handleHashChange);
-  }, []);
+  }, [user?.is_platform_admin]);
 
   // 项目详情页 — 全屏，无 GlobalSidebar
   if (currentView === 'project' && projectId) {
@@ -651,7 +698,7 @@ export default function Home() {
   // Persisted gallery/list switch for the workspace.
   const changeViewMode = (mode: "gallery" | "list") => {
     setViewMode(mode);
-    try { localStorage.setItem(WS_VIEW_KEY, mode); } catch { /* localStorage unavailable */ }
+    writeClientStorage(WS_VIEW_KEY, mode);
   };
 
   // Determine content based on activeTab
@@ -664,6 +711,12 @@ export default function Home() {
     }
     if (currentView === 'playground') {
       return <PlaygroundPage />;
+    }
+    if (currentView === 'admin') {
+      return <PlatformAdminPage section={adminSection} />;
+    }
+    if (currentView === 'wallet') {
+      return <WalletPage />;
     }
 
     // Workspace view — Line B skeleton
@@ -707,7 +760,7 @@ export default function Home() {
         <header className="px-4 md:px-7 pt-5 md:pt-6 pb-3 flex flex-col md:flex-row md:items-end gap-3 md:gap-5">
           <div className="flex-1 min-w-0">
             <div className="font-mono text-[0.625rem] font-medium uppercase tracking-[0.2em] text-text-muted">
-              WORKSPACE · <span className="text-primary font-semibold">{t("gallery") || "画廊"}</span>
+              当前工作区 · <span className="text-primary font-semibold">{currentWorkspace?.name || "本地工作区"}</span>
             </div>
             <h1 className="text-[1.625rem] md:text-[2.125rem] font-display atelier-display font-semibold text-foreground leading-tight tracking-tight mt-1">
               {t("title")}
@@ -769,7 +822,7 @@ export default function Home() {
                     className="w-full px-4 py-2.5 text-sm text-left text-foreground hover:bg-hover-bg transition-colors flex items-center gap-2"
                   >
                     <Sparkles size={16} className="text-accent" />
-                    Playground
+                    自由创作台
                   </button>
                 </motion.div>
               )}
@@ -845,7 +898,7 @@ export default function Home() {
               <div className="glass-panel atelier-card p-10 rounded-2xl border border-glass-border text-center max-w-[620px] w-full relative overflow-hidden">
                 <div className="relative z-[1] flex flex-col items-center gap-4">
                   <div className="font-mono text-[0.625rem] uppercase tracking-[0.22em] text-text-muted">
-                    RENDER NOISE INTO NARRATIVE
+                    化灵感为叙事
                   </div>
                   <p className="text-[2.125rem] font-display atelier-display font-medium italic leading-[1.25] tracking-tight text-foreground">
                     {t("emptyQuote") || "\u201c每一座城市，都藏着一个还没被讲出来的故事。\u201d"}
@@ -1070,5 +1123,15 @@ export default function Home() {
         onSuccess={() => fetchSeriesList()}
       />
     </main>
+  );
+}
+
+export default function Home() {
+  return (
+    <AuthGate>
+      <WorkspaceGate>
+        <StudioApplication />
+      </WorkspaceGate>
+    </AuthGate>
   );
 }

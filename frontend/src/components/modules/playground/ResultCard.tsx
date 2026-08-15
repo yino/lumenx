@@ -1,10 +1,12 @@
 'use client';
 
 import { useState, useCallback } from 'react';
-import { Download, Video, Copy, Check, Replace, Crown, Bookmark } from 'lucide-react';
+import { Ban, Download, Video, Copy, Check, Replace, Crown, Bookmark } from 'lucide-react';
 import { useTranslations } from 'next-intl';
-import { API_URL, playgroundApi } from '@/lib/api';
+import { getSafeApiError, playgroundApi } from '@/lib/api';
+import { getAssetUrl } from '@/lib/utils';
 import { usePlaygroundStore, type PlaygroundGeneration } from './usePlaygroundStore';
+import { IS_CLOUD_DEPLOYMENT } from '@/lib/deployment';
 
 interface ResultCardProps {
   generation: PlaygroundGeneration;
@@ -24,11 +26,6 @@ const MODE_LABELS: Record<string, string> = {
   i2i: 'I2I',
 };
 
-function getMediaUrl(path: string): string {
-  const relativePath = path.replace(/^output\//, '');
-  return `${API_URL}/files/${relativePath}`;
-}
-
 function formatTime(dateStr: string): string {
   const date = new Date(dateStr);
   const hh = String(date.getHours()).padStart(2, '0');
@@ -43,11 +40,17 @@ function getElapsedProgress(createdAt: string): number {
   return progress * 100;
 }
 
+function actualModelLabel(generation: PlaygroundGeneration): string {
+  return generation.actual_model_name || generation.model_id || generation.mode;
+}
+
 function FailedCard({ generation, onRetry, onDelete }: { generation: PlaygroundGeneration; onRetry?: (g: PlaygroundGeneration) => void; onDelete?: (g: PlaygroundGeneration) => void }) {
   const { prompt, model_id, mode, created_at, error } = generation;
   const t = useTranslations('playground');
   const [expanded, setExpanded] = useState(false);
   const [copied, setCopied] = useState(false);
+  const billedReview = generation.support_review || generation.raw_status === 'support_review';
+  const cancelled = generation.raw_status === 'cancelled';
 
   const handleCopy = (e: React.MouseEvent) => {
     e.stopPropagation();
@@ -67,7 +70,14 @@ function FailedCard({ generation, onRetry, onDelete }: { generation: PlaygroundG
       >
         <div className="absolute inset-0 bg-status-failed-bg" />
         <div className="relative text-center px-4 py-3 w-full">
-          <p className="font-mono text-[0.625rem] text-status-failed-fg uppercase mb-2">{t('card.failed')}</p>
+          <p className="font-mono text-[0.625rem] text-status-failed-fg mb-2">
+            {billedReview ? '计费待复核' : cancelled ? '任务已取消' : t('card.failed')}
+          </p>
+          {billedReview && (
+            <p className="mb-2 text-[0.625rem] leading-5 text-amber-200">
+              供应商已产生费用，但结果处理未完成。平台正在复核，请勿重复提交。
+            </p>
+          )}
           {error && (
             <p className={`text-[0.625rem] text-text-muted leading-relaxed break-all ${expanded ? '' : 'line-clamp-2'}`}>
               {error}
@@ -77,7 +87,7 @@ function FailedCard({ generation, onRetry, onDelete }: { generation: PlaygroundG
 
         {/* Action bar */}
         <div className="relative flex items-center gap-2 pb-2">
-          {onRetry && (
+          {onRetry && !billedReview && (
             <button
               onClick={(e) => { e.stopPropagation(); onRetry(generation); }}
               className="inline-flex items-center gap-1 px-2.5 py-1 rounded text-[0.625rem] font-medium text-primary bg-primary/10 hover:bg-primary/20 transition-colors"
@@ -112,7 +122,7 @@ function FailedCard({ generation, onRetry, onDelete }: { generation: PlaygroundG
         <p className="text-[0.6875rem] text-text-secondary line-clamp-2 mb-1.5">{prompt}</p>
         <div className="flex items-center gap-2">
           <span className="font-mono text-[0.5625rem] bg-glass text-text-muted rounded px-[6px] py-[2px]">
-            {model_id || mode}
+            实际模型：{actualModelLabel(generation)}
           </span>
           <span className="font-mono text-[0.5625rem] text-text-muted">
             {formatTime(created_at)}
@@ -131,9 +141,9 @@ function CompletedCard({ generation, outputIndex, onGenerateVideo, onOpenDetail 
   const [saving, setSaving] = useState(false);
 
   const saved = output?.saved_to_library ?? false;
-  const mediaUrl = output?.media_path ? getMediaUrl(output.media_path) : null;
+  const mediaUrl = output?.media_url || getAssetUrl(output?.media_reference);
   const updateGeneration = usePlaygroundStore((s) => s.updateGeneration);
-  const useResultAsReference = usePlaygroundStore((s) => s.useResultAsReference);
+  const applyResultAsReference = usePlaygroundStore((s) => s.useResultAsReference);
   const featuredByGen = usePlaygroundStore((s) => s.featuredByGen);
   const toggleFeatured = usePlaygroundStore((s) => s.toggleFeatured);
   const featured = output ? featuredByGen[generation.id] === output.id : false;
@@ -147,7 +157,7 @@ function CompletedCard({ generation, outputIndex, onGenerateVideo, onOpenDetail 
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
-      a.download = output?.media_path?.split('/').pop() || 'download';
+      a.download = output?.media_id || output?.media_reference?.split('/').pop() || 'download';
       document.body.appendChild(a);
       a.click();
       document.body.removeChild(a);
@@ -179,9 +189,9 @@ function CompletedCard({ generation, outputIndex, onGenerateVideo, onOpenDetail 
 
   const handleUseAsReference = useCallback((e: React.MouseEvent) => {
     e.stopPropagation();
-    if (!output?.media_path) return;
-    useResultAsReference(output.media_path, output.media_type);
-  }, [output, useResultAsReference]);
+    if (!output?.media_reference) return;
+    applyResultAsReference(output.media_reference, output.media_type);
+  }, [applyResultAsReference, output]);
 
   return (
     <div
@@ -252,7 +262,7 @@ function CompletedCard({ generation, outputIndex, onGenerateVideo, onOpenDetail 
           </button>
           {output?.media_type === 'image' && onGenerateVideo && (
             <button
-              onClick={(e) => { e.stopPropagation(); onGenerateVideo(output.media_path); }}
+              onClick={(e) => { e.stopPropagation(); onGenerateVideo(output.media_reference); }}
               className="w-7 h-7 rounded-full bg-elevated backdrop-blur-sm flex items-center justify-center hover:bg-hover-bg transition"
               title={t('card.generateVideo')}
             >
@@ -281,7 +291,7 @@ function CompletedCard({ generation, outputIndex, onGenerateVideo, onOpenDetail 
         <p className="text-[0.6875rem] text-text-secondary line-clamp-2 mb-1.5">{prompt}</p>
         <div className="flex items-center gap-1.5 flex-wrap">
           <span className="font-mono text-[0.5625rem] bg-glass text-text-muted rounded px-[6px] py-[2px]">
-            {model_id || mode}
+            实际模型：{actualModelLabel(generation)}
           </span>
           {/* Size or resolution tag */}
           {generation.parameters.size && (
@@ -313,6 +323,32 @@ function CompletedCard({ generation, outputIndex, onGenerateVideo, onOpenDetail 
 export default function ResultCard({ generation, outputIndex = 0, onGenerateVideo, onRetry, onOpenDetail, onDelete }: ResultCardProps) {
   const { status, prompt, model_id, mode, created_at } = generation;
   const t = useTranslations('playground');
+  const updateGeneration = usePlaygroundStore((s) => s.updateGeneration);
+  const [canceling, setCanceling] = useState(false);
+  const [cancelError, setCancelError] = useState<string | null>(null);
+
+  const handleCancel = async (event: React.MouseEvent) => {
+    event.stopPropagation();
+    if (canceling || generation.cancellation_requested) return;
+    setCanceling(true);
+    setCancelError(null);
+    try {
+      const task = await playgroundApi.cancelGeneration(generation.id);
+      updateGeneration({
+        ...generation,
+        status: task.status,
+        raw_status: task.raw_status,
+        status_zh: task.status_zh,
+        cancellation_requested: task.cancellation_requested,
+        support_review: task.support_review,
+        error: task.error || task.message,
+      });
+    } catch (error) {
+      setCancelError(getSafeApiError(error).message);
+    } finally {
+      setCanceling(false);
+    }
+  };
 
   // ─── PROCESSING STATE ───────────────────────────────────────────────────────
   if (status === 'pending' || status === 'processing') {
@@ -338,6 +374,9 @@ export default function ResultCard({ generation, outputIndex = 0, onGenerateVide
             <span className="font-mono text-[0.625rem] text-text-muted uppercase">
               {status === 'pending' ? t('card.queued') : t('card.processing')}
             </span>
+            {generation.cancellation_requested && (
+              <span className="text-[0.625rem] text-amber-200">正在等待供应商确认取消与计费状态</span>
+            )}
           </div>
 
           {/* Progress bar */}
@@ -352,14 +391,31 @@ export default function ResultCard({ generation, outputIndex = 0, onGenerateVide
         {/* Info area */}
         <div className="px-3 py-[10px]">
           <p className="text-[0.6875rem] text-text-secondary line-clamp-2 mb-1.5">{prompt}</p>
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             <span className="font-mono text-[0.5625rem] bg-glass text-text-muted rounded px-[6px] py-[2px]">
-              {model_id || mode}
+              实际模型：{actualModelLabel(generation)}
             </span>
+            {generation.quoted_tickets && (
+              <span className="font-mono text-[0.5625rem] rounded bg-amber-300/10 px-[6px] py-[2px] text-amber-200">
+                预扣 {generation.quoted_tickets} 算力券
+              </span>
+            )}
             <span className="font-mono text-[0.5625rem] text-text-muted">
               {formatTime(created_at)}
             </span>
+            {IS_CLOUD_DEPLOYMENT && (
+              <button
+                type="button"
+                onClick={handleCancel}
+                disabled={canceling || generation.cancellation_requested}
+                className="ml-auto inline-flex h-6 items-center gap-1 rounded border border-red-300/25 bg-red-400/10 px-2 text-[0.625rem] text-red-200 transition-colors hover:bg-red-400/20 disabled:cursor-wait disabled:opacity-50"
+              >
+                <Ban size={11} />
+                {canceling ? '取消中' : generation.cancellation_requested ? '取消确认中' : '取消任务'}
+              </button>
+            )}
           </div>
+          {cancelError && <p className="mt-2 text-[0.625rem] text-red-200">{cancelError}</p>}
         </div>
       </div>
     );

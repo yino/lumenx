@@ -474,7 +474,7 @@ export default function ParameterBar() {
             <div className="grid grid-cols-2 gap-3 mt-3">
               {supportsSeed && (
                 <div className="flex flex-col gap-[6px] atelier-field">
-                  <span className="font-mono text-[0.625rem] uppercase tracking-[0.08em] text-text-muted">Seed</span>
+                  <span className="font-mono text-[0.625rem] uppercase tracking-[0.08em] text-text-muted">随机种子</span>
                   <input
                     type="number"
                     placeholder={t('parameters.seedPlaceholder')}

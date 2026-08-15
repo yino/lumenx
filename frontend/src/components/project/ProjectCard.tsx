@@ -5,7 +5,6 @@ import { useEffect, useRef, useState } from "react";
 import { Play, Trash2, Film, Clock, MoreVertical, ExternalLink, Star } from "lucide-react";
 import { useTranslations } from "next-intl";
 import { Project } from "@/store/projectStore";
-import { useSettingsStore } from "@/store/settingsStore";
 import { getAssetUrl } from "@/lib/utils";
 import { coverGradient, GRAIN_URL } from "@/lib/atelierCover";
 import { api } from "@/lib/api";
@@ -55,7 +54,6 @@ export function deriveStatus(project: Project): DerivedStatus {
 export default function ProjectCard({ project, onDelete }: ProjectCardProps) {
     const t = useTranslations("project");
     const tCommon = useTranslations("common");
-    const locale = useSettingsStore((s) => s.locale);
 
     const [menuOpen, setMenuOpen] = useState(false);
     const menuWrapRef = useRef<HTMLDivElement>(null);
@@ -134,7 +132,7 @@ export default function ProjectCard({ project, onDelete }: ProjectCardProps) {
             ? rawCreated * 1000
             : NaN;
     const dateStr = Number.isFinite(dateMs)
-        ? new Date(dateMs).toLocaleDateString(locale === "zh" ? "zh-CN" : "en-US")
+        ? new Date(dateMs).toLocaleDateString("zh-CN")
         : "";
 
     return (

@@ -50,6 +50,27 @@ from .models import (
 from .llm import ScriptProcessor, DEFAULT_STORYBOARD_POLISH_PROMPT, DEFAULT_VIDEO_POLISH_PROMPT, DEFAULT_R2V_POLISH_PROMPT, DEFAULT_ENTITY_EXTRACTION_PROMPT, DEFAULT_STYLE_ANALYSIS_PROMPT, DEFAULT_STORYBOARD_EXTRACTION_PROMPT
 from ...utils.oss_utils import OSSImageUploader, sign_oss_urls_in_data
 from ...utils import setup_logging
+from ...platform import DeploymentMode, get_deployment_settings
+from ...platform.composition import compose_deployment_adapters
+from ...platform.auth import CookieSecurityMiddleware
+from ...platform.auth.api import install_cloud_auth
+from ...platform.ai_gateway_api import install_cloud_ai_gateway_api
+from ...platform.asset_api import install_cloud_asset_api
+from ...platform.ai_task_api import install_cloud_ai_task_api
+from ...platform.content_api import install_cloud_content_api
+from ...platform.configuration_api import install_cloud_configuration_api
+from ...platform.administration_api import install_cloud_platform_administration_api
+from ...platform.ticket_administration_api import install_cloud_ticket_administration_api
+from ...platform.ticket_history_api import install_cloud_ticket_history_api
+from ...platform.media_api import install_cloud_media_api
+from ...platform.import_api import install_cloud_import_api
+from ...platform.observability_api import install_observability_api
+from ...platform.playground_api import install_cloud_playground_api
+from ...platform.storyboard_api import install_cloud_storyboard_api
+from ...platform.workspaces_api import install_workspace_api
+from ...platform.readiness import check_readiness
+from ...platform.error_protocol import install_cloud_error_protocol
+from ...platform.edge import LegacyCloudAPICompatibilityMiddleware
 from fastapi.responses import JSONResponse
 from dotenv import load_dotenv, set_key
 
@@ -65,23 +86,138 @@ env_path = os.path.join(_project_root, ".env")
 if os.path.exists(env_path):
     load_dotenv(env_path, override=True)
 
-# Mount playground router AFTER .env is loaded (adapters read API keys from env)
-from ..playground.api import router as playground_router
-app.include_router(playground_router, prefix="/playground")
+# Cloud mode fails fast when any security or infrastructure prerequisite is absent.
+app.state.deployment_settings = get_deployment_settings()
+app.state.deployment_adapters = compose_deployment_adapters(
+    app.state.deployment_settings
+)
+_IS_DESKTOP_DEPLOYMENT = app.state.deployment_adapters.is_desktop
 
-# Debug: Print OSS configuration at startup
-logger.info(f"STARTUP: OSS_ENDPOINT={os.getenv('OSS_ENDPOINT')}, OSS_BUCKET_NAME={os.getenv('OSS_BUCKET_NAME')}, OSS_BASE_PATH={os.getenv('OSS_BASE_PATH')}")
+
+def _require_desktop_model_settings() -> None:
+    if not _IS_DESKTOP_DEPLOYMENT:
+        raise HTTPException(
+            status_code=404,
+            detail={
+                "code": "MODEL_SETTINGS_UNAVAILABLE",
+                "message": "云端模型由平台统一配置",
+            },
+        )
+
+
+def _require_desktop_endpoint() -> None:
+    if not _IS_DESKTOP_DEPLOYMENT:
+        raise HTTPException(
+            status_code=404,
+            detail={
+                "code": "DESKTOP_ENDPOINT_UNAVAILABLE",
+                "message": "云端不提供此本地诊断或配置接口",
+            },
+        )
+
+
+class _CloudLegacyPipelineGuard:
+    def __getattr__(self, _name: str):
+        raise HTTPException(
+            status_code=404,
+            detail={
+                "code": "CLOUD_AI_GATEWAY_REQUIRED",
+                "message": "云端 AI 请求必须通过持久任务网关",
+            },
+        )
+
+# Desktop Playground keeps its local JSON and filesystem adapters. Cloud installs
+# the authenticated PostgreSQL/media-ID implementation below.
+if app.state.deployment_adapters.legacy_pipeline_enabled:
+    from ..playground.api import router as playground_router
+
+    app.include_router(playground_router, prefix="/playground")
+
+logger.info(
+    "STARTUP: deployment_mode=%s, oss_configured=%s",
+    app.state.deployment_settings.deployment_mode.value,
+    bool(app.state.deployment_settings.oss_bucket_name),
+)
 
 
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # In production, specify the frontend origin
+    allow_origins=sorted(app.state.deployment_settings.allowed_origin_set),
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
-    expose_headers=["Content-Disposition"],  # Allow browsers to access Content-Disposition for downloads
+    expose_headers=["Content-Disposition", "X-Correlation-ID"],
 )
+app.add_middleware(
+    CookieSecurityMiddleware,
+    allowed_origins=app.state.deployment_settings.allowed_origin_set,
+)
+if app.state.deployment_adapters.cloud_authentication_required:
+    app.add_middleware(LegacyCloudAPICompatibilityMiddleware)
+
+if app.state.deployment_adapters.cloud_authentication_required:
+    from ...platform.worker import celery_app
+
+    cloud_auth = install_cloud_auth(app, app.state.deployment_settings)
+    cloud_ai = install_cloud_ai_gateway_api(
+        app,
+        cloud_auth,
+        dispatcher=app.state.deployment_adapters.tasks(celery_app),
+    )
+    install_cloud_configuration_api(app, cloud_auth, app.state.deployment_settings)
+    install_cloud_platform_administration_api(app, cloud_auth)
+    install_cloud_ticket_administration_api(app, cloud_auth)
+    install_cloud_ticket_history_api(app, cloud_auth)
+    install_cloud_ai_task_api(app, cloud_auth)
+    install_workspace_api(app, cloud_auth)
+    install_cloud_content_api(app, cloud_auth, ai_submitter=cloud_ai)
+    cloud_media = install_cloud_media_api(
+        app,
+        cloud_auth,
+        app.state.deployment_settings,
+        storage=app.state.deployment_adapters.media(cloud_auth.database),
+    )
+    if app.state.deployment_settings.deployment_mode is DeploymentMode.TEST:
+        from ...platform.test_adapters import (
+            DeterministicPrivateObjectStore,
+            install_test_object_api,
+        )
+
+        if not isinstance(cloud_media.object_store, DeterministicPrivateObjectStore):
+            raise RuntimeError("发布测试模式未使用确定性对象存储")
+        install_test_object_api(
+            app,
+            app.state.deployment_settings,
+            cloud_media.object_store,
+        )
+    install_cloud_asset_api(
+        app,
+        cloud_auth,
+        media_storage=cloud_media,
+        ai_submitter=cloud_ai,
+    )
+    install_cloud_storyboard_api(
+        app,
+        cloud_auth,
+        cloud_media,
+        ai_submitter=cloud_ai,
+    )
+    install_cloud_playground_api(
+        app,
+        cloud_auth,
+        cloud_media,
+        ai_submitter=cloud_ai,
+    )
+    install_cloud_import_api(
+        app,
+        cloud_auth,
+        cloud_media,
+        allowed_root=app.state.deployment_settings.local_import_root,
+        max_import_bytes=app.state.deployment_settings.local_import_max_bytes,
+    )
+    install_observability_api(app, cloud_auth)
+    install_cloud_error_protocol(app, logger=logger)
 
 # Middleware to add cache headers to static files
 @app.middleware("http")
@@ -97,27 +233,56 @@ os.makedirs("output/uploads", exist_ok=True)
 os.makedirs("output/video", exist_ok=True)
 os.makedirs("output/assets", exist_ok=True)
 
-# Mount static files with multiple aliases to handle plural/singular inconsistencies
-# Legacy paths in projects.json often use 'outputs/videos' or 'outputs/assets'
-app.mount("/files/outputs/videos", StaticFiles(directory="output/video"), name="files_outputs_videos")
-app.mount("/files/outputs/assets", StaticFiles(directory="output/assets"), name="files_outputs_assets")
-app.mount("/files/outputs", StaticFiles(directory="output"), name="files_outputs")
-app.mount("/files/videos", StaticFiles(directory="output/video"), name="files_videos")
-app.mount("/files/assets", StaticFiles(directory="output/assets"), name="files_assets")
-app.mount("/files", StaticFiles(directory="output"), name="files")
+# Desktop keeps legacy local paths. Cloud media is private and available only by media ID.
+if app.state.deployment_adapters.local_static_files_enabled:
+    app.mount(
+        "/files/outputs/videos",
+        StaticFiles(directory="output/video"),
+        name="files_outputs_videos",
+    )
+    app.mount(
+        "/files/outputs/assets",
+        StaticFiles(directory="output/assets"),
+        name="files_outputs_assets",
+    )
+    app.mount(
+        "/files/outputs",
+        StaticFiles(directory="output"),
+        name="files_outputs",
+    )
+    app.mount(
+        "/files/videos",
+        StaticFiles(directory="output/video"),
+        name="files_videos",
+    )
+    app.mount(
+        "/files/assets",
+        StaticFiles(directory="output/assets"),
+        name="files_assets",
+    )
+    app.mount("/files", StaticFiles(directory="output"), name="files")
 
-# Ensure playground output directories exist
-os.makedirs("output/playground/images", exist_ok=True)
-os.makedirs("output/playground/videos", exist_ok=True)
-app.mount("/files/playground", StaticFiles(directory="output/playground"), name="files_playground")
+    os.makedirs("output/playground/images", exist_ok=True)
+    os.makedirs("output/playground/videos", exist_ok=True)
+    app.mount(
+        "/files/playground",
+        StaticFiles(directory="output/playground"),
+        name="files_playground",
+    )
 
 
-# Initialize pipeline
-pipeline = ComicGenPipeline()
+# The legacy pipeline owns local JSON, local paths, process credentials, and
+# in-process tasks. Cloud routes use scoped services and the persistent gateway.
+pipeline = (
+    ComicGenPipeline()
+    if app.state.deployment_adapters.legacy_pipeline_enabled
+    else _CloudLegacyPipelineGuard()
+)
 
-@app.get("/debug/config")
+@app.get("/debug/config", include_in_schema=_IS_DESKTOP_DEPLOYMENT)
 def debug_config():
     """Diagnostic endpoint to check OSS and path configuration."""
+    _require_desktop_endpoint()
     uploader = OSSImageUploader()
     return {
         "oss_configured": uploader.is_configured,
@@ -199,6 +364,12 @@ def health_check():
     tasks and by external uptime checks. Intentionally cheap: no DB
     hit, no provider call, just a 200 + a few facts the frontend can
     show next to the spinner ("backend reachable, log file at X")."""
+    if not _IS_DESKTOP_DEPLOYMENT:
+        return {
+            "ok": True,
+            "time": time.time(),
+            "deployment": "cloud",
+        }
     from ...utils import get_log_dir
     log_dir = get_log_dir()
     log_file = os.path.join(log_dir, "app.log")
@@ -211,12 +382,30 @@ def health_check():
     }
 
 
-@app.get("/diagnose/log_tail")
+@app.get("/ready")
+def readiness_check():
+    try:
+        result = check_readiness(app.state.deployment_settings)
+    except Exception:
+        logger.exception("Cloud readiness dependency check failed")
+        return JSONResponse(
+            status_code=503,
+            content={"ready": False, "message": "云端依赖尚未就绪"},
+        )
+    status_code = 200 if result.ready else 503
+    return JSONResponse(
+        status_code=status_code,
+        content={"ready": result.ready, "checks": result.checks},
+    )
+
+
+@app.get("/diagnose/log_tail", include_in_schema=_IS_DESKTOP_DEPLOYMENT)
 def diagnose_log_tail(lines: int = 200):
     """Return the last N lines of the app log + an ERROR/Exception
     summary so the Diagnose UI on stuck tasks can show actual log
     content instead of just a path. Read-only, capped to 1000 lines so
     a runaway client can't hose the process."""
+    _require_desktop_endpoint()
     from ...utils import get_log_dir
     capped = max(1, min(int(lines or 200), 1000))
     log_path = os.path.join(get_log_dir(), "app.log")
@@ -246,9 +435,10 @@ def diagnose_log_tail(lines: int = 200):
     }
 
 
-@app.get("/system/check")
+@app.get("/system/check", include_in_schema=_IS_DESKTOP_DEPLOYMENT)
 def check_system():
     """Check system dependencies (ffmpeg, etc.) and configuration."""
+    _require_desktop_endpoint()
     from ...utils.system_check import run_system_checks
     return run_system_checks()
 
@@ -619,18 +809,26 @@ class UpdateModelSettingsRequest(BaseModel):
     prop_aspect_ratio: Optional[str] = None
     storyboard_aspect_ratio: Optional[str] = None
 
-@app.get("/series/{series_id}/model_settings")
+@app.get(
+    "/series/{series_id}/model_settings",
+    include_in_schema=_IS_DESKTOP_DEPLOYMENT,
+)
 def get_series_model_settings(series_id: str):
     """Get Series model settings."""
+    _require_desktop_model_settings()
     series = pipeline.get_series(series_id)
     if not series:
         raise HTTPException(status_code=404, detail="Series not found")
     return series.model_settings.model_dump()
 
 
-@app.put("/series/{series_id}/model_settings")
+@app.put(
+    "/series/{series_id}/model_settings",
+    include_in_schema=_IS_DESKTOP_DEPLOYMENT,
+)
 def update_series_model_settings(series_id: str, settings: UpdateModelSettingsRequest):
     """Update Series-level model settings."""
+    _require_desktop_model_settings()
     updates = {k: v for k, v in settings.model_dump().items() if v is not None}
     if not updates:
         series = pipeline.get_series(series_id)
@@ -1226,15 +1424,17 @@ def remove_user_config_keys(keys: list):
                 logger.warning(f"Failed to unset key {key} from .env: {e}")
 
 
-# Load user config on startup
+# Load user config on startup only where local user credentials are authoritative.
 import sys
-load_user_config()
+if _IS_DESKTOP_DEPLOYMENT:
+    load_user_config()
 
 
 
-@app.get("/config/info")
+@app.get("/config/info", include_in_schema=_IS_DESKTOP_DEPLOYMENT)
 def get_config_info():
     """Returns information about the current config storage mode."""
+    _require_desktop_endpoint()
     config_path = get_user_config_path()
     is_packaged = os.getenv("LUMEN_X_PACKAGED", "false").lower() == "true" or getattr(sys, 'frozen', False)
     return {
@@ -1244,9 +1444,10 @@ def get_config_info():
     }
 
 
-@app.post("/config/env")
+@app.post("/config/env", include_in_schema=_IS_DESKTOP_DEPLOYMENT)
 def update_env_config(config: EnvConfig):
     """Updates environment configuration and saves to config file."""
+    _require_desktop_endpoint()
     try:
         raw_config = config.dict(exclude_unset=True)
 
@@ -2622,9 +2823,14 @@ def toggle_variant_favorite(script_id: str, request: FavoriteVariantRequest):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-@app.post("/projects/{script_id}/model_settings", response_model=Script)
+@app.post(
+    "/projects/{script_id}/model_settings",
+    response_model=Script,
+    include_in_schema=_IS_DESKTOP_DEPLOYMENT,
+)
 def update_model_settings(script_id: str, request: UpdateModelSettingsRequest):
     """Updates project's model settings for T2I/I2I/I2V and aspect ratios."""
+    _require_desktop_model_settings()
     try:
         updated_script = pipeline.update_model_settings(
             script_id,
@@ -3865,9 +4071,10 @@ def _check_mulerun_cli_status() -> bool:
         return False
 
 
-@app.post("/config/mulerun-login")
+@app.post("/config/mulerun-login", include_in_schema=_IS_DESKTOP_DEPLOYMENT)
 def trigger_mulerun_login():
     """Trigger mulerun login — opens browser for OAuth."""
+    _require_desktop_endpoint()
     import shutil, subprocess
     if shutil.which("mulerun") is None:
         raise HTTPException(status_code=400, detail="MuleRun CLI 未安装。请先运行: npm i -g @mulerunai/cli")
@@ -3910,7 +4117,7 @@ def _mask_secret(value: Optional[str]) -> str:
     return _MASK_CHAR * 8 + v[-4:]
 
 
-@app.get("/config/env")
+@app.get("/config/env", include_in_schema=_IS_DESKTOP_DEPLOYMENT)
 def get_env_config():
     """Get current environment configuration.
 
@@ -3919,6 +4126,7 @@ def get_env_config():
     the frontend can drive required-field / validation logic without the raw
     value. Non-secret config (OSS bucket/endpoint/base path, provider modes,
     endpoint overrides) is returned as-is."""
+    _require_desktop_endpoint()
     try:
         from ...utils.endpoints import PROVIDER_DEFAULTS
         from ...utils.oss_utils import is_oss_enabled

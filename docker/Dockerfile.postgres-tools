@@ -1,0 +1,5 @@
+FROM postgres:16-alpine
+
+COPY docker/postgres-init-app-role.sh /usr/local/bin/lumenx-postgres-app-role
+COPY docker/postgres-backup.sh /usr/local/bin/lumenx-postgres-backup
+RUN chmod +x /usr/local/bin/lumenx-postgres-app-role /usr/local/bin/lumenx-postgres-backup

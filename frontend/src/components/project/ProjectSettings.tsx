@@ -14,14 +14,14 @@ interface ProjectSettingsProps {
 }
 
 const STYLE_PRESETS = [
-    { value: "realistic", label: "Realistic (写实)", description: "Photorealistic, detailed imagery" },
-    { value: "cartoon", label: "Cartoon (卡通)", description: "Animated, colorful style" },
-    { value: "anime", label: "Anime (动漫)", description: "Japanese animation style" },
-    { value: "cyberpunk", label: "Cyberpunk (赛博朋克)", description: "Futuristic, neon-lit aesthetic" },
-    { value: "watercolor", label: "Watercolor (水彩)", description: "Soft, painterly look" },
-    { value: "sketch", label: "Sketch (素描)", description: "Hand-drawn pencil style" },
-    { value: "comic", label: "Comic Book (漫画)", description: "Bold outlines, halftone shading" },
-    { value: "cinematic", label: "Cinematic (电影)", description: "Film-like, dramatic lighting" },
+    { value: "realistic", label: "写实", description: "照片级真实感与丰富细节" },
+    { value: "cartoon", label: "卡通", description: "色彩鲜明的动画风格" },
+    { value: "anime", label: "动漫", description: "日式动画风格" },
+    { value: "cyberpunk", label: "赛博朋克", description: "未来感霓虹美学" },
+    { value: "watercolor", label: "水彩", description: "柔和的绘画质感" },
+    { value: "sketch", label: "素描", description: "手绘铅笔风格" },
+    { value: "comic", label: "漫画", description: "粗线条与网点阴影" },
+    { value: "cinematic", label: "电影感", description: "电影式戏剧光影" },
 ];
 
 export default function ProjectSettings({ project, isOpen, onClose, onUpdate }: ProjectSettingsProps) {

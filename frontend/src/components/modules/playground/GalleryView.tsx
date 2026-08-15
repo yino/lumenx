@@ -3,7 +3,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { Video, AlertCircle } from 'lucide-react';
 import { useTranslations } from 'next-intl';
-import { API_URL } from '@/lib/api';
+import { getAssetUrl } from '@/lib/utils';
 import type { PlaygroundGeneration } from './usePlaygroundStore';
 
 // ---------------------------------------------------------------------------
@@ -19,10 +19,6 @@ interface GalleryViewProps {
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
-
-function getMediaUrl(path: string): string {
-  return API_URL + '/files/' + path.replace(/^output\//, '');
-}
 
 function formatTime(dateStr: string): string {
   const date = new Date(dateStr);
@@ -91,7 +87,7 @@ export default function GalleryView({
   if (generations.length === 0) {
     return (
       <div className="flex flex-col h-full items-center justify-center">
-        <p className="text-sm text-text-muted">No results to display</p>
+        <p className="text-sm text-text-muted">暂无生成结果</p>
       </div>
     );
   }
@@ -102,7 +98,7 @@ export default function GalleryView({
   const output = current.outputs[0];
   const isVideo =
     output?.media_type === 'video' || VIDEO_MODES.has(current.mode);
-  const mediaUrl = output?.media_path ? getMediaUrl(output.media_path) : null;
+  const mediaUrl = output?.media_url || getAssetUrl(output?.media_reference);
 
   return (
     <div className="flex flex-col h-full">
@@ -130,7 +126,7 @@ export default function GalleryView({
         ) : current.status === 'failed' ? (
           <div className="flex flex-col items-center gap-3 text-status-failed-fg">
             <AlertCircle className="w-10 h-10" />
-            <p className="font-mono text-xs">Generation failed</p>
+            <p className="font-mono text-xs">生成失败</p>
             {current.error && (
               <p className="text-[0.625rem] text-text-muted max-w-xs text-center line-clamp-3">
                 {current.error}
@@ -141,7 +137,7 @@ export default function GalleryView({
                 onClick={() => onRetry(current)}
                 className="mt-2 px-3 py-1.5 rounded text-xs font-medium text-primary bg-primary/10 hover:bg-primary/20 transition-colors"
               >
-                Retry
+                重试
               </button>
             )}
           </div>
@@ -149,7 +145,7 @@ export default function GalleryView({
           <div className="flex flex-col items-center gap-3 text-text-muted">
             <div className="w-8 h-8 border-2 border-glass-border border-t-primary rounded-full animate-spin" />
             <p className="font-mono text-xs">
-              {current.status === 'pending' ? 'Queued...' : 'Generating...'}
+              {current.status === 'pending' ? '排队中…' : '生成中…'}
             </p>
           </div>
         )}
@@ -158,7 +154,7 @@ export default function GalleryView({
       {/* Info bar */}
       <div className="px-6 py-3 bg-surface space-y-1.5">
         <p className="text-xs text-text-secondary line-clamp-2 leading-relaxed cursor-pointer hover:text-foreground transition-colors" onClick={handleClick} title={t('gallery.viewDetail')}>
-          {current.prompt || '(no prompt)'}
+          {current.prompt || '（无提示词）'}
         </p>
         <div className="flex items-center gap-2">
           <span className="font-mono text-[0.5625rem] bg-elevated text-text-muted rounded px-[6px] py-[2px]">
@@ -190,9 +186,7 @@ export default function GalleryView({
             const genOutput = gen.outputs[0];
             const genIsVideo =
               genOutput?.media_type === 'video' || VIDEO_MODES.has(gen.mode);
-            const genMediaUrl = genOutput?.media_path
-              ? getMediaUrl(genOutput.media_path)
-              : null;
+            const genMediaUrl = genOutput?.media_url || getAssetUrl(genOutput?.media_reference);
             const isSelected = idx === selectedIndex;
             const isFailed = gen.status === 'failed';
 

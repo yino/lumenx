@@ -91,7 +91,7 @@ export default function CandidateThumb({
             <div
                 role="button"
                 tabIndex={0}
-                aria-label={`Candidate ${task.id.slice(0, 6)}${task.is_starred ? ", starred" : ""}${task.label ? ", labeled " + task.label : ""}, ${status}`}
+                aria-label={`候选 ${task.id.slice(0, 6)}${task.is_starred ? "，已加星" : ""}${task.label ? "，标签 " + task.label : ""}，${status}`}
                 onClick={(e) => onClick(task, { shift: e.shiftKey, meta: e.metaKey || e.ctrlKey })}
                 onKeyDown={(e) => {
                     if (e.key === "Enter" || e.key === " ") {
@@ -112,8 +112,8 @@ export default function CandidateThumb({
                 }`}
                 title={
                     isActive
-                        ? "Active take · Click to play · Shift+Click to add to Compare"
-                        : "Click to play · Shift+Click to add to Compare"
+                        ? "当前镜头 · 点击播放 · Shift+点击加入比较"
+                        : "点击播放 · Shift+点击加入比较"
                 }
             >
                 {/* Thumbnail / preview — Issue 14: routes through PreviewVideo
@@ -123,14 +123,14 @@ export default function CandidateThumb({
                 {videoUrl ? (
                     <PreviewVideo
                         src={videoUrl}
-                        alt={`Take ${task.id}`}
+                        alt={`候选镜头 ${task.id}`}
                         className="h-full w-full"
                     />
                 ) : (
                     <div className="grid h-full w-full place-items-center">
                         {isProcessing ? (
                             <PendingTaskAffordance
-                                statusLabel={status === "pending" ? "Queued" : "Generating"}
+                                statusLabel={status === "pending" ? "排队中" : "生成中"}
                                 taskId={task.id}
                                 compact
                                 onCancel={onCancel ? () => onCancel(task) : undefined}
@@ -139,7 +139,7 @@ export default function CandidateThumb({
                             <div className="flex flex-col items-center gap-1 px-2 text-center">
                                 <AlertCircle size={14} className="text-status-failed-fg" aria-hidden="true" />
                                 <span className="font-mono text-chrome-sm font-medium uppercase text-status-failed-fg">
-                                    Failed
+                                    失败
                                 </span>
                                 {onRetry ? (
                                     <button
@@ -150,7 +150,7 @@ export default function CandidateThumb({
                                         }}
                                         className="rounded border border-status-failed-border bg-status-failed-bg px-1.5 py-[1px] font-mono text-chrome-sm font-medium uppercase text-status-failed-fg transition-colors duration-fast ease-out-quart hover:brightness-110 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-status-failed-border"
                                     >
-                                        Retry
+                                        重试
                                     </button>
                                 ) : null}
                             </div>
@@ -168,7 +168,7 @@ export default function CandidateThumb({
                     <button
                         type="button"
                         aria-pressed={isActive}
-                        aria-label={isActive ? "Active take (click to keep pinned)" : "Set as active take"}
+                        aria-label={isActive ? "当前镜头（点击保持锁定）" : "设为当前镜头"}
                         onClick={(e) => {
                             e.stopPropagation();
                             void onSetActive(task);
@@ -200,7 +200,7 @@ export default function CandidateThumb({
                 <button
                     type="button"
                     aria-pressed={task.is_starred}
-                    aria-label={task.is_starred ? "Unstar candidate" : "Star candidate"}
+                    aria-label={task.is_starred ? "取消收藏候选镜头" : "收藏候选镜头"}
                     onClick={(e) => {
                         e.stopPropagation();
                         void onToggleStar(task, !task.is_starred);
@@ -253,7 +253,7 @@ export default function CandidateThumb({
                             setLabelDraft(task.label ?? "");
                         }
                     }}
-                    placeholder="short note"
+                    placeholder="简短备注"
                     className="rounded border border-primary/55 bg-black/30 px-1.5 py-[3px] font-mono text-chrome text-foreground placeholder:text-text-muted outline-none focus-visible:ring-2 focus-visible:ring-primary/45"
                 />
             ) : (
@@ -264,14 +264,14 @@ export default function CandidateThumb({
                         setEditingLabel(true);
                     }}
                     className="group/label flex min-h-[24px] items-center gap-1 truncate rounded px-1.5 py-[2px] text-left font-mono text-chrome tracking-tight text-text-secondary transition-colors duration-fast ease-out-quart hover:bg-hover-bg hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/45"
-                    title="Click to edit label (≤20 chars)"
+                    title="点击编辑标签（不超过 20 个字符）"
                 >
                     {task.label ? (
                         <span className="truncate">{task.label}</span>
                     ) : (
                         <>
                             <Pencil size={9} className="text-text-muted opacity-0 transition-opacity duration-fast ease-out-quart group-hover/label:opacity-100" aria-hidden="true" />
-                            <span className="text-text-muted italic">add label…</span>
+                            <span className="text-text-muted italic">添加标签…</span>
                         </>
                     )}
                 </button>

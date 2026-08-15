@@ -1,11 +1,17 @@
 "use client";
 
-import { LayoutGrid, Layers, Wand2, Settings } from "lucide-react";
+import { useState } from "react";
+import { LayoutGrid, Layers, LogOut, Settings, ShieldCheck, WalletCards, Wand2 } from "lucide-react";
 import { useTranslations } from "next-intl";
 import clsx from "clsx";
+import { IS_CLOUD_DEPLOYMENT } from "@/lib/deployment";
 import LumenXBranding from "./LumenXBranding";
+import { authApi, getSafeApiError } from "@/lib/api";
+import { useAuthStore } from "@/store/authStore";
+import { toast } from "@/store/toastStore";
+import WorkspaceSwitcher from "@/components/workspace/WorkspaceSwitcher";
 
-export type GlobalTab = "workspace" | "library" | "playground" | "settings";
+export type GlobalTab = "workspace" | "library" | "playground" | "wallet" | "admin" | "settings";
 
 interface GlobalSidebarProps {
   activeTab: GlobalTab;
@@ -14,12 +20,17 @@ interface GlobalSidebarProps {
 
 // Shared global nav model (workspace/library/playground + settings). Reused by
 // the desktop GlobalSidebar (below) and the mobile BottomTabBar (md:hidden).
-export const GLOBAL_NAV_ITEMS: { id: GlobalTab; icon: typeof LayoutGrid; hash: string }[] = [
+const ALL_GLOBAL_NAV_ITEMS: { id: GlobalTab; icon: typeof LayoutGrid; hash: string }[] = [
   { id: "workspace", icon: LayoutGrid, hash: "#/" },
   { id: "library", icon: Layers, hash: "#/library" },
   { id: "playground", icon: Wand2, hash: "#/playground" },
+  { id: "wallet", icon: WalletCards, hash: "#/wallet" },
   { id: "settings", icon: Settings, hash: "#/settings" },
 ];
+
+export const GLOBAL_NAV_ITEMS = ALL_GLOBAL_NAV_ITEMS.filter(
+  (item) => item.id !== "wallet" || IS_CLOUD_DEPLOYMENT,
+);
 
 const APP_VERSION = "v0.2.0";
 
@@ -73,10 +84,26 @@ function NavButton({
  */
 export default function GlobalSidebar({ activeTab, onTabChange }: GlobalSidebarProps) {
   const t = useTranslations("nav");
+  const user = useAuthStore((state) => state.user);
+  const setAnonymous = useAuthStore((state) => state.setAnonymous);
+  const [loggingOut, setLoggingOut] = useState(false);
 
   const handleNav = (id: GlobalTab, hash: string) => {
     onTabChange(id);
     window.location.hash = hash;
+  };
+
+  const logout = async () => {
+    setLoggingOut(true);
+    try {
+      await authApi.logout();
+      setAnonymous(null);
+      window.location.hash = "#/";
+    } catch (error) {
+      toast.error("退出失败", { body: getSafeApiError(error).message });
+    } finally {
+      setLoggingOut(false);
+    }
   };
 
   return (
@@ -90,13 +117,15 @@ export default function GlobalSidebar({ activeTab, onTabChange }: GlobalSidebarP
       >
         <LumenXBranding size="md" showSlogan={false} />
         <p className="font-display atelier-display text-[0.75rem] italic text-text-muted tracking-wide leading-snug mt-2.5">
-          Render Noise into Narrative
+          化灵感为叙事
         </p>
       </button>
 
+      {IS_CLOUD_DEPLOYMENT && <WorkspaceSwitcher />}
+
       {/* Primary navigation */}
       <nav className="flex-1 flex flex-col gap-0.5 p-2.5" aria-label={t("mainNavAria")}>
-        {GLOBAL_NAV_ITEMS.slice(0, 3).map((item) => (
+        {GLOBAL_NAV_ITEMS.filter((item) => item.id !== "settings").map((item) => (
           <NavButton
             key={item.id}
             active={activeTab === item.id}
@@ -105,10 +134,43 @@ export default function GlobalSidebar({ activeTab, onTabChange }: GlobalSidebarP
             onClick={() => handleNav(item.id, item.hash)}
           />
         ))}
+        {IS_CLOUD_DEPLOYMENT && user?.is_platform_admin && (
+          <NavButton
+            active={activeTab === "admin"}
+            label="平台管理"
+            icon={ShieldCheck}
+            onClick={() => handleNav("admin", "#/admin/users")}
+          />
+        )}
       </nav>
 
       {/* Settings pinned bottom + version */}
       <div className="p-2.5 border-t border-glass-border">
+        {IS_CLOUD_DEPLOYMENT && user && (
+          <div className="mb-2 flex items-center gap-2 border-b border-glass-border px-3 pb-3">
+            <button
+              type="button"
+              onClick={() => handleNav("settings", "#/settings")}
+              className="min-w-0 flex-1 text-left"
+              title="账号安全"
+            >
+              <span className="block truncate font-mono text-xs text-foreground">
+                {user.phone.replace(/(\+86\d{3})\d{4}(\d{4})/, "$1****$2")}
+              </span>
+              <span className="mt-0.5 block text-[0.625rem] text-text-muted">{user.phone_verification_status}</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => void logout()}
+              disabled={loggingOut}
+              className="grid h-8 w-8 flex-none place-items-center rounded-lg text-text-muted hover:bg-hover-bg hover:text-foreground disabled:opacity-50"
+              aria-label="退出登录"
+              title="退出登录"
+            >
+              <LogOut size={15} />
+            </button>
+          </div>
+        )}
         <NavButton
           active={activeTab === "settings"}
           label={t("settings")}

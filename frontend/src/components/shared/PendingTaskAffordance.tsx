@@ -18,7 +18,8 @@
 import { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
 import { Loader2, X, AlertTriangle, FileText, Copy, Check, RefreshCw, Terminal } from "lucide-react";
-import { api } from "@/lib/api";
+import { aiTaskApi, api, type ClientAITaskDetail } from "@/lib/api";
+import { IS_CLOUD_DEPLOYMENT } from "@/lib/deployment";
 
 interface Props {
     /** Task creation timestamp (epoch seconds). When omitted the
@@ -72,15 +73,40 @@ export function PendingTaskAffordance({
     const [diagnoseOpen, setDiagnoseOpen] = useState(false);
     const [canceling, setCanceling] = useState(false);
     const [cancelError, setCancelError] = useState<string | null>(null);
+    const [taskDetail, setTaskDetail] = useState<ClientAITaskDetail | null>(null);
+    const effectiveCancel = onCancel || (
+        IS_CLOUD_DEPLOYMENT && taskId
+            ? async () => { await aiTaskApi.cancel(taskId); }
+            : undefined
+    );
+
+    useEffect(() => {
+        if (!IS_CLOUD_DEPLOYMENT || !taskId) return;
+        let active = true;
+        const load = async () => {
+            try {
+                const detail = await aiTaskApi.getDetail(taskId);
+                if (active) setTaskDetail(detail);
+            } catch {
+                // The parent poller remains authoritative; this detail is optional UI context.
+            }
+        };
+        void load();
+        const id = window.setInterval(load, 5000);
+        return () => {
+            active = false;
+            window.clearInterval(id);
+        };
+    }, [taskId]);
 
     const handleCancel = async () => {
-        if (!onCancel) return;
+        if (!effectiveCancel) return;
         setCanceling(true);
         setCancelError(null);
         try {
-            await onCancel();
+            await effectiveCancel();
         } catch (err) {
-            setCancelError(err instanceof Error ? err.message : "Cancel failed");
+            setCancelError(err instanceof Error ? err.message : "取消任务失败");
         } finally {
             setCanceling(false);
         }
@@ -88,6 +114,7 @@ export function PendingTaskAffordance({
 
     const elapsedClass = compact ? "text-[0.625rem]" : "text-[0.6875rem]";
     const statusClass = compact ? "text-[0.625rem]" : "text-[0.6875rem]";
+    const revealActions = IS_CLOUD_DEPLOYMENT ? Boolean(effectiveCancel) : showActions;
 
     return (
         <div className="flex flex-col items-center justify-center gap-1.5">
@@ -96,27 +123,40 @@ export function PendingTaskAffordance({
                 className="text-primary animate-spin"
             />
             <span className={`${statusClass} font-medium text-amber-400`}>
-                {statusLabel}
+                {taskDetail?.status_zh || statusLabel}
             </span>
             <span className={`${elapsedClass} font-mono tracking-tight text-text-muted/85`}>
                 {elapsedLabel}
             </span>
-            {showActions ? (
+            {taskDetail?.quoted_tickets ? (
+                <span className={`${elapsedClass} text-amber-200/90`}>
+                    预扣 {taskDetail.quoted_tickets} 算力券
+                </span>
+            ) : null}
+            {taskDetail?.actual_model?.display_name ? (
+                <span className={`${elapsedClass} max-w-[180px] truncate text-text-muted`} title={taskDetail.actual_model.model_id}>
+                    实际模型：{taskDetail.actual_model.display_name}
+                </span>
+            ) : null}
+            {taskDetail?.cancellation_requested ? (
+                <span className={`${elapsedClass} text-amber-200/90`}>正在确认取消与计费状态</span>
+            ) : null}
+            {revealActions ? (
                 <div className="mt-1 flex items-center gap-1.5">
-                    {onCancel ? (
+                    {effectiveCancel ? (
                         <button
                             type="button"
                             onClick={(e) => {
                                 e.stopPropagation();
                                 void handleCancel();
                             }}
-                            disabled={canceling}
+                            disabled={canceling || taskDetail?.cancellation_requested}
                             className="rounded-md border border-red-300/30 bg-red-400/10 px-2 py-[3px] font-mono text-[0.59375rem] font-medium uppercase tracking-[0.2em] text-red-200/95 transition-colors hover:bg-red-400/20 disabled:cursor-wait disabled:opacity-60"
                         >
-                            {canceling ? "Canceling…" : "Cancel"}
+                            {canceling ? "取消中" : taskDetail?.cancellation_requested ? "取消确认中" : "取消任务"}
                         </button>
                     ) : null}
-                    <button
+                    {!IS_CLOUD_DEPLOYMENT && <button
                         type="button"
                         onClick={(e) => {
                             e.stopPropagation();
@@ -124,8 +164,9 @@ export function PendingTaskAffordance({
                         }}
                         className="rounded-md border border-foreground/15 bg-black/30 px-2 py-[3px] font-mono text-[0.59375rem] font-medium uppercase tracking-[0.2em] text-text-secondary/95 transition-colors hover:border-primary/45 hover:text-foreground"
                     >
-                        Diagnose
+                        诊断
                     </button>
+                    }
                 </div>
             ) : null}
             {cancelError ? (
@@ -219,7 +260,7 @@ export function DiagnoseModal({ taskId, elapsedLabel, onClose }: DiagnoseModalPr
             />
             <div
                 role="dialog"
-                aria-label="Diagnose stuck task"
+                aria-label="诊断卡住的任务"
                 className="fixed left-1/2 top-1/2 z-[61] flex w-[min(720px,94vw)] max-h-[85vh] -translate-x-1/2 -translate-y-1/2 flex-col overflow-hidden rounded-[12px] border border-glass-border bg-elevated shadow-[0_24px_48px_-22px_rgba(0,0,0,0.85),inset_0_1px_0_0_rgba(255,255,255,0.06)]"
             >
                 <div aria-hidden="true" className="h-[2px] shrink-0 bg-gradient-to-r from-amber-300/85 via-amber-300/35 to-transparent" />
@@ -227,24 +268,24 @@ export function DiagnoseModal({ taskId, elapsedLabel, onClose }: DiagnoseModalPr
                     <div className="flex items-center gap-2">
                         <AlertTriangle size={14} className="text-amber-300" aria-hidden="true" />
                         <div className="font-display text-[0.875rem] font-medium tracking-[-0.005em] text-foreground">
-                            Diagnose stuck task
+                            诊断卡住的任务
                         </div>
                     </div>
                     <button
                         type="button"
                         onClick={onClose}
-                        aria-label="Close"
+                        aria-label="关闭"
                         className="grid h-7 w-7 place-items-center rounded text-text-muted hover:bg-hover-bg hover:text-foreground"
                     >
                         <X size={14} aria-hidden="true" />
                     </button>
                 </header>
                 <div className="space-y-3 overflow-y-auto px-4 py-4 text-[0.78125rem] leading-[1.55] text-text-secondary/95">
-                    <Row label="Elapsed">
+                    <Row label="已等待">
                         <span className="font-mono">{elapsedLabel}</span>
                     </Row>
                     {taskId ? (
-                        <Row label="Task ID">
+                        <Row label="任务 ID">
                             <button
                                 type="button"
                                 onClick={() => copy(taskId, "task")}
@@ -255,22 +296,22 @@ export function DiagnoseModal({ taskId, elapsedLabel, onClose }: DiagnoseModalPr
                             </button>
                         </Row>
                     ) : null}
-                    <Row label="Backend">
+                    <Row label="后端服务">
                         {health.kind === "loading" ? (
-                            <span className="font-mono text-text-muted/85">checking…</span>
+                            <span className="font-mono text-text-muted/85">检查中…</span>
                         ) : health.kind === "ok" ? (
-                            <span className="font-mono text-emerald-300">reachable · {health.data.studio_projects} project(s)</span>
+                            <span className="font-mono text-emerald-300">连接正常 · {health.data.studio_projects} 个项目</span>
                         ) : (
-                            <span className="font-mono text-red-300">unreachable · {health.message}</span>
+                            <span className="font-mono text-red-300">无法连接 · {health.message}</span>
                         )}
                     </Row>
                     {health.kind === "ok" ? (
-                        <Row label="Log file">
+                        <Row label="日志文件">
                             <button
                                 type="button"
                                 onClick={() => copy(health.data.log_file, "log_path")}
                                 className="inline-flex items-center gap-1.5 rounded border border-glass-border bg-black/35 px-2 py-[3px] font-mono text-[0.65625rem] tracking-tight text-foreground transition-colors hover:border-primary/45"
-                                title="Copy log path"
+                                title="复制日志路径"
                             >
                                 <FileText size={11} aria-hidden="true" />
                                 <span className="truncate max-w-[420px]">{health.data.log_file}</span>
@@ -290,14 +331,14 @@ export function DiagnoseModal({ taskId, elapsedLabel, onClose }: DiagnoseModalPr
                         <div className="flex items-center justify-between gap-2 border-b border-glass-border px-3 py-1.5 font-mono text-[0.5625rem] font-medium uppercase tracking-[0.24em] text-text-muted/85">
                             <span className="inline-flex items-center gap-1.5">
                                 <Terminal size={11} aria-hidden="true" />
-                                Backend log
+                                后端日志
                             </span>
                             <div className="flex items-center gap-1">
                                 <button
                                     type="button"
                                     onClick={loadLog}
-                                    aria-label="Reload log"
-                                    title="Reload"
+                                    aria-label="重新加载日志"
+                                    title="重新加载"
                                     className="grid h-6 w-6 place-items-center rounded text-text-muted hover:bg-hover-bg hover:text-foreground"
                                 >
                                     <RefreshCw size={11} aria-hidden="true" />
@@ -306,8 +347,8 @@ export function DiagnoseModal({ taskId, elapsedLabel, onClose }: DiagnoseModalPr
                                     <button
                                         type="button"
                                         onClick={() => copy(log.data.lines.join("\n"), "log_text")}
-                                        aria-label="Copy full log text"
-                                        title="Copy full tail"
+                                        aria-label="复制完整日志文本"
+                                        title="复制完整日志末尾"
                                         className="grid h-6 w-6 place-items-center rounded text-text-muted hover:bg-hover-bg hover:text-foreground"
                                     >
                                         {copied === "log_text" ? <Check size={11} /> : <Copy size={11} />}
@@ -322,8 +363,8 @@ export function DiagnoseModal({ taskId, elapsedLabel, onClose }: DiagnoseModalPr
                         {log.kind === "ok" && log.data.errors.length > 0 ? (
                             <>
                                 <div className="flex items-center justify-between gap-2 border-b border-red-400/15 bg-red-500/[0.08] px-3 py-1 font-mono text-[0.5625rem] font-medium uppercase tracking-[0.22em] text-red-200/95">
-                                    <span>① Errors only · {log.data.errors.length} rows</span>
-                                    <span className="text-red-200/70 normal-case tracking-tight">root cause is usually here</span>
+                                    <span>① 仅错误 · {log.data.errors.length} 行</span>
+                                    <span className="text-red-200/70 normal-case tracking-tight">通常可在此定位根因</span>
                                 </div>
                                 <div className="max-h-[120px] overflow-y-auto border-b border-glass-border bg-red-500/[0.05] px-3 py-1.5 font-mono text-[0.625rem] leading-[1.6] text-red-200/95">
                                     {log.data.errors.map((line, i) => (
@@ -336,18 +377,18 @@ export function DiagnoseModal({ taskId, elapsedLabel, onClose }: DiagnoseModalPr
                             around the errors above (what was running,
                             what the request looked like, etc.). */}
                         <div className="border-b border-glass-border bg-black/20 px-3 py-1 font-mono text-[0.5625rem] font-medium uppercase tracking-[0.22em] text-text-muted/85">
-                            ② Full tail · last {log.kind === "ok" ? log.data.returned_lines ?? log.data.lines.length : "200"} lines
+                            ② 完整末尾 · 最近 {log.kind === "ok" ? log.data.returned_lines ?? log.data.lines.length : "200"} 行
                         </div>
                         <div className="max-h-[280px] overflow-y-auto px-3 py-2 font-mono text-[0.625rem] leading-[1.55] text-text-secondary/95">
                             {log.kind === "loading" ? (
-                                <div className="text-text-muted/85">loading…</div>
+                                <div className="text-text-muted/85">加载中…</div>
                             ) : log.kind === "error" ? (
-                                <div className="text-red-300">Could not read log: {log.message}</div>
+                                <div className="text-red-300">无法读取日志：{log.message}</div>
                             ) : log.kind === "ok" && log.data.missing ? (
-                                <div className="text-text-muted/85">Log file does not exist yet at {log.data.path}.</div>
+                                <div className="text-text-muted/85">日志文件尚不存在：{log.data.path}</div>
                             ) : log.kind === "ok" ? (
                                 log.data.lines.length === 0 ? (
-                                    <div className="text-text-muted/85">Log is empty.</div>
+                                    <div className="text-text-muted/85">日志为空。</div>
                                 ) : (
                                     log.data.lines.map((line, i) => (
                                         <div key={i} className="whitespace-pre-wrap break-words">{line}</div>
@@ -359,13 +400,13 @@ export function DiagnoseModal({ taskId, elapsedLabel, onClose }: DiagnoseModalPr
 
                     <div className="rounded-md border border-dashed border-glass-border bg-black/20 px-3 py-2.5 text-[0.71875rem] leading-[1.55] text-text-secondary/85">
                         <div className="mb-1 font-mono text-[0.5625rem] font-medium uppercase tracking-[0.28em] text-text-muted/85">
-                            Quick checks
+                            快速检查
                         </div>
                         <ol className="list-decimal space-y-1 pl-4">
-                            <li>Press F5 to refresh — polling may have stalled.</li>
-                            <li>If backend is unreachable, the desktop app or <code className="rounded bg-elevated px-1 font-mono text-[0.65625rem]">./start_backend.sh</code> may have stopped. Restart it.</li>
-                            <li>Look at the red rows above for the immediate cause (provider auth, network, model misuse).</li>
-                            <li>Backend restart wipes in-memory tasks; a stuck task is automatically marked failed at startup, so retry usually works.</li>
+                            <li>按 F5 刷新页面，任务轮询可能已停止。</li>
+                            <li>如果无法连接后端，桌面应用或 <code className="rounded bg-elevated px-1 font-mono text-[0.65625rem]">./start_backend.sh</code> 可能已停止，请重新启动。</li>
+                            <li>查看上方红色日志行，确认是否为供应商认证、网络或模型使用问题。</li>
+                            <li>后端重启会清空内存任务；启动时会将卡住的任务标记为失败，通常可以直接重试。</li>
                         </ol>
                     </div>
                 </div>

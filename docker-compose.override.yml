@@ -1,0 +1,85 @@
+name: lumenx-local
+
+x-local-cloud-environment: &local-cloud-environment
+  LUMENX_DATABASE_PASSWORD_FILE: ""
+  LUMENX_DATABASE_PASSWORD: ${LUMENX_LOCAL_POSTGRES_APP_PASSWORD:?请先运行 make docker-env}
+  LUMENX_SESSION_SECRET_FILE: ""
+  LUMENX_SESSION_SECRET: ${LUMENX_LOCAL_SESSION_SECRET:?请先运行 make docker-env}
+  LUMENX_OSS_ENDPOINT: ${LUMENX_LOCAL_OSS_ENDPOINT:?请先运行 make docker-env}
+  LUMENX_OSS_BUCKET_NAME: ${LUMENX_LOCAL_OSS_BUCKET_NAME:?请先运行 make docker-env}
+  LUMENX_OSS_ACCESS_KEY_ID_FILE: ""
+  LUMENX_OSS_ACCESS_KEY_ID: ${LUMENX_LOCAL_OSS_ACCESS_KEY_ID:?请先运行 make docker-env}
+  LUMENX_OSS_ACCESS_KEY_SECRET_FILE: ""
+  LUMENX_OSS_ACCESS_KEY_SECRET: ${LUMENX_LOCAL_OSS_ACCESS_KEY_SECRET:?请先运行 make docker-env}
+  DASHSCOPE_API_KEY_FILE: ""
+  DASHSCOPE_API_KEY: ${LUMENX_LOCAL_DASHSCOPE_API_KEY:?请先运行 make docker-env}
+
+services:
+  postgres:
+    environment:
+      POSTGRES_PASSWORD_FILE: ""
+      POSTGRES_PASSWORD: ${LUMENX_LOCAL_POSTGRES_PASSWORD:?请先运行 make docker-env}
+    secrets: !reset []
+    ports: !override
+      - "127.0.0.1:15433:5432"
+
+  database-role-bootstrap:
+    pull_policy: build
+    environment:
+      POSTGRES_PASSWORD_FILE: ""
+      POSTGRES_PASSWORD: ${LUMENX_LOCAL_POSTGRES_PASSWORD:?请先运行 make docker-env}
+      POSTGRES_APP_PASSWORD_FILE: ""
+      POSTGRES_APP_PASSWORD: ${LUMENX_LOCAL_POSTGRES_APP_PASSWORD:?请先运行 make docker-env}
+    secrets: !reset []
+
+  migration:
+    pull_policy: build
+    environment:
+      LUMENX_DATABASE_PASSWORD_FILE: ""
+      LUMENX_DATABASE_PASSWORD: ${LUMENX_LOCAL_POSTGRES_PASSWORD:?请先运行 make docker-env}
+    secrets: !reset []
+
+  backend:
+    pull_policy: build
+    environment:
+      <<: *local-cloud-environment
+    secrets: !reset []
+    volumes: !override
+      - local-output:/app/output
+      - local-imports:/imports:ro
+
+  ai-worker:
+    pull_policy: build
+    environment:
+      <<: *local-cloud-environment
+    secrets: !reset []
+
+  maintenance-worker:
+    pull_policy: build
+    environment:
+      <<: *local-cloud-environment
+    secrets: !reset []
+
+  scheduler:
+    pull_policy: build
+    environment:
+      <<: *local-cloud-environment
+    secrets: !reset []
+
+  postgres-backup:
+    pull_policy: build
+    environment:
+      POSTGRES_PASSWORD_FILE: ""
+      POSTGRES_PASSWORD: ${LUMENX_LOCAL_POSTGRES_PASSWORD:?请先运行 make docker-env}
+    secrets: !reset []
+
+  frontend:
+    pull_policy: build
+    ports: !override
+      - "127.0.0.1:3000:80"
+
+volumes:
+  local-output:
+  local-imports:
+
+secrets: !reset {}

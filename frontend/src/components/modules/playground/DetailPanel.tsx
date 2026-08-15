@@ -14,7 +14,8 @@ import {
   ChevronLeft,
   ChevronRight,
 } from 'lucide-react';
-import { API_URL, playgroundApi } from '@/lib/api';
+import { playgroundApi } from '@/lib/api';
+import { getAssetUrl } from '@/lib/utils';
 import { useTranslations } from 'next-intl';
 import { usePlaygroundStore, type PlaygroundGeneration } from './usePlaygroundStore';
 
@@ -44,11 +45,6 @@ const MODE_LABELS: Record<string, string> = {
   t2i: 'T2I',
   i2i: 'I2I',
 };
-
-function getMediaUrl(path: string): string {
-  const relativePath = path.replace(/^output\//, '');
-  return `${API_URL}/files/${relativePath}`;
-}
 
 function formatTimestamp(dateStr: string): string {
   const date = new Date(dateStr);
@@ -94,7 +90,7 @@ export default function DetailPanel({
   const isVideo =
     output?.media_type === 'video' ||
     ['t2v', 'i2v', 'r2v', 'v2v'].includes(generation.mode);
-  const mediaUrl = output?.media_path ? getMediaUrl(output.media_path) : null;
+  const mediaUrl = output?.media_url || getAssetUrl(output?.media_reference);
 
   // Navigation
   const currentIndex = allGenerations.findIndex((g) => g.id === generation.id);
@@ -140,7 +136,7 @@ export default function DetailPanel({
     if (!mediaUrl) return;
     const a = document.createElement('a');
     a.href = mediaUrl;
-    a.download = output?.media_path?.split('/').pop() || 'download';
+    a.download = output?.media_id || output?.media_reference?.split('/').pop() || 'download';
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
@@ -181,14 +177,14 @@ export default function DetailPanel({
   // Build parameter entries
   const paramEntries: [string, string][] = [];
   const params = generation.parameters || {};
-  if (params.size) paramEntries.push(['Size', params.size]);
-  if (params.resolution) paramEntries.push(['Resolution', params.resolution]);
-  if (params.aspect_ratio) paramEntries.push(['Aspect Ratio', params.aspect_ratio]);
-  if (params.duration) paramEntries.push(['Duration', `${params.duration}s`]);
+  if (params.size) paramEntries.push(['尺寸', params.size]);
+  if (params.resolution) paramEntries.push(['分辨率', params.resolution]);
+  if (params.aspect_ratio) paramEntries.push(['画面比例', params.aspect_ratio]);
+  if (params.duration) paramEntries.push(['时长', `${params.duration} 秒`]);
   if (generation.batch_size > 1)
-    paramEntries.push(['Batch Size', String(generation.batch_size)]);
+    paramEntries.push(['批量数量', String(generation.batch_size)]);
   if (params.seed !== undefined && params.seed !== null)
-    paramEntries.push(['Seed', String(params.seed)]);
+    paramEntries.push(['随机种子', String(params.seed)]);
   // Add remaining params
   const skipKeys = new Set([
     'size',
@@ -232,7 +228,7 @@ export default function DetailPanel({
           ) : (
             <div className="flex flex-col items-center gap-2 text-text-muted">
               <Video className="w-12 h-12" />
-              <span className="font-mono text-xs">No media</span>
+              <span className="font-mono text-xs">暂无媒体</span>
             </div>
           )}
 
@@ -281,8 +277,13 @@ export default function DetailPanel({
               </span>
             </div>
             <h2 className="font-display atelier-display text-xl font-semibold tracking-tight text-foreground leading-tight">
-              {generation.model_id}
+              {generation.actual_model_name || '平台模型'}
             </h2>
+            {(generation.actual_model_id || generation.model_id) && (
+              <p className="mt-1 font-mono text-[0.625rem] text-text-secondary">
+                实际模型 ID：{generation.actual_model_id || generation.model_id}
+              </p>
+            )}
             <p className="font-mono text-[0.625rem] text-text-muted mt-1.5">
               {formatTimestamp(generation.created_at)}
             </p>
@@ -290,23 +291,42 @@ export default function DetailPanel({
 
           {/* ── Body ── */}
           <div className="px-6 py-5 space-y-5">
+            {generation.quoted_tickets && (
+              <div className="grid grid-cols-2 gap-3 rounded-md border border-glass-border bg-glass px-4 py-3 text-xs">
+                <div>
+                  <p className="text-text-muted">任务状态</p>
+                  <p className="mt-1 font-medium text-foreground">
+                    {generation.support_review ? '计费待复核' : generation.status_zh || generation.status}
+                  </p>
+                </div>
+                <div>
+                  <p className="text-text-muted">预扣上限</p>
+                  <p className="mt-1 font-mono font-medium text-amber-200">{generation.quoted_tickets} 算力券</p>
+                </div>
+              </div>
+            )}
+            {generation.support_review && (
+              <div className="rounded-md border border-amber-300/25 bg-amber-300/10 px-4 py-3 text-xs leading-5 text-amber-100">
+                供应商已产生费用，但结果处理未完成。平台正在复核本次计费，请勿重复提交。
+              </div>
+            )}
             {/* Prompt */}
             <div>
               <div className="flex items-center justify-between mb-2">
                 <h3 className="font-mono text-[0.625rem] font-medium uppercase tracking-[0.18em] text-text-muted">
-                  PROMPT
+                  提示词
                 </h3>
                 <button
                   onClick={handleCopyPrompt}
                   className="flex items-center gap-1 px-2 py-1 rounded text-[0.625rem] text-text-muted hover:text-foreground hover:bg-hover-bg transition-colors"
                 >
                   <Copy className="w-3 h-3" />
-                  {copied ? 'Copied' : 'Copy'}
+                  {copied ? '已复制' : '复制'}
                 </button>
               </div>
               <div className="rounded-[14px] bg-surface-inset border border-border-subtle p-4 max-h-48 overflow-y-auto">
                 <p className="font-display italic text-[0.9375rem] text-text-secondary leading-relaxed whitespace-pre-wrap break-words">
-                  {generation.prompt ? `“${generation.prompt}”` : '(empty)'}
+                  {generation.prompt ? `“${generation.prompt}”` : '（空）'}
                 </p>
               </div>
             </div>
@@ -340,7 +360,7 @@ export default function DetailPanel({
             {generation.negative_prompt && (
               <div>
                 <h3 className="font-mono text-[0.625rem] font-medium uppercase tracking-[0.18em] text-text-muted mb-2">
-                  NEGATIVE PROMPT
+                  反向提示词
                 </h3>
                 <div className="rounded-[14px] bg-surface-inset border border-border-subtle p-4 max-h-28 overflow-y-auto">
                   <p className="text-[0.8125rem] text-text-secondary leading-relaxed whitespace-pre-wrap break-words">
@@ -354,7 +374,7 @@ export default function DetailPanel({
             {generation.status === 'failed' && generation.error && (
               <div>
                 <h3 className="font-mono text-[0.625rem] uppercase tracking-[0.18em] text-status-failed-fg mb-2">
-                  ERROR
+                  错误信息
                 </h3>
                 <div className="max-h-28 overflow-y-auto rounded-[16px] bg-status-failed-bg border border-status-failed-border p-4">
                   <p className="text-[0.6875rem] text-status-failed-fg leading-relaxed break-all font-mono">
@@ -368,13 +388,13 @@ export default function DetailPanel({
           {/* ── Actions (flow after content; not pinned to bottom) ── */}
           <div className="border-t border-border-subtle px-6 py-4 space-y-2.5">
             {/* Primary: Retry (failed) or Save to library */}
-            {generation.status === 'failed' && onRetry ? (
+            {generation.status === 'failed' && onRetry && !generation.support_review ? (
               <button
                 onClick={() => onRetry(generation)}
                 className="w-full inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-full bg-primary text-on-accent text-sm font-medium shadow-[var(--glow-primary)] hover:bg-primary-hover transition"
               >
                 <RotateCcw className="w-4 h-4" />
-                Retry
+                重试
               </button>
             ) : output ? (
               <button
@@ -414,7 +434,7 @@ export default function DetailPanel({
             )}
 
             {/* Secondary row: Download + Generate Video (neutral ghosts) */}
-            {(mediaUrl || (!isVideo && output?.media_path && onGenerateVideo)) && (
+            {(mediaUrl || (!isVideo && output?.media_reference && onGenerateVideo)) && (
               <div className="flex gap-2">
                 {mediaUrl && (
                   <button
@@ -422,16 +442,16 @@ export default function DetailPanel({
                     className="flex-1 inline-flex items-center justify-center gap-1.5 px-3 py-2.5 rounded-full bg-surface-inset border border-glass-border text-text-secondary text-[0.8125rem] font-medium hover:text-foreground hover:bg-hover-bg transition"
                   >
                     <Download className="w-4 h-4" />
-                    Download
+                    下载
                   </button>
                 )}
-                {!isVideo && output?.media_path && onGenerateVideo && (
+                {!isVideo && output?.media_reference && onGenerateVideo && (
                   <button
-                    onClick={() => onGenerateVideo(output.media_path)}
+                    onClick={() => onGenerateVideo(output.media_reference)}
                     className="flex-1 inline-flex items-center justify-center gap-1.5 px-3 py-2.5 rounded-full bg-surface-inset border border-glass-border text-text-secondary text-[0.8125rem] font-medium hover:text-foreground hover:bg-hover-bg transition"
                   >
                     <Video className="w-4 h-4" />
-                    Generate Video
+                    生成视频
                   </button>
                 )}
               </div>
@@ -444,7 +464,7 @@ export default function DetailPanel({
               className="w-full inline-flex items-center justify-center gap-1.5 px-3 py-2 rounded-full text-[0.8125rem] font-medium text-text-muted hover:text-status-failed-fg hover:bg-status-failed-bg transition disabled:opacity-40"
             >
               <Trash2 className="w-4 h-4" />
-              {deleting ? 'Deleting...' : 'Delete'}
+              {deleting ? '删除中…' : '删除'}
             </button>
           </div>
         </div>

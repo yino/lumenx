@@ -9,10 +9,9 @@ import ToastContainer from '@/components/shared/ToastContainer';
 import { MotionConfig } from 'framer-motion';
 
 export function Providers({ children }: { children: React.ReactNode }) {
-    const locale = useSettingsStore((s) => s.locale);
     const theme = useSettingsStore((s) => s.theme);
     const animations = useSettingsStore((s) => s.animations);
-    const messages = getMessages(locale);
+    const messages = getMessages('zh');
 
     useEffect(() => {
         const html = document.documentElement;
@@ -26,12 +25,8 @@ export function Providers({ children }: { children: React.ReactNode }) {
         document.documentElement.classList.toggle('no-motion', !animations);
     }, [animations]);
 
-    useEffect(() => {
-        document.documentElement.lang = locale;
-    }, [locale]);
-
     return (
-        <NextIntlClientProvider locale={locale} messages={messages} timeZone="Asia/Shanghai">
+        <NextIntlClientProvider locale="zh" messages={messages} timeZone="Asia/Shanghai">
             {/* MotionConfig: respect OS prefers-reduced-motion ("user"); when the
              *  in-app 动效 toggle is off, force-reduce Framer animations ("always"). */}
             <MotionConfig reducedMotion={animations ? "user" : "always"}>

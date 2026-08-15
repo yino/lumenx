@@ -192,16 +192,16 @@ def _resolve_local_image_path(img_url: Optional[str] = None, img_path: Optional[
 # MuleRouter HTTP API layer (original)
 # ---------------------------------------------------------------------------
 
-def _get_api_key() -> str:
-    key = os.getenv("MULEROUTER_API_KEY", "")
+def _get_api_key(explicit_key: str = "") -> str:
+    key = explicit_key or os.getenv("MULEROUTER_API_KEY", "")
     if not key:
         raise RuntimeError("MULEROUTER_API_KEY not set in environment")
     return key
 
 
-def _auth_headers() -> Dict[str, str]:
+def _auth_headers(explicit_key: str = "") -> Dict[str, str]:
     return {
-        "Authorization": f"Bearer {_get_api_key()}",
+        "Authorization": f"Bearer {_get_api_key(explicit_key)}",
         "Content-Type": "application/json",
     }
 
@@ -230,19 +230,40 @@ def _resolve_image_input(img_url: Optional[str] = None, img_path: Optional[str] 
     return None
 
 
-def _submit_task(base_url: str, api_path: str, body: Dict[str, Any]) -> str:
+def _submit_task(
+    base_url: str,
+    api_path: str,
+    body: Dict[str, Any],
+    *,
+    api_key: str = "",
+    on_provider_ids=None,
+) -> str:
     """Submit a generation task and return the task ID."""
     url = f"{base_url}{api_path}"
     logger.info(f"[MuleRouter] POST {api_path}")
-    resp = _request_with_retry("POST", url, headers=_auth_headers(), json=body, timeout=60)
+    resp = _request_with_retry(
+        "POST",
+        url,
+        headers=_auth_headers(api_key),
+        json=body,
+        timeout=60,
+    )
     data = resp.json()
 
     task_info = data.get("task_info") or data
     task_id = task_info.get("id") or task_info.get("task_id")
+    response_headers = getattr(resp, "headers", {}) or {}
+    request_id = (
+        data.get("request_id")
+        or response_headers.get("x-request-id")
+        or response_headers.get("X-Request-Id")
+    )
     if not task_id:
         raise RuntimeError(f"MuleRouter: no task_id in response: {data}")
 
     logger.info(f"[MuleRouter] Task submitted: {task_id}")
+    if callable(on_provider_ids):
+        on_provider_ids("mulerouter", task_id, request_id)
     return task_id
 
 
@@ -268,7 +289,13 @@ def _request_with_retry(method: str, url: str, max_retries: int = 3, **kwargs) -
     raise RuntimeError("MuleRouter: max retries exceeded")
 
 
-def _poll_task(base_url: str, api_path: str, task_id: str) -> Dict[str, Any]:
+def _poll_task(
+    base_url: str,
+    api_path: str,
+    task_id: str,
+    *,
+    api_key: str = "",
+) -> Dict[str, Any]:
     """Poll a task until completion with retry on transient errors."""
     poll_url = f"{base_url}{api_path}/{task_id}"
     elapsed = 0
@@ -277,7 +304,12 @@ def _poll_task(base_url: str, api_path: str, task_id: str) -> Dict[str, Any]:
         time.sleep(POLL_INTERVAL)
         elapsed += POLL_INTERVAL
 
-        resp = _request_with_retry("GET", poll_url, headers=_auth_headers(), timeout=30)
+        resp = _request_with_retry(
+            "GET",
+            poll_url,
+            headers=_auth_headers(api_key),
+            timeout=30,
+        )
         data = resp.json()
 
         task_info = data.get("task_info") or data
@@ -308,11 +340,12 @@ class MuleRouterVideoModel(VideoGenModel):
 
     def __init__(self, config: Dict[str, Any]):
         super().__init__(config)
+        self.api_key = config.get("api_key", "")
         self.use_fast = config.get("params", {}).get("fast", False)
 
     def generate(self, prompt: str, output_path: str, img_url: Optional[str] = None,
                  img_path: Optional[str] = None, **kwargs) -> Tuple[str, float]:
-        if _use_cli_backend():
+        if not self.api_key and _use_cli_backend():
             return self._generate_via_cli(prompt, output_path, img_url, img_path, **kwargs)
         return self._generate_via_http(prompt, output_path, img_url, img_path, **kwargs)
 
@@ -404,8 +437,11 @@ class MuleRouterVideoModel(VideoGenModel):
             api_path = SEEDANCE_API_PATHS[f"t2v{suffix}"]
             body = self._build_t2v_body(prompt, duration, resolution, aspect_ratio, seed, watermark)
 
-        task_id = _submit_task(base_url, api_path, body)
-        result = _poll_task(base_url, api_path, task_id)
+        submit_options = {"api_key": self.api_key}
+        if callable(kwargs.get("on_provider_ids")):
+            submit_options["on_provider_ids"] = kwargs["on_provider_ids"]
+        task_id = _submit_task(base_url, api_path, body, **submit_options)
+        result = _poll_task(base_url, api_path, task_id, api_key=self.api_key)
 
         video_url = self._extract_video_url(result)
         _download_file(video_url, output_path)
@@ -501,9 +537,10 @@ class MuleRouterImageModel(ImageGenModel):
 
     def __init__(self, config: Dict[str, Any]):
         super().__init__(config)
+        self.api_key = config.get("api_key", "")
 
     def generate(self, prompt: str, output_path: str, **kwargs) -> Tuple[str, float]:
-        if _use_cli_backend():
+        if not self.api_key and _use_cli_backend():
             return self._generate_via_cli(prompt, output_path, **kwargs)
         return self._generate_via_http(prompt, output_path, **kwargs)
 
@@ -576,8 +613,11 @@ class MuleRouterImageModel(ImageGenModel):
         else:
             api_path = GPT_IMAGE_API_PATHS["generation"]
 
-        task_id = _submit_task(base_url, api_path, body)
-        result = _poll_task(base_url, api_path, task_id)
+        submit_options = {"api_key": self.api_key}
+        if callable(kwargs.get("on_provider_ids")):
+            submit_options["on_provider_ids"] = kwargs["on_provider_ids"]
+        task_id = _submit_task(base_url, api_path, body, **submit_options)
+        result = _poll_task(base_url, api_path, task_id, api_key=self.api_key)
 
         image_url = self._extract_image_url(result)
         _download_file(image_url, output_path)

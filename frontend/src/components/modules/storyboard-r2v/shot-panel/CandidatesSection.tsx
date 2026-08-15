@@ -370,19 +370,19 @@ function BatchBlock({
                         {runningCount > 0 ? (
                             <span className="inline-flex items-center gap-0.5 font-mono text-chrome-sm font-medium text-status-processing-fg">
                                 <span aria-hidden="true">●</span>
-                                <span aria-label={`${runningCount} running`}>{runningCount}</span>
+                                <span aria-label={`${runningCount} 个生成中`}>{runningCount}</span>
                             </span>
                         ) : null}
                         {completedCount > 0 ? (
                             <span className="inline-flex items-center gap-0.5 font-mono text-chrome-sm font-medium text-status-completed-fg">
                                 <span aria-hidden="true">✓</span>
-                                <span aria-label={`${completedCount} completed`}>{completedCount}</span>
+                                <span aria-label={`${completedCount} 个已完成`}>{completedCount}</span>
                             </span>
                         ) : null}
                         {failedCount > 0 ? (
                             <span className="inline-flex items-center gap-0.5 font-mono text-chrome-sm font-medium text-status-failed-fg">
                                 <span aria-hidden="true">✗</span>
-                                <span aria-label={`${failedCount} failed`}>{failedCount}</span>
+                                <span aria-label={`${failedCount} 个失败`}>{failedCount}</span>
                             </span>
                         ) : null}
                     </span>

@@ -13,14 +13,25 @@ import {
   normalizeModelSettings,
   type FrontendModelSettings,
 } from "@/lib/modelCatalog";
-import { useSettingsStore, type Locale, type ThemePreset } from "@/store/settingsStore";
+import { useSettingsStore, type ThemePreset } from "@/store/settingsStore";
 import { toast } from "@/store/toastStore";
 import { rovingKeyDown } from "@/lib/a11y";
 import { Image, Video, Layout, User, Building, Box } from "lucide-react";
 import GroupedModelGrid from "@/components/common/GroupedModelGrid";
 import LumenXBranding from "@/components/layout/LumenXBranding";
 import UpdateChecker from "./UpdateChecker";
-type SettingsCategory = "general" | "models" | "prompts" | "apikeys" | "storage" | "about";
+import AccountSecurityPanel from "./AccountSecurityPanel";
+import { IS_CLOUD_DEPLOYMENT } from "@/lib/deployment";
+import {
+  readClientStorage,
+  removeClientStorage,
+  writeClientStorage,
+} from "@/lib/clientCacheScope";
+import {
+  normalizeSettingsCategory,
+  visibleSettingsCategories,
+  type SettingsCategory,
+} from "@/lib/settingsNavigation";
 import {
   FormRow,
   FieldLabel,
@@ -134,7 +145,7 @@ const EMPTY_PROMPT_CONFIG: DefaultPromptConfig = {
 function loadFromLS<T>(key: string, fallback: T): T {
   if (typeof window === "undefined") return fallback;
   try {
-    const raw = localStorage.getItem(key);
+    const raw = readClientStorage(key);
     return raw ? { ...fallback, ...JSON.parse(raw) } : fallback;
   } catch {
     return fallback;
@@ -194,9 +205,11 @@ function Section({
 
 export default function SettingsPage() {
   const t = useTranslations("settings");
-  const { locale, theme, animations, setLocale, setTheme, setAnimations } = useSettingsStore();
+  const { theme, animations, setTheme, setAnimations } = useSettingsStore();
 
-  const [active, setActive] = useState<SettingsCategory>("general");
+  const [active, setActive] = useState<SettingsCategory>(
+    IS_CLOUD_DEPLOYMENT ? "account" : "general",
+  );
 
   // ── API Config ──
   const [config, setConfig] = useState<EnvConfig>(DEFAULT_CONFIG);
@@ -209,6 +222,13 @@ export default function SettingsPage() {
   const [modelSettings, setModelSettings] = useState<FrontendModelSettings>(() =>
     normalizeModelSettings(loadFromLS(LS_KEY_MODEL, DEFAULT_MODEL_SETTINGS), "global_settings")
   );
+
+  useEffect(() => {
+    if (IS_CLOUD_DEPLOYMENT) {
+      removeClientStorage(LS_KEY_MODEL);
+      setActive((current) => normalizeSettingsCategory(current, true));
+    }
+  }, []);
 
   // ── Default Prompt Config ──
   // `promptConfig` is the displayed/editable text. localStorage (LS_KEY_PROMPT)
@@ -243,7 +263,7 @@ export default function SettingsPage() {
   }, []);
 
   useEffect(() => {
-    loadConfig();
+    if (!IS_CLOUD_DEPLOYMENT) loadConfig();
   }, [loadConfig]);
 
   // Pre-fill the prompt fields with the real built-in defaults so users can see
@@ -288,6 +308,7 @@ export default function SettingsPage() {
 
   // Pull health (data/log dir) once on mount so About + Storage can show paths.
   useEffect(() => {
+    if (IS_CLOUD_DEPLOYMENT) return;
     (async () => {
       try {
         const h = await api.healthCheck();
@@ -382,7 +403,7 @@ export default function SettingsPage() {
       i2i_model: normalized.t2i_model,
       image_model: normalized.t2i_model,
     };
-    localStorage.setItem(LS_KEY_MODEL, JSON.stringify(merged));
+    writeClientStorage(LS_KEY_MODEL, JSON.stringify(merged));
     setModelSettings(merged);
     toast.success(t("saved"));
   };
@@ -395,7 +416,7 @@ export default function SettingsPage() {
       const text = promptConfig[k] ?? "";
       delta[k] = text === promptDefaults[k] ? "" : text;
     });
-    localStorage.setItem(LS_KEY_PROMPT, JSON.stringify(delta));
+    writeClientStorage(LS_KEY_PROMPT, JSON.stringify(delta));
     toast.success(t("saved"));
   };
 
@@ -444,18 +465,6 @@ export default function SettingsPage() {
 
   const renderGeneral = () => (
     <Section id="general" title={t("secGeneralTitle")}>
-      <FormRow label={t("language")} hint={t("languageDesc")}>
-        <FieldLabel>LANGUAGE</FieldLabel>
-        <ModeSegment
-          value={locale}
-          onChange={(v) => setLocale(v as Locale)}
-          options={[
-            { id: "zh", label: t("chinese") },
-            { id: "en", label: t("english") },
-          ]}
-        />
-      </FormRow>
-
       <FormRow label={t("theme")} hint={t("themeDesc")}>
         <div className="grid grid-cols-2 sm:grid-cols-3 gap-2" role="radiogroup" aria-label={t("theme")} onKeyDown={rovingKeyDown}>
           {THEME_OPTIONS.map((preset) => (
@@ -584,7 +593,7 @@ export default function SettingsPage() {
       <FormRow label={t("storyboardAspectLabel")} hint={t("storyboardAspectHint")}>
         <div className="flex items-center gap-2 text-sm font-semibold text-foreground mb-3">
           <Layout size={15} className="text-primary" />
-          <span>Storyboard Aspect Ratio</span>
+          <span>分镜画幅比例</span>
         </div>
         {aspectButtons("storyboard_aspect_ratio")}
       </FormRow>
@@ -593,7 +602,7 @@ export default function SettingsPage() {
       <FormRow label={t("i2vModelLabel")} hint={t("i2vModelHint")}>
         <div className="flex items-center gap-2 text-sm font-semibold text-foreground mb-3">
           <Video size={15} className="text-purple-400" />
-          <span>Image-to-Video</span>
+          <span>图生视频</span>
         </div>
         <GroupedModelGrid
           models={GLOBAL_I2V_MODELS}
@@ -606,7 +615,7 @@ export default function SettingsPage() {
       <FormRow label={t("r2vModelLabel")} hint={t("r2vModelHint")}>
         <div className="flex items-center gap-2 text-sm font-semibold text-foreground mb-3">
           <Video size={15} className="text-purple-400" />
-          <span>Reference-to-Video</span>
+          <span>参考视频生成</span>
         </div>
         <GroupedModelGrid
           models={GLOBAL_R2V_MODELS}
@@ -714,11 +723,11 @@ export default function SettingsPage() {
               <div className="space-y-3 mt-3">
                 <div>
                   <FieldLabel>KLING_ACCESS_KEY *</FieldLabel>
-                  <KeyField value={config.KLING_ACCESS_KEY} onChange={(v) => handleChange("KLING_ACCESS_KEY", v)} placeholder="Kling Access Key" />
+                  <KeyField value={config.KLING_ACCESS_KEY} onChange={(v) => handleChange("KLING_ACCESS_KEY", v)} placeholder="输入 Kling Access Key" />
                 </div>
                 <div>
                   <FieldLabel>KLING_SECRET_KEY *</FieldLabel>
-                  <KeyField value={config.KLING_SECRET_KEY} onChange={(v) => handleChange("KLING_SECRET_KEY", v)} placeholder="Kling Secret Key" />
+                  <KeyField value={config.KLING_SECRET_KEY} onChange={(v) => handleChange("KLING_SECRET_KEY", v)} placeholder="输入 Kling Secret Key" />
                 </div>
               </div>
             )}
@@ -736,7 +745,7 @@ export default function SettingsPage() {
             {config.VIDU_PROVIDER_MODE === "vendor" && (
               <div className="mt-3">
                 <FieldLabel>VIDU_API_KEY *</FieldLabel>
-                <KeyField value={config.VIDU_API_KEY} onChange={(v) => handleChange("VIDU_API_KEY", v)} placeholder="Vidu API Key" />
+                <KeyField value={config.VIDU_API_KEY} onChange={(v) => handleChange("VIDU_API_KEY", v)} placeholder="输入 Vidu API Key" />
               </div>
             )}
           </FormRow>
@@ -757,7 +766,7 @@ export default function SettingsPage() {
                   <KeyField
                     value={config.ARK_API_KEY}
                     onChange={(v) => handleChange("ARK_API_KEY", v)}
-                    placeholder="Agent Plan API Key"
+                    placeholder="输入 Agent Plan API Key"
                     status={config.ARK_API_KEY?.trim() ? { kind: "ok", text: t("filled") } : { kind: "warn", text: t("notConfiguredUnavailable") }}
                   />
                 </div>
@@ -969,7 +978,7 @@ export default function SettingsPage() {
         />
       </FormRow>
 
-      <FormRow label="Endpoint" hint={t("endpointHint")}>
+      <FormRow label="访问域名" hint={t("endpointHint")}>
         <FieldLabel>OSS_ENDPOINT</FieldLabel>
         <input
           type="text"
@@ -980,7 +989,7 @@ export default function SettingsPage() {
         />
       </FormRow>
 
-      <FormRow label="Base Path" hint={t("basePathHint")}>
+      <FormRow label="基础路径" hint={t("basePathHint")}>
         <FieldLabel>OSS_BASE_PATH</FieldLabel>
         <input
           type="text"
@@ -992,11 +1001,11 @@ export default function SettingsPage() {
       </FormRow>
 
       <FormRow label={t("dataDirLabel")} hint={t("dataDirHint")}>
-        <PathField value={dataDir} label="DATA_DIR · MANAGED" />
+        <PathField value={dataDir} label="DATA_DIR · 系统管理" />
       </FormRow>
 
       <FormRow label={t("logDirLabel")} hint={t("logDirHint")}>
-        <PathField value={logDir} label="LOG_DIR · MANAGED" />
+        <PathField value={logDir} label="LOG_DIR · 系统管理" />
       </FormRow>
 
       <div className="flex justify-end pt-4">
@@ -1090,10 +1099,12 @@ export default function SettingsPage() {
 
   const renderActive = () => {
     switch (active) {
+      case "account":
+        return IS_CLOUD_DEPLOYMENT ? <AccountSecurityPanel /> : renderGeneral();
       case "general":
         return renderGeneral();
       case "models":
-        return renderModels();
+        return IS_CLOUD_DEPLOYMENT ? renderGeneral() : renderModels();
       case "prompts":
         return renderPrompts();
       case "apikeys":
@@ -1108,6 +1119,7 @@ export default function SettingsPage() {
   };
 
   const CATEGORY_TITLE: Record<SettingsCategory, string> = {
+    account: "账号安全",
     general: t("eyebrowGeneral"),
     models: t("eyebrowModels"),
     prompts: t("eyebrowPrompts"),
@@ -1117,14 +1129,19 @@ export default function SettingsPage() {
   };
 
   // 横向 Tab 短标签（取代竖向 SettingsSidebar；与全局品牌侧栏轴向正交，不再撞脸）。
-  const TABS: { id: SettingsCategory; label: string }[] = [
-    { id: "general", label: t("tabGeneral") },
-    { id: "models", label: t("tabModels") },
-    { id: "prompts", label: t("eyebrowPrompts") },
-    { id: "apikeys", label: t("eyebrowApikeys") },
-    { id: "storage", label: t("tabStorage") },
-    { id: "about", label: t("eyebrowAbout") },
-  ];
+  const TAB_LABELS: Record<SettingsCategory, string> = {
+    account: "账号安全",
+    general: t("tabGeneral"),
+    models: t("tabModels"),
+    prompts: t("eyebrowPrompts"),
+    apikeys: t("eyebrowApikeys"),
+    storage: t("tabStorage"),
+    about: t("eyebrowAbout"),
+  };
+  const TABS = visibleSettingsCategories(IS_CLOUD_DEPLOYMENT).map((id) => ({
+    id,
+    label: TAB_LABELS[id],
+  }));
 
   return (
     <div className="relative h-full flex flex-col">
@@ -1136,7 +1153,7 @@ export default function SettingsPage() {
       <header className="flex-shrink-0 border-b border-glass-border px-4 md:px-7 pt-6 pb-4 relative z-10">
         <div className="w-full">
         <div className="font-mono text-[0.625rem] font-medium uppercase tracking-[0.2em] text-text-muted">
-          SETTINGS · <span className="text-primary font-semibold">{CATEGORY_TITLE[active]}</span>
+          设置 · <span className="text-primary font-semibold">{CATEGORY_TITLE[active]}</span>
         </div>
         <h1 className="font-display atelier-display text-[1.625rem] md:text-[2.125rem] font-semibold text-foreground mt-2 tracking-tight">
           {t("title")}

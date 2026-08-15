@@ -235,13 +235,13 @@ export default function EnvConfigDialog({ isOpen, onClose, isRequired = false }:
                 <div>
                   <label className="flex items-center justify-between text-sm font-medium text-foreground mb-2">
                     <span>DashScope API Key <span className="text-red-500">*</span></span>
-                    <span className="text-text-muted font-normal text-xs">e.g. sk-xxx</span>
+                    <span className="text-text-muted font-normal text-xs">例如 sk-xxx</span>
                   </label>
                   <input
                     type="password"
                     value={config.DASHSCOPE_API_KEY}
                     onChange={(e) => handleChange("DASHSCOPE_API_KEY", e.target.value)}
-                    placeholder="Required for DashScope-first model routing"
+                    placeholder="DashScope 优先模型路由必填"
                     className={inputClass}
                   />
                 </div>
@@ -252,26 +252,26 @@ export default function EnvConfigDialog({ isOpen, onClose, isRequired = false }:
                   </div>
                   <div>
                     <label className="block text-sm font-medium text-foreground mb-2">
-                      Alibaba Cloud Access Key ID
+                      阿里云 Access Key ID
                     </label>
                     <input
                       type="password"
                       value={config.ALIBABA_CLOUD_ACCESS_KEY_ID}
                       onChange={(e) => handleChange("ALIBABA_CLOUD_ACCESS_KEY_ID", e.target.value)}
-                      placeholder="Optional, used when OSS mirror is enabled"
+                      placeholder="可选，启用 OSS 镜像时使用"
                       className={inputClass}
                     />
                   </div>
 
                   <div>
                     <label className="block text-sm font-medium text-foreground mb-2">
-                      Alibaba Cloud Access Key Secret
+                      阿里云 Access Key Secret
                     </label>
                     <input
                       type="password"
                       value={config.ALIBABA_CLOUD_ACCESS_KEY_SECRET}
                       onChange={(e) => handleChange("ALIBABA_CLOUD_ACCESS_KEY_SECRET", e.target.value)}
-                      placeholder="Optional, used when OSS mirror is enabled"
+                      placeholder="可选，启用 OSS 镜像时使用"
                       className={inputClass}
                     />
                   </div>
@@ -289,43 +289,43 @@ export default function EnvConfigDialog({ isOpen, onClose, isRequired = false }:
                       rel="noopener noreferrer"
                       className="text-xs text-primary hover:text-primary/80 transition-colors"
                     >
-                      Open OSS Console &rarr;
+                      打开 OSS 控制台 &rarr;
                     </a>
                   </div>
 
                   <div className="space-y-4">
                     <div>
                       <label className="flex items-center justify-between text-sm font-medium text-foreground mb-2">
-                        <span>OSS Bucket Name</span>
-                        <span className="text-text-muted font-normal text-xs">e.g. my-comic-bucket</span>
+                        <span>OSS 存储桶名称</span>
+                        <span className="text-text-muted font-normal text-xs">例如 my-comic-bucket</span>
                       </label>
                       <input
                         type="text"
                         value={config.OSS_BUCKET_NAME}
                         onChange={(e) => handleChange("OSS_BUCKET_NAME", e.target.value)}
-                        placeholder="your_bucket_name (optional)"
+                        placeholder="存储桶名称（可选）"
                         className={inputClass}
                       />
                     </div>
 
                     <div>
                       <label className="flex items-center justify-between text-sm font-medium text-foreground mb-2">
-                        <span>OSS Endpoint</span>
-                        <span className="text-text-muted font-normal text-xs">e.g. oss-cn-hangzhou.aliyuncs.com</span>
+                        <span>OSS 访问域名</span>
+                        <span className="text-text-muted font-normal text-xs">例如 oss-cn-hangzhou.aliyuncs.com</span>
                       </label>
                       <input
                         type="text"
                         value={config.OSS_ENDPOINT}
                         onChange={(e) => handleChange("OSS_ENDPOINT", e.target.value)}
-                        placeholder="oss-cn-beijing.aliyuncs.com (optional)"
+                        placeholder="oss-cn-beijing.aliyuncs.com（可选）"
                         className={inputClass}
                       />
                     </div>
 
                     <div>
                       <label className="flex items-center justify-between text-sm font-medium text-foreground mb-2">
-                        <span>OSS Base Path</span>
-                        <span className="text-text-muted font-normal text-xs">e.g. lumenx</span>
+                        <span>OSS 基础路径</span>
+                        <span className="text-text-muted font-normal text-xs">例如 lumenx</span>
                       </label>
                       <input
                         type="text"
@@ -340,7 +340,7 @@ export default function EnvConfigDialog({ isOpen, onClose, isRequired = false }:
 
                 <div className="pt-4 border-t border-glass-border">
                   <div className="flex items-center justify-between mb-4">
-                    <h3 className="text-sm font-bold text-foreground">Kling Provider</h3>
+                    <h3 className="text-sm font-bold text-foreground">Kling 供应商</h3>
                     <span className="text-[0.625rem] text-text-muted">{t("chooseProvider")}</span>
                   </div>
                   <div className="bg-glass border border-glass-border rounded-lg p-4 space-y-4">
@@ -357,7 +357,7 @@ export default function EnvConfigDialog({ isOpen, onClose, isRequired = false }:
                         onClick={() => handleChange("KLING_PROVIDER_MODE", "vendor")}
                         className={modeButtonClass(config.KLING_PROVIDER_MODE === "vendor")}
                       >
-                        Vendor Direct
+                        供应商直连
                       </button>
                     </div>
                     <p className="text-xs text-text-muted">
@@ -374,7 +374,7 @@ export default function EnvConfigDialog({ isOpen, onClose, isRequired = false }:
                             type="password"
                             value={config.KLING_ACCESS_KEY}
                             onChange={(e) => handleChange("KLING_ACCESS_KEY", e.target.value)}
-                            placeholder="Kling API Access Key"
+                            placeholder="输入 Kling API Access Key"
                             className={inputClass}
                           />
                         </div>
@@ -387,7 +387,7 @@ export default function EnvConfigDialog({ isOpen, onClose, isRequired = false }:
                             type="password"
                             value={config.KLING_SECRET_KEY}
                             onChange={(e) => handleChange("KLING_SECRET_KEY", e.target.value)}
-                            placeholder="Kling API Secret Key"
+                            placeholder="输入 Kling API Secret Key"
                             className={inputClass}
                           />
                         </div>
@@ -398,7 +398,7 @@ export default function EnvConfigDialog({ isOpen, onClose, isRequired = false }:
 
                 <div className="pt-4 border-t border-glass-border">
                   <div className="flex items-center justify-between mb-4">
-                    <h3 className="text-sm font-bold text-foreground">Vidu Provider</h3>
+                    <h3 className="text-sm font-bold text-foreground">Vidu 供应商</h3>
                     <span className="text-[0.625rem] text-text-muted">{t("chooseProvider")}</span>
                   </div>
                   <div className="bg-input-bg border border-glass-border rounded-lg p-4 space-y-4">
@@ -415,7 +415,7 @@ export default function EnvConfigDialog({ isOpen, onClose, isRequired = false }:
                         onClick={() => handleChange("VIDU_PROVIDER_MODE", "vendor")}
                         className={modeButtonClass(config.VIDU_PROVIDER_MODE === "vendor")}
                       >
-                        Vendor Direct
+                        供应商直连
                       </button>
                     </div>
                     <p className="text-xs text-text-muted">
@@ -431,7 +431,7 @@ export default function EnvConfigDialog({ isOpen, onClose, isRequired = false }:
                           type="password"
                           value={config.VIDU_API_KEY}
                           onChange={(e) => handleChange("VIDU_API_KEY", e.target.value)}
-                          placeholder="Vidu API Key"
+                          placeholder="输入 Vidu API Key"
                           className={inputClass}
                         />
                       </div>
@@ -440,7 +440,7 @@ export default function EnvConfigDialog({ isOpen, onClose, isRequired = false }:
                 </div>
 
                 <div className="space-y-3 pt-4 border-t border-glass-border">
-                  <h4 className="text-sm font-medium text-text-secondary">Seedance 2.0 Provider</h4>
+                  <h4 className="text-sm font-medium text-text-secondary">Seedance 2.0 供应商</h4>
                   <div className="flex flex-wrap gap-2">
                     <button
                       type="button"

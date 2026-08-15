@@ -7,6 +7,7 @@ import { api } from '@/lib/api';
 import type { Series, Character, Scene, Prop } from '@/store/projectStore';
 import { characterImageUrl } from '@/lib/characterImage';
 import { useTranslations } from "next-intl";
+import { getAssetUrl } from "@/lib/utils";
 
 interface ImportAssetsDialogProps {
     isOpen: boolean;
@@ -26,23 +27,27 @@ interface SelectableAsset {
 }
 
 function getAssetImageUrl(asset: Character | Scene | Prop, type: AssetTab): string | undefined {
+    let reference: string | undefined;
     if (type === "characters") {
-        return characterImageUrl(asset as Character);
-    }
-    if (type === "scenes") {
+        reference = characterImageUrl(asset as Character);
+    } else if (type === "scenes") {
         const scene = asset as Scene;
         if (scene.image_asset?.variants?.length) {
             const selected = scene.image_asset.variants.find(v => v.id === scene.image_asset?.selected_id);
-            return selected?.url || scene.image_asset.variants[0]?.url;
+            reference = selected?.url || scene.image_asset.variants[0]?.url;
+        } else {
+            reference = scene.image_url;
         }
-        return scene.image_url;
+    } else {
+        const prop = asset as Prop;
+        if (prop.image_asset?.variants?.length) {
+            const selected = prop.image_asset.variants.find(v => v.id === prop.image_asset?.selected_id);
+            reference = selected?.url || prop.image_asset.variants[0]?.url;
+        } else {
+            reference = prop.image_url;
+        }
     }
-    const prop = asset as Prop;
-    if (prop.image_asset?.variants?.length) {
-        const selected = prop.image_asset.variants.find(v => v.id === prop.image_asset?.selected_id);
-        return selected?.url || prop.image_asset.variants[0]?.url;
-    }
-    return prop.image_url;
+    return reference ? getAssetUrl(reference) : undefined;
 }
 
 export default function ImportAssetsDialog({ isOpen, onClose, seriesId, onImported }: ImportAssetsDialogProps) {

@@ -19,6 +19,12 @@ from ...utils import get_logger
 from ...utils.oss_utils import is_object_key
 from ...utils.provider_registry import resolve_provider_backend
 from ...utils.system_check import get_ffmpeg_path, get_ffmpeg_install_instructions
+from ...platform.desktop_repositories import (
+    DesktopAssetLibraryRepository,
+    DesktopJsonRepositoryError,
+    DesktopProjectRepository,
+    DesktopSeriesRepository,
+)
 
 logger = get_logger(__name__)
 
@@ -83,6 +89,9 @@ class ComicGenPipeline:
         self.series_data_file = "output/series.json"
         self.library_data_file = "output/library_assets.json"
         self._save_lock = threading.RLock()  # Reentrant lock to prevent concurrent file writes
+        self._project_repository = DesktopProjectRepository(self.data_file)
+        self._series_repository = DesktopSeriesRepository(self.series_data_file)
+        self._asset_library_repository = DesktopAssetLibraryRepository(self.library_data_file)
         self.scripts: Dict[str, Script] = self._load_data()
         self.series_store: Dict[str, Series] = self._load_series_data()
         # Project-independent global asset library (lowest resolver layer).
@@ -386,14 +395,37 @@ class ComicGenPipeline:
     def get_script(self, script_id: str) -> Optional[Script]:
         return self.scripts.get(script_id)
 
+    def _desktop_project_repository(self) -> DesktopProjectRepository:
+        repository = getattr(self, "_project_repository", None)
+        if repository is None:
+            repository = DesktopProjectRepository(self.data_file)
+            self._project_repository = repository
+        else:
+            repository.set_path(self.data_file)
+        return repository
+
+    def _desktop_series_repository(self) -> DesktopSeriesRepository:
+        repository = getattr(self, "_series_repository", None)
+        if repository is None:
+            repository = DesktopSeriesRepository(self.series_data_file)
+            self._series_repository = repository
+        else:
+            repository.set_path(self.series_data_file)
+        return repository
+
+    def _desktop_asset_library_repository(self) -> DesktopAssetLibraryRepository:
+        repository = getattr(self, "_asset_library_repository", None)
+        if repository is None:
+            repository = DesktopAssetLibraryRepository(self.library_data_file)
+            self._asset_library_repository = repository
+        else:
+            repository.set_path(self.library_data_file)
+        return repository
+
     def _load_data(self) -> Dict[str, Script]:
-        if not os.path.exists(self.data_file):
-            return {}
         try:
-            with open(self.data_file, 'r') as f:
-                data = json.load(f)
-                return {k: Script(**v) for k, v in data.items()}
-        except Exception as e:
+            return self._desktop_project_repository().load_all()
+        except DesktopJsonRepositoryError as e:
             logger.error(f"Failed to load data: {e}")
             return {}
 
@@ -401,10 +433,8 @@ class ComicGenPipeline:
         """Save data with thread lock to prevent concurrent write issues."""
         with self._save_lock:
             try:
-                os.makedirs(os.path.dirname(self.data_file), exist_ok=True)
-                with open(self.data_file, 'w') as f:
-                    json.dump({k: v.dict() for k, v in self.scripts.items()}, f, indent=2)
-            except Exception as e:
+                self._desktop_project_repository().replace_all(self.scripts)
+            except DesktopJsonRepositoryError as e:
                 logger.error(f"Failed to save data: {e}")
 
     def _repair_series_bindings(self):
@@ -3946,23 +3976,17 @@ class ComicGenPipeline:
     # ============================================================
 
     def _load_series_data(self) -> Dict[str, Series]:
-        if not os.path.exists(self.series_data_file):
-            return {}
         try:
-            with open(self.series_data_file, 'r') as f:
-                data = json.load(f)
-                return {k: Series(**v) for k, v in data.items()}
-        except Exception as e:
+            return self._desktop_series_repository().load_all()
+        except DesktopJsonRepositoryError as e:
             logger.error(f"Failed to load series data: {e}")
             return {}
 
     def _save_series_data_unlocked(self):
         """Save series data without acquiring the lock (caller must hold self._save_lock)."""
         try:
-            os.makedirs(os.path.dirname(self.series_data_file) or ".", exist_ok=True)
-            with open(self.series_data_file, 'w') as f:
-                json.dump({k: v.model_dump() for k, v in self.series_store.items()}, f, indent=2)
-        except Exception as e:
+            self._desktop_series_repository().replace_all(self.series_store)
+        except DesktopJsonRepositoryError as e:
             logger.error(f"Failed to save series data: {e}")
 
     def _save_series_data(self):
@@ -3975,23 +3999,17 @@ class ComicGenPipeline:
     # ============================================================
 
     def _load_library_data(self) -> GlobalAssetLibrary:
-        if not os.path.exists(self.library_data_file):
-            return GlobalAssetLibrary()
         try:
-            with open(self.library_data_file, 'r') as f:
-                data = json.load(f)
-                return GlobalAssetLibrary(**data)
-        except Exception as e:
+            return self._desktop_asset_library_repository().load()
+        except DesktopJsonRepositoryError as e:
             logger.error(f"Failed to load library data: {e}")
             return GlobalAssetLibrary()
 
     def _save_library_data_unlocked(self):
         """Save global library data without acquiring the lock (caller must hold self._save_lock)."""
         try:
-            os.makedirs(os.path.dirname(self.library_data_file) or ".", exist_ok=True)
-            with open(self.library_data_file, 'w') as f:
-                json.dump(self.library_store.model_dump(), f, indent=2)
-        except Exception as e:
+            self._desktop_asset_library_repository().save(self.library_store)
+        except DesktopJsonRepositoryError as e:
             logger.error(f"Failed to save library data: {e}")
 
     def _save_library_data(self):

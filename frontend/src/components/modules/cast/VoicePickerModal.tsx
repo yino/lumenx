@@ -110,7 +110,7 @@ export default function VoicePickerModal({
                     setCustomVoices(customs);
                 }
             })
-            .catch((e) => { if (!cancelled) setError(e?.message || "Failed to load voices"); })
+            .catch((e) => { if (!cancelled) setError(e?.message || "加载音色失败"); })
             .finally(() => { if (!cancelled) setLoading(false); });
         return () => { cancelled = true; };
     }, [isOpen, seriesId]);
@@ -189,7 +189,7 @@ export default function VoicePickerModal({
             setPlayingId(voiceId);
             await audio.play();
         } catch (e: any) {
-            setError(e?.message || "Preview failed");
+            setError(e?.message || "试听失败");
         } finally {
             setPreviewingId(null);
         }
@@ -507,12 +507,12 @@ function VoiceCard({
                         {voice.gender}
                         {voice.dialect ? ` · ${voice.dialect}` : ""}
                         {voice.lang_primary ? ` · ${voice.lang_primary}` : ""}
-                        {voice.supports_instruction ? " · instr" : ""}
+                        {voice.supports_instruction ? " · 支持指令" : ""}
                     </p>
                 </div>
                 <button
                     onClick={(e) => { e.stopPropagation(); onPreview(); }}
-                    aria-label={playing ? "Stop preview" : "Play preview"}
+                    aria-label={playing ? "停止试听" : "播放试听"}
                     className={`shrink-0 inline-flex h-7 w-7 items-center justify-center rounded-md border transition-colors ${
                         playing
                             ? "border-primary bg-primary/15 text-primary"
@@ -620,7 +620,7 @@ function CustomVoiceList({
                                     <div className="flex shrink-0 items-center gap-1">
                                         <button
                                             onClick={(e) => { e.stopPropagation(); onPreview(cv); }}
-                                            aria-label="Play preview"
+                                            aria-label="播放试听"
                                             className={`inline-flex h-7 w-7 items-center justify-center rounded-md border transition-colors ${
                                                 isPlaying
                                                     ? "border-primary bg-primary/15 text-primary"
@@ -631,7 +631,7 @@ function CustomVoiceList({
                                         </button>
                                         <button
                                             onClick={(e) => { e.stopPropagation(); onDelete(cv.id); }}
-                                            aria-label="Delete custom voice"
+                                            aria-label="删除自定义音色"
                                             className="inline-flex h-7 w-7 items-center justify-center rounded-md border border-glass-border bg-black/30 text-text-muted hover:border-danger/40 hover:bg-danger/10 hover:text-danger transition-colors"
                                         >
                                             <Trash2 size={11} />

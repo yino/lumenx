@@ -1,7 +1,7 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 
-export type Locale = 'zh' | 'en';
+export type Locale = 'zh';
 
 /**
  * 5 预设主题（Tasty Sam 主题系统）。
@@ -31,7 +31,6 @@ interface SettingsStore {
     // 全局动效开关。true = 启用 motion（默认）；false = 降低动效，
     // 由 Providers 挂载 html.no-motion 类来落地（无障碍/性能偏好）。
     animations: boolean;
-    setLocale: (locale: Locale) => void;
     setTheme: (theme: ThemePreset) => void;
     setAnimations: (animations: boolean) => void;
 }
@@ -42,23 +41,32 @@ export const useSettingsStore = create<SettingsStore>()(
             locale: 'zh',
             theme: DEFAULT_THEME,
             animations: true,
-            setLocale: (locale: Locale) => set({ locale }),
             setTheme: (theme: ThemePreset) => set({ theme }),
             setAnimations: (animations: boolean) => set({ animations }),
         }),
         {
             name: 'lumenx-settings',
-            version: 1,
+            version: 2,
             // v0→v1：旧版只有 'dark' | 'light'。按产品决策，统一升级到新默认
             // atelier-dark（不保留旧观感）。非法/缺失值同样回落默认。
             migrate: (persisted: unknown, version: number) => {
                 const state = (persisted ?? {}) as Partial<SettingsStore>;
                 const animations = typeof state.animations === 'boolean' ? state.animations : true;
                 if (version < 1 || !THEME_PRESETS.includes(state.theme as ThemePreset)) {
-                    return { ...state, theme: DEFAULT_THEME, animations } as SettingsStore;
+                    return { ...state, locale: 'zh', theme: DEFAULT_THEME, animations } as SettingsStore;
                 }
-                return { ...state, animations } as SettingsStore;
+                return { ...state, locale: 'zh', animations } as SettingsStore;
             },
+            // 中文是唯一运行时语言，不再把 locale 写回浏览器。
+            partialize: (state) => ({
+                theme: state.theme,
+                animations: state.animations,
+            }),
+            merge: (persisted, current) => ({
+                ...current,
+                ...(persisted as Partial<SettingsStore>),
+                locale: 'zh',
+            }),
         }
     )
 );

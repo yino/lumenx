@@ -1,4 +1,4 @@
-import { API_URL } from "./api";
+import { API_URL, getCachedMediaUrl, parseMediaReference } from "./api";
 import { clsx, type ClassValue } from "clsx";
 import { twMerge } from "tailwind-merge";
 
@@ -8,7 +8,9 @@ export function cn(...inputs: ClassValue[]) {
 
 export function getAssetUrl(path: string | null | undefined): string {
     if (!path) return "";
-    if (path.startsWith("http") || path.startsWith("https") || path.startsWith("blob:")) return path;
+    if (parseMediaReference(path)) return getCachedMediaUrl(path) || "";
+    if (/^(https?:|blob:|data:)/i.test(path)) return path;
+    if (path.startsWith("/files/")) return `${API_URL}${path}`;
 
     // Remove leading slash if present to avoid double slashes with API_URL/files/
     const cleanPath = path.startsWith("/") ? path.slice(1) : path;

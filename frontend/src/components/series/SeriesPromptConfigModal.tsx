@@ -5,6 +5,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { X, FileText, RotateCcw, ChevronDown, ChevronRight, Loader2 } from 'lucide-react';
 import { api } from '@/lib/api';
 import { useTranslations } from "next-intl";
+import { IS_CLOUD_DEPLOYMENT } from '@/lib/deployment';
 
 interface SeriesPromptConfigModalProps {
     isOpen: boolean;
@@ -137,7 +138,7 @@ export default function SeriesPromptConfigModal({ isOpen, onClose, seriesId, onS
                                 {/* Issue 13: polish 用的 LLM 模型。系列级覆盖 → 项目级覆盖
                                     → 系统默认。三个推荐选项都是 vision-capable，能让带
                                     首帧/参考图的润色更准确。 */}
-                                <div className="space-y-2">
+                                {!IS_CLOUD_DEPLOYMENT && <div className="space-y-2">
                                     <div>
                                         <h3 className="text-sm font-bold text-foreground">{t("polishModelTitle")}</h3>
                                         <p className="text-[0.625rem] text-text-secondary mt-0.5">
@@ -155,7 +156,7 @@ export default function SeriesPromptConfigModal({ isOpen, onClose, seriesId, onS
                                         <option value="kimi-k2.6">kimi-k2.6 · Moonshot Kimi K2.6（视觉）</option>
                                     </select>
                                     <div className="border-b border-border-subtle pt-1" />
-                                </div>
+                                </div>}
 
                                 {SECTIONS.map((section) => (
                                     <div key={section.key} className="space-y-2">

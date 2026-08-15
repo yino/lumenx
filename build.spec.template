@@ -15,11 +15,8 @@ ROOT_DIR = os.path.abspath('.')
 datas = [
     ('static', 'static'),
     ('src/apps/comic_gen/style_presets.json', 'src/apps/comic_gen'),
+    ('config/model_catalog/generated/model_catalog.json', 'config/model_catalog/generated'),
 ]
-
-# 如果存在 .env 文件，也打包进去
-if os.path.exists('.env'):
-    datas.append(('.env', '.'))
 
 # 收集所有隐藏导入
 hiddenimports = [

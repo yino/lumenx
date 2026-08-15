@@ -99,7 +99,7 @@ export default function VoiceDesignModal({
             setVoicePrompt(voice_prompt);
             setPhase("draft");
         } catch (e: any) {
-            setErrorMsg(e?.message || "Translate failed");
+            setErrorMsg(e?.message || "生成音色描述失败");
             setPhase("error");
         }
     };
@@ -134,7 +134,7 @@ export default function VoiceDesignModal({
             setPlaying(true);
             await audio.play();
         } catch (e: any) {
-            setErrorMsg(e?.message || "Preview failed");
+            setErrorMsg(e?.message || "生成试听失败");
             setPhase("error");
         }
     };
@@ -174,7 +174,7 @@ export default function VoiceDesignModal({
                 onClose();
             }, 600);
         } catch (e: any) {
-            setErrorMsg(e?.message || "Save failed");
+            setErrorMsg(e?.message || "保存失败");
             setPhase("error");
         }
     };

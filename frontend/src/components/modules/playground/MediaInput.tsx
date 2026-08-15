@@ -1,9 +1,10 @@
 'use client';
 
-import { useRef, useState, useCallback } from 'react';
+import { useRef, useState } from 'react';
 import { ImagePlus, Film, X } from 'lucide-react';
 import { useTranslations } from 'next-intl';
-import { API_URL, playgroundApi } from '@/lib/api';
+import { playgroundApi } from '@/lib/api';
+import { getAssetUrl } from '@/lib/utils';
 import { usePlaygroundStore, type PlaygroundMode } from './usePlaygroundStore';
 import AssetPickerModal from './AssetPickerModal';
 
@@ -92,8 +93,7 @@ function isVideoPath(path: string): boolean {
 // root-relative (/files/...) URLs pass through untouched. The raw path is still kept
 // in store state + the generate payload — only the <img>/<video> src is resolved.
 function resolveMediaSrc(path: string): string {
-  if (/^(https?:|blob:|data:|\/)/i.test(path)) return path;
-  return `${API_URL}/files/${path.replace(/^output\//, '')}`;
+  return getAssetUrl(path);
 }
 
 // ---------------------------------------------------------------------------
@@ -221,7 +221,7 @@ export default function MediaInput() {
       const results = await Promise.all(
         toUpload.map((file) => playgroundApi.uploadMedia(file))
       );
-      const newPaths = results.map((r) => r.path);
+      const newPaths = results.map((r) => r.media_reference);
 
       if (config.multiple) {
         setInputMedia([...inputMedia, ...newPaths]);
@@ -251,29 +251,26 @@ export default function MediaInput() {
     e.target.value = '';
   };
 
-  const handleDragOver = useCallback((e: React.DragEvent) => {
+  const handleDragOver = (e: React.DragEvent) => {
     e.preventDefault();
     e.stopPropagation();
     setDragOver(true);
-  }, []);
+  };
 
-  const handleDragLeave = useCallback((e: React.DragEvent) => {
+  const handleDragLeave = (e: React.DragEvent) => {
     e.preventDefault();
     e.stopPropagation();
     setDragOver(false);
-  }, []);
+  };
 
-  const handleDrop = useCallback(
-    (e: React.DragEvent) => {
-      e.preventDefault();
-      e.stopPropagation();
-      setDragOver(false);
-      if (e.dataTransfer.files) {
-        handleFiles(e.dataTransfer.files);
-      }
-    },
-    [inputMedia, config]
-  );
+  const handleDrop = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setDragOver(false);
+    if (e.dataTransfer.files) {
+      handleFiles(e.dataTransfer.files);
+    }
+  };
 
   const handleRemove = (index: number) => {
     const updated = inputMedia.filter((_, i) => i !== index);

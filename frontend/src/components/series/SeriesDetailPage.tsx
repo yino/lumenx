@@ -9,6 +9,8 @@ import type { Series, Character, Scene, Prop, Project } from "@/store/projectSto
 import AssetCard from "@/components/common/AssetCard";
 import { useTranslations } from "next-intl";
 import SeriesSidebar, { type SidebarItem } from "./SeriesSidebar";
+import { IS_CLOUD_DEPLOYMENT } from "@/lib/deployment";
+import { getAssetUrl } from "@/lib/utils";
 
 const SeriesModelSettingsModal = dynamic(() => import("./SeriesModelSettingsModal"), { ssr: false });
 const SeriesPromptConfigModal = dynamic(() => import("./SeriesPromptConfigModal"), { ssr: false });
@@ -183,7 +185,7 @@ export default function SeriesDetailPage({ seriesId }: SeriesDetailPageProps) {
         onNewEpisodeTitleChange={setNewEpisodeTitle}
         onAddEpisode={handleAddEpisode}
         onAddEpisodeKeyDown={handleAddEpisodeKeyDown}
-        onOpenModelSettings={() => setShowModelSettings(true)}
+        onOpenModelSettings={IS_CLOUD_DEPLOYMENT ? undefined : () => setShowModelSettings(true)}
         onOpenPromptConfig={() => setShowPromptConfig(true)}
         onOpenImportAssets={() => setShowImportAssets(true)}
       />
@@ -216,12 +218,14 @@ export default function SeriesDetailPage({ seriesId }: SeriesDetailPageProps) {
       </div>
 
       {/* ── Modals ── */}
-      <SeriesModelSettingsModal
-        isOpen={showModelSettings}
-        onClose={() => setShowModelSettings(false)}
-        seriesId={seriesId}
-        onSaved={refreshSeriesData}
-      />
+      {!IS_CLOUD_DEPLOYMENT && (
+        <SeriesModelSettingsModal
+          isOpen={showModelSettings}
+          onClose={() => setShowModelSettings(false)}
+          seriesId={seriesId}
+          onSaved={refreshSeriesData}
+        />
+      )}
       <SeriesPromptConfigModal
         isOpen={showPromptConfig}
         onClose={() => setShowPromptConfig(false)}
@@ -415,7 +419,7 @@ function EpisodeContentPanel({
                 >
                   {frame.rendered_image_url ? (
                     <img
-                      src={frame.rendered_image_url}
+                      src={getAssetUrl(frame.rendered_image_url)}
                       alt={`#${i + 1}`}
                       className="w-full h-full object-cover"
                     />

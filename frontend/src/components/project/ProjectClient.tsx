@@ -23,6 +23,7 @@ import PromptConfigModal from "@/components/project/PromptConfigModal";
 import StoryboardR2V from "@/components/modules/StoryboardR2V";
 import EntityConfirmModal from "@/components/modules/EntityConfirmModal";
 import dynamic from "next/dynamic";
+import { IS_CLOUD_DEPLOYMENT } from "@/lib/deployment";
 
 const CreativeCanvas = dynamic(() => import("@/components/canvas/CreativeCanvas"), { ssr: false });
 
@@ -193,17 +194,19 @@ export default function ProjectClient({ id, breadcrumbSegments }: { id: string; 
             <button
                 onClick={() => setPromptConfigOpen(true)}
                 className="p-2 hover:bg-hover-bg rounded-lg transition-colors group"
-                title="Prompt Configuration"
+                title="提示词配置"
             >
                 <MessageSquareCode size={16} className="text-text-secondary group-hover:text-purple-400 transition-colors" />
             </button>
-            <button
-                onClick={() => setModelSettingsOpen(true)}
-                className="p-2 hover:bg-hover-bg rounded-lg transition-colors group"
-                title="Model Settings"
-            >
-                <Settings size={16} className="text-text-secondary group-hover:text-foreground transition-colors" />
-            </button>
+            {!IS_CLOUD_DEPLOYMENT && (
+                <button
+                    onClick={() => setModelSettingsOpen(true)}
+                    className="p-2 hover:bg-hover-bg rounded-lg transition-colors group"
+                    title="模型设置"
+                >
+                    <Settings size={16} className="text-text-secondary group-hover:text-foreground transition-colors" />
+                </button>
+            )}
         </>
     );
 
@@ -237,10 +240,12 @@ export default function ProjectClient({ id, breadcrumbSegments }: { id: string; 
             </div>
 
             {/* Model Settings Modal */}
-            <ModelSettingsModal
-                isOpen={modelSettingsOpen}
-                onClose={() => setModelSettingsOpen(false)}
-            />
+            {!IS_CLOUD_DEPLOYMENT && (
+                <ModelSettingsModal
+                    isOpen={modelSettingsOpen}
+                    onClose={() => setModelSettingsOpen(false)}
+                />
+            )}
 
             {/* Prompt Config Modal */}
             <PromptConfigModal

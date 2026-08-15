@@ -93,17 +93,8 @@ export default function VoiceCloneModal({ isOpen, onClose, seriesId, characterNa
         setErrorMsg(null);
         setPhase("uploading");
         try {
-            const formData = new FormData();
-            formData.append("file", file);
-            const uploadResp = await fetch(`${process.env.NEXT_PUBLIC_API_URL || "/api"}/upload`, {
-                method: "POST",
-                body: formData,
-            });
-            if (!uploadResp.ok) {
-                throw new Error(`Upload failed: ${uploadResp.status}`);
-            }
-            const { url } = await uploadResp.json();
-            if (!url) throw new Error("Upload response missing url");
+            const { url } = await api.uploadFile(file);
+            if (!url) throw new Error("上传结果缺少媒体标识");
 
             setPhase("cloning");
             const voice = await api.cloneVoice({
@@ -119,7 +110,7 @@ export default function VoiceCloneModal({ isOpen, onClose, seriesId, characterNa
                 onClose();
             }, 600);
         } catch (e: any) {
-            setErrorMsg(e?.message || "Clone failed");
+            setErrorMsg(e?.message || "音色复刻失败");
             setPhase("error");
         }
     };

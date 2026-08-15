@@ -95,7 +95,7 @@ export default function PromptHistoryDrawer() {
       results.push({
         prompt: gen.prompt,
         mode: gen.mode,
-        model_id: gen.model_id,
+        model_id: gen.model_id || gen.actual_model_id || gen.mode,
         created_at: gen.created_at,
       });
     }

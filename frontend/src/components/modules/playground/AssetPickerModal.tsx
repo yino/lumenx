@@ -4,7 +4,8 @@ import { useState, useEffect, useMemo, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { X, Check, Image, Film, Loader2 } from 'lucide-react';
 import { useTranslations } from 'next-intl';
-import { API_URL, playgroundApi } from '@/lib/api';
+import { playgroundApi } from '@/lib/api';
+import { getAssetUrl } from '@/lib/utils';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -38,12 +39,6 @@ function isVideoPath(path: string): boolean {
 function getFileName(path: string): string {
   const parts = path.split('/');
   return parts[parts.length - 1] || path;
-}
-
-/** Convert a media_path (e.g. "output/storyboard/foo.png") to a /files/ URL */
-function toFileUrl(mediaPath: string): string {
-  const relative = mediaPath.replace(/^output\//, '');
-  return API_URL + '/files/' + relative;
 }
 
 // ---------------------------------------------------------------------------
@@ -96,16 +91,16 @@ export default function AssetPickerModal({
       for (const gen of history) {
         if (gen.status !== 'completed') continue;
         for (const output of gen.outputs) {
-          if (!output.media_path || seen.has(output.media_path)) continue;
-          seen.add(output.media_path);
+          if (!output.media_reference || seen.has(output.media_reference)) continue;
+          seen.add(output.media_reference);
 
-          const isVideo = isVideoPath(output.media_path);
+          const isVideo = output.media_type === 'video';
           items.push({
             id: output.id,
-            path: output.media_path,
+            path: output.media_reference,
             type: isVideo ? 'video' : 'image',
             thumbnail: output.thumbnail_path || undefined,
-            label: getFileName(output.media_path),
+            label: getFileName(output.media_reference),
           });
         }
 
@@ -129,7 +124,7 @@ export default function AssetPickerModal({
       setAssets(items);
     } catch (err) {
       console.error('[AssetPickerModal] fetch failed:', err);
-      setError('Failed to load assets');
+      setError('加载资产失败');
     } finally {
       setLoading(false);
     }
@@ -328,9 +323,7 @@ export default function AssetPickerModal({
                 <div className="grid grid-cols-4 gap-3">
                   {filteredAssets.map((asset) => {
                     const isSelected = selected === asset.path;
-                    const thumbUrl = asset.thumbnail
-                      ? toFileUrl(asset.thumbnail)
-                      : toFileUrl(asset.path);
+                    const thumbUrl = getAssetUrl(asset.thumbnail || asset.path);
 
                     return (
                       <button

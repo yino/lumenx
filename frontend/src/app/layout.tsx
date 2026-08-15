@@ -10,8 +10,8 @@ export default function RootLayout({
   return (
     <html lang="zh" className="atelier-dark" suppressHydrationWarning>
       <head>
-        <title>LumenX Studio</title>
-        <meta name="description" content="AI-Native Motion Comic Creation Platform" />
+        <title>LumenX 创作平台</title>
+        <meta name="description" content="AI 漫剧与视频创作平台" />
         <script
           dangerouslySetInnerHTML={{
             __html: `(function(){try{var P=["atelier-dark","bridge-dark","brand-dark","atelier-light","brand-light"];var d=JSON.parse(localStorage.getItem("lumenx-settings")||"{}");var t=d.state&&d.state.theme;document.documentElement.className=P.indexOf(t)>=0?t:"atelier-dark";}catch(e){document.documentElement.className="atelier-dark";}})();`,

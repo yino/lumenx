@@ -126,26 +126,46 @@ cd lumenx
 cp .env.example .env
 # 编辑 .env，填入 DASHSCOPE_API_KEY（必填）
 
-# 启动（后端 17177 + 前端 3008，自动开浏览器）
-npm run dev
+# 安装依赖并启动（后端 17177 + 前端 3008，自动开浏览器）
+make install
+make dev
 ```
 
 或分别启动：
 
 ```bash
 # 后端
-pip install -r requirements.txt
-./start_backend.sh  # http://localhost:17177
+make backend  # http://localhost:17177
 
 # 前端
-cd frontend && npm install && npm run dev  # http://localhost:3008
+make frontend  # http://localhost:3008
 ```
+
+### 常用工程命令
+
+```bash
+make help           # 查看全部命令和可覆盖变量
+make build          # 构建前端生产产物
+make test           # 运行后端与前端测试
+make check          # 运行测试、Lint、类型及 Python 编译检查
+make docker-env     # 为本地 Docker 补齐随机密码及服务端凭据映射
+make docker-build   # 构建本地 Docker 镜像
+make docker-up      # 启动完整本地 Web 服务
+```
+
+macOS 和 Windows 桌面安装包分别使用 `make build-mac`、`make build-windows`，内部仍调用现有平台打包脚本。
+
+本地 Docker 默认自动合并 `docker-compose.override.yml`：服务端凭据从已被 Git 忽略的 `.env` 注入，PostgreSQL、Redis、输出和导入目录使用 Docker 命名卷，因此无需向 Docker Desktop 共享项目目录。推荐运行 `make docker-up`；完成一次 `make docker-env` 后，也可以直接运行 `docker compose up -d`。本地 override 会在启动前按当前源码刷新项目自建镜像，避免数据库迁移版本领先于旧容器镜像。生产部署必须显式使用 `docker compose -f docker-compose.yml ...`，继续通过 Docker Secrets 注入凭据。
+
+本地 PostgreSQL 仅监听 `127.0.0.1:15433`，数据库名默认为 `lumenx`。管理用户默认为 `lumenx`，密码读取 `.env` 的 `LUMENX_LOCAL_POSTGRES_PASSWORD`；应用用户默认为 `lumenx_app`，密码读取 `LUMENX_LOCAL_POSTGRES_APP_PASSWORD`。容器之间仍使用 `postgres:5432`，生产 Compose 不映射数据库端口。
 
 ### 访问
 
-- **Studio**: http://localhost:3008
-- **Playground 创作台**: http://localhost:3008/#/playground
-- **API Docs**: http://localhost:17177/docs
+- **Docker Studio**: http://localhost:3000
+- **Docker Playground 创作台**: http://localhost:3000/#/playground
+- **Docker API Docs**: http://localhost:3000/api/v1/docs
+- **开发模式 Studio**: http://localhost:3008
+- **开发模式 API Docs**: http://localhost:17177/docs
 
 ---
 

@@ -34,6 +34,9 @@ dist_*/
 
 # Environment
 .env
+secrets/*.txt
+release-artifacts/
+.release-secrets/
 .env.local
 .venv
 venv/
@@ -87,6 +90,8 @@ logs/
 *.pem
 *.key
 !*.pub.key
+!secrets/
+!secrets/*.txt.example
 
 # Project outputs
 static/output/

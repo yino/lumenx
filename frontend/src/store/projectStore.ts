@@ -1,7 +1,9 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
-import { api, API_URL } from '@/lib/api';
+import { api } from '@/lib/api';
 import type { FrontendModelSettings } from '@/lib/modelCatalog';
+import { IS_CLOUD_DEPLOYMENT } from '@/lib/deployment';
+import { readClientStorage } from '@/lib/clientCacheScope';
 export {
     I2I_MODELS,
     I2V_MODELS,
@@ -340,6 +342,7 @@ interface ProjectStore {
     createSeries: (title: string, description?: string, workflowMode?: string) => Promise<Series>;
     deleteSeries: (id: string) => Promise<void>;
     setCurrentSeries: (series: Series | null) => void;
+    resetForScope: () => void;
 }
 
 // localStorage keys mirrored from SettingsPage. These hold the user's
@@ -351,7 +354,7 @@ const LS_KEY_DEFAULT_PROMPT = 'lumenx_default_prompt_config';
 function readLS<T>(key: string): T | null {
     if (typeof window === 'undefined') return null;
     try {
-        const raw = localStorage.getItem(key);
+        const raw = readClientStorage(key);
         return raw ? (JSON.parse(raw) as T) : null;
     } catch {
         return null;
@@ -361,7 +364,9 @@ function readLS<T>(key: string): T | null {
 // Backfill the SettingsPage defaults onto a freshly created project.
 // Returns the re-fetched project when any default was applied, else null.
 async function injectDefaultsIntoProject(projectId: string): Promise<Project | null> {
-    const ms = readLS<Partial<FrontendModelSettings>>(LS_KEY_DEFAULT_MODEL);
+    const ms = IS_CLOUD_DEPLOYMENT
+        ? null
+        : readLS<Partial<FrontendModelSettings>>(LS_KEY_DEFAULT_MODEL);
     const pc = readLS<{
         storyboard_polish?: string;
         video_polish?: string;
@@ -510,9 +515,8 @@ export const useProjectStore = create<ProjectStore>()(
 
                 // Then fetch latest data from backend
                 try {
-                    const response = await fetch(`${API_URL}/projects/${id}`);
-                    if (response.ok) {
-                        const rawData = await response.json();
+                    const rawData = await api.getProject(id);
+                    if (rawData) {
                         // Transform data to match frontend model (snake_case -> camelCase for specific fields)
                         const latestProject = {
                             ...rawData,
@@ -724,13 +728,29 @@ export const useProjectStore = create<ProjectStore>()(
                     ? state.seriesList.map((s) => s.id === series.id ? series : s)
                     : state.seriesList,
             })),
+            resetForScope: () => set({
+                projects: [],
+                currentProject: null,
+                isLoading: false,
+                isAnalyzing: false,
+                isAnalyzingArtStyle: false,
+                pendingExtraction: null,
+                pendingExtractionScript: null,
+                selectedFrameId: null,
+                generatingTasks: [],
+                renderingFrames: new Set<string>(),
+                isAnalyzingStoryboard: false,
+                runningOps: {},
+                seriesList: [],
+                currentSeries: null,
+            }),
         }),
         {
-            name: 'project-storage',
+            name: IS_CLOUD_DEPLOYMENT ? 'project-storage-cloud-disabled' : 'project-storage',
+            skipHydration: IS_CLOUD_DEPLOYMENT,
             partialize: (state) => ({
-                projects: state.projects,
-
-                generatingTasks: state.generatingTasks // Now persisting this to maintain state across refreshes
+                projects: IS_CLOUD_DEPLOYMENT ? [] : state.projects,
+                generatingTasks: IS_CLOUD_DEPLOYMENT ? [] : state.generatingTasks,
             }),
         }
     )

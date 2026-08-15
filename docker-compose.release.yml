@@ -1,0 +1,131 @@
+x-release-environment: &release-environment
+  LUMENX_DEPLOYMENT_MODE: test
+  LUMENX_TEST_ADAPTERS_ENABLED: "true"
+  LUMENX_OBJECT_STORE_ADAPTER: deterministic
+  LUMENX_PROVIDER_ADAPTER: deterministic
+  LUMENX_TEST_OBJECT_STORE_ROOT: /release-test-objects
+  LUMENX_TEST_SIGNING_SECRET_FILE: /run/secrets/release_test_signing_secret
+  LUMENX_PROVIDER_SECRET_REFS: ""
+  LUMENX_ALLOWED_ORIGINS: http://frontend
+  LUMENX_REGISTRATION_EMERGENCY_DISABLED: "false"
+  LUMENX_NEW_AI_TASKS_EMERGENCY_DISABLED: "false"
+  LUMENX_GLOBAL_WORKER_CONCURRENCY: "1"
+  LUMENX_AUTH_REGISTRATION_LIMIT: "50"
+  LUMENX_AUTH_LOGIN_LIMIT: "50"
+
+services:
+  postgres:
+    restart: "no"
+
+  redis:
+    restart: "no"
+
+  backend:
+    environment: *release-environment
+    volumes: !override
+      - lumenx-release-objects:/release-test-objects
+      - lumenx-provider-results:/provider-results
+    secrets:
+      - postgres_app_password
+      - session_secret
+      - release_test_signing_secret
+    restart: "no"
+
+  ai-worker:
+    environment: *release-environment
+    command: ["celery", "-A", "src.platform.worker:celery_app", "worker", "--loglevel=INFO", "--concurrency=1"]
+    volumes: !override
+      - lumenx-release-objects:/release-test-objects
+      - lumenx-provider-results:/provider-results
+    secrets:
+      - postgres_app_password
+      - session_secret
+      - release_test_signing_secret
+    restart: "no"
+
+  maintenance-worker:
+    profiles: ["release-extended"]
+
+  scheduler:
+    profiles: ["release-extended"]
+
+  postgres-backup:
+    profiles: ["release-extended"]
+
+  frontend:
+    ports:
+      - "${LUMENX_RELEASE_PORT:-38080}:80"
+    restart: "no"
+
+  release-smoke:
+    profiles: ["release-test"]
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.backend
+    environment:
+      <<: *release-environment
+      LUMENX_DATABASE_HOST: postgres
+      LUMENX_DATABASE_PORT: "5432"
+      LUMENX_DATABASE_NAME: ${POSTGRES_DB:-lumenx}
+      LUMENX_DATABASE_USER: ${LUMENX_DATABASE_USER:-lumenx_app}
+      LUMENX_DATABASE_PASSWORD_FILE: /run/secrets/postgres_app_password
+      LUMENX_SESSION_SECRET_FILE: /run/secrets/session_secret
+      LUMENX_MODEL_CATALOG_PATH: /app/config/model_catalog/generated/model_catalog.json
+      LUMENX_LOCAL_IMPORT_ROOT: /imports
+      LUMENX_REDIS_URL: redis://redis:6379/0
+      LUMENX_RELEASE_ORIGIN: http://frontend
+      LUMENX_RELEASE_EVIDENCE_PATH: /artifacts/cloud-release-evidence.md
+      LUMENX_RELEASE_REVISION: ${LUMENX_RELEASE_REVISION:-local}
+      LUMENX_RELEASE_TEST_SUMMARY: ${LUMENX_RELEASE_TEST_SUMMARY:-部署栈 smoke 已通过}
+    secrets:
+      - postgres_app_password
+      - session_secret
+      - release_test_signing_secret
+    volumes:
+      - ${LUMENX_RELEASE_ARTIFACTS_DIR:-/private/tmp/lumenx-release-artifacts}:/artifacts
+    command: ["python", "-m", "scripts.cloud_release_smoke"]
+    depends_on:
+      frontend:
+        condition: service_healthy
+      ai-worker:
+        condition: service_healthy
+    restart: "no"
+
+  release-migration-check:
+    profiles: ["release-test"]
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.backend
+    environment:
+      LUMENX_DEPLOYMENT_MODE: cloud
+      LUMENX_DATABASE_HOST: postgres
+      LUMENX_DATABASE_PORT: "5432"
+      LUMENX_DATABASE_NAME: ${POSTGRES_DB:-lumenx}
+      LUMENX_DATABASE_USER: ${POSTGRES_USER:-lumenx}
+      LUMENX_DATABASE_PASSWORD_FILE: /run/secrets/postgres_password
+    secrets:
+      - postgres_password
+    command: ["python", "scripts/verify_postgres_migrations.py"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+
+volumes:
+  lumenx-release-objects:
+
+secrets:
+  postgres_password:
+    file: ${LUMENX_POSTGRES_PASSWORD_FILE:-/private/tmp/lumenx-release-secrets/postgres_password.txt}
+  postgres_app_password:
+    file: ${LUMENX_POSTGRES_APP_PASSWORD_FILE:-/private/tmp/lumenx-release-secrets/postgres_app_password.txt}
+  session_secret:
+    file: ${LUMENX_SESSION_SECRET_FILE:-/private/tmp/lumenx-release-secrets/session_secret.txt}
+  oss_access_key_id:
+    file: ${LUMENX_OSS_ACCESS_KEY_ID_FILE:-/private/tmp/lumenx-release-secrets/oss_access_key_id.txt}
+  oss_access_key_secret:
+    file: ${LUMENX_OSS_ACCESS_KEY_SECRET_FILE:-/private/tmp/lumenx-release-secrets/oss_access_key_secret.txt}
+  dashscope_api_key:
+    file: ${DASHSCOPE_API_KEY_FILE:-/private/tmp/lumenx-release-secrets/dashscope_api_key.txt}
+  release_test_signing_secret:
+    file: ${LUMENX_RELEASE_TEST_SIGNING_SECRET_FILE:-/private/tmp/lumenx-release-secrets/release_test_signing_secret.txt}

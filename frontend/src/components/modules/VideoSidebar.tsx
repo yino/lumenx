@@ -15,6 +15,7 @@ import {
     VIDEO_I2V_MODELS,
 } from "@/lib/modelCatalog";
 import GroupedModelGrid from "@/components/common/GroupedModelGrid";
+import { IS_CLOUD_DEPLOYMENT } from "@/lib/deployment";
 
 interface VideoSidebarProps {
     tasks: VideoTask[];
@@ -169,7 +170,7 @@ export default function VideoSidebar({ tasks, onRemix, params, setParams }: Vide
                                 </h3>
 
                                 {/* Model Selection - R2V mode: only the current catalog-backed R2V model is selectable */}
-                                <div>
+                                {!IS_CLOUD_DEPLOYMENT && <div>
                                     <label className="block text-xs text-text-secondary mb-2">
                                         {tm("modelLabel")}
                                         {params.generationMode === "r2v" && (
@@ -181,7 +182,7 @@ export default function VideoSidebar({ tasks, onRemix, params, setParams }: Vide
                                         selectedId={params.generationMode === "r2v" ? R2V_SELECTION_MODEL_ID : params.model}
                                         onSelect={(id) => updateParam("model", id)}
                                     />
-                                </div>
+                                </div>}
 
                                 {/* Duration - Dynamic per model */}
                                 {(() => {
@@ -261,7 +262,7 @@ export default function VideoSidebar({ tasks, onRemix, params, setParams }: Vide
                                                     : "bg-glass border-transparent text-text-secondary hover:bg-hover-bg"
                                                     } ${!params.promptExtend ? 'opacity-50 cursor-not-allowed' : ''}`}
                                             >
-                                                <span className="font-medium">Single</span>
+                                                <span className="font-medium">单镜头</span>
                                                 <span className="text-[0.625rem] text-text-muted">{tm("singleShot")}</span>
                                             </button>
                                             <button
@@ -272,7 +273,7 @@ export default function VideoSidebar({ tasks, onRemix, params, setParams }: Vide
                                                     : "bg-glass border-transparent text-text-secondary hover:bg-hover-bg"
                                                     } ${!params.promptExtend ? 'opacity-50 cursor-not-allowed' : ''}`}
                                             >
-                                                <span className="font-medium">Multi</span>
+                                                <span className="font-medium">多镜头</span>
                                                 <span className="text-[0.625rem] text-text-muted">{tm("multiShot")}</span>
                                             </button>
                                         </div>
@@ -466,7 +467,7 @@ export default function VideoSidebar({ tasks, onRemix, params, setParams }: Vide
                                                     type="text"
                                                     value={params.audioUrl || ""}
                                                     readOnly
-                                                    placeholder={isUploadingAudio ? "Uploading..." : "Click to upload audio"}
+                                                    placeholder={isUploadingAudio ? "上传中..." : "点击上传音频"}
                                                     onClick={() => audioInputRef.current?.click()}
                                                     className="w-full bg-glass border border-glass-border rounded-lg py-1.5 px-2 text-xs text-foreground focus:border-purple-500 focus:outline-none cursor-pointer"
                                                 />
@@ -540,7 +541,7 @@ export default function VideoSidebar({ tasks, onRemix, params, setParams }: Vide
                                                     <textarea
                                                         value={params.negativePrompt || ""}
                                                         onChange={(e) => updateParam("negativePrompt", e.target.value)}
-                                                        placeholder="Low quality, blurry, distorted..."
+                                                        placeholder="低质量、模糊、变形..."
                                                         className="w-full h-20 bg-glass border border-glass-border rounded-lg p-2 text-xs text-foreground focus:border-purple-500 focus:outline-none resize-none"
                                                     />
                                                 </motion.div>
@@ -568,13 +569,13 @@ export default function VideoSidebar({ tasks, onRemix, params, setParams }: Vide
                                                 type="number"
                                                 value={params.seed ?? ""}
                                                 onChange={(e) => updateParam("seed", e.target.value ? parseInt(e.target.value) : undefined)}
-                                                placeholder="Random (-1)"
+                                                placeholder="随机（-1）"
                                                 className="w-full bg-glass border border-glass-border rounded-lg py-1.5 pl-2 pr-8 text-xs text-foreground focus:border-orange-500 focus:outline-none [&::-webkit-inner-spin-button]:appearance-none"
                                             />
                                             <button
                                                 onClick={() => updateParam("seed", Math.floor(Math.random() * 2147483647))}
                                                 className="absolute right-2 top-1.5 text-text-muted hover:text-foreground"
-                                                title="Randomize"
+                                                title="生成随机种子"
                                             >
                                                 <RefreshCw size={12} />
                                             </button>

@@ -415,6 +415,7 @@
     "workspace": "Workspace",
     "library": "Library",
     "playground": "Playground",
+    "wallet": "Credits",
     "settings": "Settings",
     "workspaceAria": "LumenX Studio · Workspace",
     "mainNavAria": "Main navigation"

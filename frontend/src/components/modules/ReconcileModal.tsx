@@ -72,7 +72,7 @@ export default function ReconcileModal({ isOpen, scriptId, onClose, onApplied }:
             })
             .catch(err => {
                 if (cancelled) return;
-                setError(err?.response?.data?.detail || err?.message || "Load failed");
+                setError(err?.response?.data?.detail || err?.message || "加载失败");
             })
             .finally(() => { if (!cancelled) setLoading(false); });
         return () => { cancelled = true; };
@@ -121,7 +121,7 @@ export default function ReconcileModal({ isOpen, scriptId, onClose, onApplied }:
                 document.dispatchEvent(new CustomEvent("lumenx:navigateStep", { detail: "cast" }));
             }
         } catch (err: any) {
-            setError(err?.response?.data?.detail || err?.message || "Apply failed");
+            setError(err?.response?.data?.detail || err?.message || "应用失败");
         } finally {
             setApplying(false);
         }
@@ -162,7 +162,7 @@ export default function ReconcileModal({ isOpen, scriptId, onClose, onApplied }:
                             </div>
                             <button
                                 onClick={onClose}
-                                aria-label="Close"
+                                aria-label="关闭"
                                 className="p-2 hover:bg-hover-bg rounded-lg text-text-muted hover:text-foreground transition-colors"
                             >
                                 <X size={16} />
@@ -197,9 +197,9 @@ export default function ReconcileModal({ isOpen, scriptId, onClose, onApplied }:
                         {/* Footer */}
                         <footer className="flex items-center gap-2 px-6 py-4 border-t border-glass-border">
                             <span className="flex-1 font-mono text-[0.65625rem] uppercase tracking-[0.16em] text-text-muted">
-                                {counts.merge > 0 && <span className="text-primary mr-2">↳ {counts.merge} merge</span>}
-                                {counts.create > 0 && <span className="text-pink-300 mr-2">+ {counts.create} new</span>}
-                                {counts.skip > 0 && <span className="text-text-muted">⊘ {counts.skip} skip</span>}
+                                {counts.merge > 0 && <span className="text-primary mr-2">↳ 合并 {counts.merge} 项</span>}
+                                {counts.create > 0 && <span className="text-pink-300 mr-2">+ 新建 {counts.create} 项</span>}
+                                {counts.skip > 0 && <span className="text-text-muted">⊘ 跳过 {counts.skip} 项</span>}
                             </span>
                             <WorkflowActionButton
                                 variant="ghost"

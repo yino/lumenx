@@ -28,6 +28,7 @@ import { toast } from "@/store/toastStore";
 import { getAssetUrl } from "@/lib/utils";
 import PreviewImage from "@/components/shared/preview/PreviewImage";
 import GroupedModelGrid from "@/components/common/GroupedModelGrid";
+import { IS_CLOUD_DEPLOYMENT } from "@/lib/deployment";
 
 export type CastKind = "character" | "scene" | "prop";
 
@@ -224,7 +225,7 @@ export default function CastWorkbenchModal({ isOpen, kind, entityId, onClose }: 
     // template only works with gpt-image-2, so it stays locked unless the
     // user has selected gpt-image-2 (override or project default).
     const selectedModelId = modelOverride || currentProject?.model_settings?.t2i_model || "wan2.1-t2i";
-    const isGptImage2 = selectedModelId === "gpt-image-2";
+    const isGptImage2 = !IS_CLOUD_DEPLOYMENT && selectedModelId === "gpt-image-2";
     const [selectedTemplate, setSelectedTemplate] = useState<CharacterTemplate>("simple");
     const [pendingTemplate, setPendingTemplate] = useState<CharacterTemplate | null>(null);
     const [promptDirty, setPromptDirty] = useState(false);
@@ -637,7 +638,7 @@ export default function CastWorkbenchModal({ isOpen, kind, entityId, onClose }: 
                                                         </span>
                                                     )}
                                                     {isLocked && (
-                                                        <span className="absolute top-1.5 right-1.5 text-[0.5625rem] text-text-muted font-mono uppercase">Soon</span>
+                                                        <span className="absolute top-1.5 right-1.5 text-[0.5625rem] text-text-muted font-mono uppercase">即将开放</span>
                                                     )}
                                                 </button>
                                             );
@@ -780,8 +781,8 @@ export default function CastWorkbenchModal({ isOpen, kind, entityId, onClose }: 
                                     </div>
                                 </div>
 
-                                {/* Model — full row, chip selected */}
-                                <div>
+                                {/* Model — desktop only; cloud routing is server-owned. */}
+                                {!IS_CLOUD_DEPLOYMENT && <div>
                                     <label className="block font-mono text-[0.625rem] uppercase tracking-[0.16em] text-text-muted mb-2">
                                         {t("modelLabel")}
                                     </label>
@@ -790,7 +791,7 @@ export default function CastWorkbenchModal({ isOpen, kind, entityId, onClose }: 
                                         selectedId={modelOverride || currentProject.model_settings?.t2i_model || "wan2.1-t2i"}
                                         onSelect={(id) => setModelOverride(id === (currentProject.model_settings?.t2i_model || "wan2.1-t2i") ? null : id)}
                                     />
-                                </div>
+                                </div>}
                             </div>
 
                             {/* Generate CTA */}

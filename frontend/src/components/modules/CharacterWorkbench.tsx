@@ -330,7 +330,7 @@ export default function CharacterWorkbench({ asset, onClose, onUpdateDescription
                         onGenerate={(batchSize: number) => handleGenerateClick("full_body", batchSize)}
                         isGenerating={getGeneratingInfo("full_body").isGenerating}
                         generatingBatchSize={getGeneratingInfo("full_body").batchSize}
-                        description="The primary reference for character consistency."
+                        description="角色一致性的主要参考图"
                         aspectRatio="9:16"
 
                         // Reverse generation: Show hint if upload detected but no full body
@@ -378,7 +378,7 @@ export default function CharacterWorkbench({ asset, onClose, onUpdateDescription
                         isGenerating={getGeneratingInfo("three_view").isGenerating}
                         generatingBatchSize={getGeneratingInfo("three_view").batchSize}
                         isLocked={!asset.full_body_image_url && !hasAnyUpload}
-                        description="Front, side, and back views for 3D-like consistency."
+                        description="正面、侧面和背面视图，用于保持立体一致性"
                         aspectRatio="16:9"
                     />
 
@@ -405,7 +405,7 @@ export default function CharacterWorkbench({ asset, onClose, onUpdateDescription
                         isGenerating={getGeneratingInfo("headshot").isGenerating}
                         generatingBatchSize={getGeneratingInfo("headshot").batchSize}
                         isLocked={!asset.full_body_image_url && !hasAnyUpload}
-                        description="Close-up facial details and expressions."
+                        description="面部细节与表情特写"
                         aspectRatio="1:1"
 
                         supportsMotion={true}
@@ -434,12 +434,12 @@ export default function CharacterWorkbench({ asset, onClose, onUpdateDescription
                     <div className="px-6 py-3 flex items-start gap-4">
                         {/* User's Negative Prompt (Editable) */}
                         <div className="flex-1">
-                            <label className="text-xs font-bold text-text-muted uppercase mb-2 block">{tc("workbench")}</label>
+                            <label className="text-xs font-bold text-text-muted uppercase mb-2 block">反向提示词</label>
                             <textarea
                                 value={negativePrompt}
                                 onChange={(e) => setNegativePrompt(e.target.value)}
                                 className="w-full h-16 bg-input-bg border border-glass-border rounded-lg p-3 text-xs text-text-secondary resize-none focus:outline-none focus:border-primary/50 font-mono"
-                                placeholder="Enter your negative prompt (avoid unwanted elements)..."
+                                placeholder="输入反向提示词，排除不需要的元素..."
                             />
                         </div>
 
@@ -454,7 +454,7 @@ export default function CharacterWorkbench({ asset, onClose, onUpdateDescription
                                     className="rounded border-gray-600 bg-gray-700 text-primary focus:ring-primary w-4 h-4"
                                 />
                                 <label htmlFor="applyStyleFooter" className="text-xs font-bold text-text-secondary cursor-pointer select-none whitespace-nowrap">
-                                    {tc("workbench")}
+                                    应用美术风格
                                 </label>
                             </div>
                         </div>
@@ -469,7 +469,7 @@ export default function CharacterWorkbench({ asset, onClose, onUpdateDescription
                             >
                                 <div className="flex items-center gap-2">
                                     <div className="w-2 h-2 rounded-full bg-gradient-to-r from-purple-500 to-blue-500" />
-                                    <span className="text-xs font-bold text-text-secondary uppercase">Art Direction Style (Will Be Appended)</span>
+                                    <span className="text-xs font-bold text-text-secondary uppercase">美术指导风格（将追加到提示词）</span>
                                 </div>
                                 <ChevronRight size={14} className={`text-text-muted transform transition-transform ${showStyleExpanded ? 'rotate-90' : ''}`} />
                             </button>
@@ -486,7 +486,7 @@ export default function CharacterWorkbench({ asset, onClose, onUpdateDescription
                                             <div className="bg-gradient-to-r from-purple-500/10 to-blue-500/10 border border-glass-border rounded-lg p-4">
                                                 {stylePrompt && (
                                                     <div className="mb-3">
-                                                        <span className="text-xs font-bold text-green-400 block mb-1">+ Style Prompt:</span>
+                                                        <span className="text-xs font-bold text-green-400 block mb-1">+ 风格提示词：</span>
                                                         <p className="text-xs text-text-secondary font-mono bg-surface p-2 rounded border border-border-subtle leading-relaxed">
                                                             {stylePrompt}
                                                         </p>
@@ -495,7 +495,7 @@ export default function CharacterWorkbench({ asset, onClose, onUpdateDescription
 
                                                 {styleNegativePrompt && (
                                                     <div>
-                                                        <span className="text-xs font-bold text-red-400 block mb-1">+ Negative Prompt:</span>
+                                                        <span className="text-xs font-bold text-red-400 block mb-1">+ 反向提示词：</span>
                                                         <p className="text-xs text-text-secondary font-mono bg-surface p-2 rounded border border-border-subtle leading-relaxed">
                                                             {styleNegativePrompt}
                                                         </p>
@@ -586,7 +586,7 @@ function WorkbenchPanel({
                                     }`}
                             >
                                 <PhotoIcon size={12} />
-                                Static
+                                静态
                             </button>
                             <button
                                 onClick={(e) => {
@@ -619,7 +619,7 @@ function WorkbenchPanel({
                     <div className="absolute inset-0 bg-overlay z-20 flex items-center justify-center text-center p-6">
                         <div className="text-text-muted flex flex-col items-center gap-2">
                             <Lock size={32} />
-                            <span className="text-sm">Generate Master Asset first</span>
+                            <span className="text-sm">请先生成主资产</span>
                         </div>
                     </div>
                 )}
@@ -630,17 +630,15 @@ function WorkbenchPanel({
                         <div className="flex flex-col items-center gap-3 bg-overlay backdrop-blur-md rounded-xl p-6 border border-primary/30 pointer-events-auto">
                             <div className="flex items-center gap-2 text-primary">
                                 <RefreshCw size={20} />
-                                <span className="text-sm font-bold">Upload Detected</span>
+                                <span className="text-sm font-bold">已检测到上传图片</span>
                             </div>
                             <p className="text-xs text-text-secondary max-w-[200px]">
-                                Generate Full Body from your uploaded reference image
+                                根据上传的参考图生成全身形象
                             </p>
                             {reverseReferenceUrl && (
                                 <img
-                                    src={typeof reverseReferenceUrl === 'string' && reverseReferenceUrl.startsWith('http')
-                                        ? reverseReferenceUrl
-                                        : `${window.location.origin}/${reverseReferenceUrl}`}
-                                    alt="Reference"
+                                    src={getAssetUrl(reverseReferenceUrl)}
+                                    alt="参考图"
                                     className="w-16 h-16 rounded-lg object-cover border border-glass-border"
                                 />
                             )}
@@ -668,14 +666,14 @@ function WorkbenchPanel({
                                             <div className="absolute inset-0 blur-xl bg-purple-500/30 animate-pulse"></div>
                                         </div>
                                         <div className="flex flex-col items-center">
-                                            <span className="text-sm font-bold text-foreground uppercase tracking-widest animate-pulse">Generating Video</span>
-                                            <span className="text-[0.625rem] text-purple-300/60 mt-1">AI is processing motion...</span>
+                                            <span className="text-sm font-bold text-foreground uppercase tracking-widest animate-pulse">正在生成视频</span>
+                                            <span className="text-[0.625rem] text-purple-300/60 mt-1">AI 正在处理动作...</span>
                                         </div>
                                     </div>
                                 ) : isVideoLoading && motionRefVideos?.length > 0 ? (
                                     <div className="absolute inset-0 z-10 bg-overlay backdrop-blur-sm flex flex-col items-center justify-center gap-3">
                                         <RefreshCw size={32} className="text-text-secondary animate-spin" />
-                                        <span className="text-xs text-text-secondary font-medium">Loading Video File...</span>
+                                        <span className="text-xs text-text-secondary font-medium">正在加载视频文件...</span>
                                     </div>
                                 ) : null}
 
@@ -694,15 +692,15 @@ function WorkbenchPanel({
                                 ) : !isGeneratingMotion && (
                                     <div className="w-full h-full flex flex-col items-center justify-center text-text-muted gap-2">
                                         <Video size={40} className="opacity-50" />
-                                        <span className="text-sm">No motion reference yet</span>
-                                        <span className="text-xs opacity-70">Generate one below</span>
+                                        <span className="text-sm">暂无动态参考</span>
+                                        <span className="text-xs opacity-70">可在下方生成</span>
                                     </div>
                                 )}
                             </div>
 
                             <div className="bg-surface rounded-lg border border-glass-border p-3">
-                                <label className="text-xs font-bold text-text-muted uppercase mb-2 block">Audio Input (Optional)</label>
-                                <p className="text-xs text-text-muted mb-3">Upload audio to drive lip-sync or body rhythm</p>
+                                <label className="text-xs font-bold text-text-muted uppercase mb-2 block">音频输入（可选）</label>
+                                <p className="text-xs text-text-muted mb-3">上传音频以驱动口型同步或身体节奏</p>
 
                                 <label className={`flex items-center justify-center gap-2 px-3 py-2 rounded-lg border border-dashed cursor-pointer transition-all ${audioUrl
                                     ? 'border-green-500/50 bg-green-500/10 text-green-400'
@@ -721,17 +719,17 @@ function WorkbenchPanel({
                                     {isUploadingAudio ? (
                                         <>
                                             <div className="animate-spin rounded-full h-4 w-4 border-2 border-primary/30 border-t-primary"></div>
-                                            <span className="text-xs">Uploading...</span>
+                                            <span className="text-xs">上传中...</span>
                                         </>
                                     ) : audioUrl ? (
                                         <>
                                             <Check size={14} />
-                                            <span className="text-xs font-medium">Audio Uploaded</span>
+                                            <span className="text-xs font-medium">音频已上传</span>
                                         </>
                                     ) : (
                                         <>
                                             <ImageIcon size={14} />
-                                            <span className="text-xs">Upload Audio File</span>
+                                            <span className="text-xs">上传音频文件</span>
                                         </>
                                     )}
                                 </label>
@@ -740,24 +738,24 @@ function WorkbenchPanel({
                             {/* Motion Prompt */}
                             <div className="flex flex-col gap-2">
                                 <div className="flex items-center justify-between">
-                                    <label className="text-xs font-bold text-text-muted uppercase">Motion Prompt</label>
+                                    <label className="text-xs font-bold text-text-muted uppercase">动作提示词</label>
                                     <button
                                         onClick={(e) => {
                                             e.stopPropagation();
                                             onResetPrompt?.();
                                         }}
                                         className="text-[0.625rem] text-primary hover:text-primary/80 transition-colors flex items-center gap-1"
-                                        title="Reset to recommended prompt"
+                                        title="恢复推荐提示词"
                                     >
                                         <RefreshCw size={10} />
-                                        Reset
+                                        重置
                                     </button>
                                 </div>
                                 <textarea
                                     value={motionPrompt}
                                     onChange={(e) => setMotionPrompt?.(e.target.value)}
                                     className="w-full h-24 bg-input-bg border border-glass-border rounded-lg p-3 text-xs text-text-secondary resize-none focus:outline-none focus:border-primary/50 font-mono leading-relaxed"
-                                    placeholder="Describe the motion you want..."
+                                    placeholder="描述想要的动作..."
                                 />
                             </div>
 
@@ -771,7 +769,7 @@ function WorkbenchPanel({
                                     }`}
                             >
                                 <Video size={16} />
-                                Generate Motion Reference
+                                生成动态参考
                             </button>
                         </div>
                     ) : isVideo ? (
@@ -804,7 +802,7 @@ function WorkbenchPanel({
                     <div className="absolute top-4 right-4 z-10">
                         <div className="bg-yellow-500/20 border border-yellow-500/50 px-3 py-1 rounded-lg flex items-center gap-2 backdrop-blur-sm">
                             <RefreshCw size={12} className="text-yellow-500" />
-                            <span className="text-xs font-bold text-yellow-500">Update Recommended</span>
+                            <span className="text-xs font-bold text-yellow-500">建议更新</span>
                         </div>
                     </div>
                 )}
@@ -813,14 +811,14 @@ function WorkbenchPanel({
             {/* Prompt Editor (Bottom) */}
             <div className="h-1/3 border-t border-glass-border flex flex-col bg-surface">
                 <div className="p-2 border-b border-border-subtle flex justify-between items-center bg-surface">
-                    <span className="text-xs font-bold text-text-muted uppercase px-2">Prompt</span>
+                    <span className="text-xs font-bold text-text-muted uppercase px-2">提示词</span>
                 </div>
                 <textarea
                     value={prompt}
                     onChange={(e) => setPrompt(e.target.value)}
                     disabled={isLocked}
                     className="flex-1 w-full bg-transparent p-4 text-xs text-text-secondary resize-none focus:outline-none focus:bg-glass font-mono leading-relaxed"
-                    placeholder="Enter prompt description..."
+                    placeholder="输入提示词描述..."
                 />
             </div>
         </div>

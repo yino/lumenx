@@ -4,6 +4,13 @@ import threading
 import time
 import webview
 from datetime import datetime
+
+# Packaged desktop builds always use the local adapter set. This assignment is
+# intentionally before importing the FastAPI application so inherited build or
+# launch environment variables cannot switch the artifact into cloud mode.
+os.environ["LUMENX_DESKTOP_BUILD"] = "true"
+os.environ["LUMENX_DEPLOYMENT_MODE"] = "desktop"
+
 # 保存原始工作目录
 if getattr(sys, 'frozen', False):
     # 打包后的环境

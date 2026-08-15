@@ -203,7 +203,7 @@ export default function PipelineSidebar({ activeStep, onStepChange, steps, bread
                 <div className="flex items-center gap-3 px-4 py-3 rounded-lg bg-glass border border-border-subtle">
                     <div className="w-8 h-8 rounded-full bg-gradient-to-tr from-primary to-accent" />
                     <div className="flex flex-col">
-                        <span className="text-sm font-medium text-foreground truncate">{projectLabel ?? "Project Alpha"}</span>
+                        <span className="text-sm font-medium text-foreground truncate">{projectLabel ?? "未命名项目"}</span>
                         <span className="text-xs text-text-muted">{projectSubLabel ?? "v0.1.0"}</span>
                     </div>
                 </div>

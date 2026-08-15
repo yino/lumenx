@@ -8,6 +8,7 @@ import { useState, useEffect } from "react";
 import { api, API_URL } from "@/lib/api";
 import { getMaxReferenceImages } from "@/lib/modelCatalog";
 import { getAssetUrl } from "@/lib/utils";
+import { IS_CLOUD_DEPLOYMENT } from "@/lib/deployment";
 
 interface PropertiesPanelProps {
     activeStep: string;
@@ -16,6 +17,15 @@ interface PropertiesPanelProps {
 export default function PropertiesPanel({ activeStep }: PropertiesPanelProps) {
     const tp = useTranslations("properties");
     const currentProject = useProjectStore((state) => state.currentProject);
+    const activeStepLabel: Record<string, string> = {
+        script: "剧本",
+        assets: "资产",
+        storyboard: "分镜",
+        motion: "动态",
+        audio: "音频",
+        mix: "混音",
+        export: "导出",
+    };
 
     // Hide panel for Motion step as it has its own sidebar
     if (activeStep === "motion" || activeStep === "assembly") return null;
@@ -51,7 +61,7 @@ export default function PropertiesPanel({ activeStep }: PropertiesPanelProps) {
                 <h2 className="font-display font-bold text-foreground flex items-center gap-2">
                     <Info size={16} className="text-primary" /> {tp("context")}
                 </h2>
-                <span className="text-xs font-mono text-text-muted uppercase">{activeStep}</span>
+                <span className="text-xs font-mono text-text-muted uppercase">{activeStepLabel[activeStep] || activeStep}</span>
             </div>
 
             <div className="flex-1 overflow-y-auto p-4 space-y-6">
@@ -139,7 +149,7 @@ function AssetsInspector({ project }: { project: any }) {
             </div>
 
             {/* Aspect Ratio Controls */}
-            <div className="space-y-4 pt-4 border-t border-glass-border">
+            {!IS_CLOUD_DEPLOYMENT && <div className="space-y-4 pt-4 border-t border-glass-border">
                 <div className="flex items-center gap-2 mb-2">
                     <Layout className="text-primary" size={14} />
                     <h3 className="font-bold text-foreground text-xs">{tp("aspectRatios")}</h3>
@@ -147,7 +157,7 @@ function AssetsInspector({ project }: { project: any }) {
 
                 {/* Character Aspect Ratio */}
                 <div className="space-y-2">
-                    <label className="text-[0.625rem] font-bold text-text-muted uppercase">Character</label>
+                    <label className="text-[0.625rem] font-bold text-text-muted uppercase">角色</label>
                     <div className="grid grid-cols-5 gap-1">
                         {['9:16', '3:4', '1:1', '4:3', '16:9'].map((ratio) => (
                             <button
@@ -166,7 +176,7 @@ function AssetsInspector({ project }: { project: any }) {
 
                 {/* Scene Aspect Ratio */}
                 <div className="space-y-2">
-                    <label className="text-[0.625rem] font-bold text-text-muted uppercase">Scene</label>
+                    <label className="text-[0.625rem] font-bold text-text-muted uppercase">场景</label>
                     <div className="grid grid-cols-5 gap-1">
                         {['9:16', '3:4', '1:1', '4:3', '16:9'].map((ratio) => (
                             <button
@@ -185,7 +195,7 @@ function AssetsInspector({ project }: { project: any }) {
 
                 {/* Prop Aspect Ratio */}
                 <div className="space-y-2">
-                    <label className="text-[0.625rem] font-bold text-text-muted uppercase">Prop</label>
+                    <label className="text-[0.625rem] font-bold text-text-muted uppercase">道具</label>
                     <div className="grid grid-cols-5 gap-1">
                         {['9:16', '3:4', '1:1', '4:3', '16:9'].map((ratio) => (
                             <button
@@ -201,7 +211,7 @@ function AssetsInspector({ project }: { project: any }) {
                         ))}
                     </div>
                 </div>
-            </div>
+            </div>}
 
             {/* Art Direction Style Display (Read-only) */}
             <div className="pt-4 border-t border-glass-border">
@@ -270,6 +280,9 @@ function StoryboardInspector() {
     const currentProject = useProjectStore((state) => state.currentProject);
     const updateProject = useProjectStore((state) => state.updateProject);
     const selectedFrameId = useProjectStore((state) => state.selectedFrameId);
+    const [polishedPrompts, setPolishedPrompts] = useState<Record<string, { cn: string; en: string }>>({});
+    const [isPolishing, setIsPolishing] = useState(false);
+    const [feedbackText, setFeedbackText] = useState("");
 
     if (!currentProject) return null;
 
@@ -356,11 +369,6 @@ function StoryboardInspector() {
         updateFrame({ character_ids: newIds });
     };
 
-    // State for bilingual polish results
-    const [polishedPrompts, setPolishedPrompts] = useState<Record<string, { cn: string; en: string }>>({});
-    const [isPolishing, setIsPolishing] = useState(false);
-    const [feedbackText, setFeedbackText] = useState("");
-
     const polishedPrompt = selectedFrame ? polishedPrompts[selectedFrame.id] : null;
 
     const handlePolish = async (feedback: string = "") => {
@@ -403,7 +411,7 @@ function StoryboardInspector() {
             }
         } catch (err) {
             console.error("Polish failed", err);
-            alert("Prompt polishing failed");
+            alert("提示词润色失败");
         } finally {
             setIsPolishing(false);
         }
@@ -429,7 +437,7 @@ function StoryboardInspector() {
                     <Layout size={14} /> {tp("frameDetails")}
                 </h3>
                 <div className="text-xs text-text-secondary">
-                    Editing Frame {currentProject?.frames?.findIndex((f: any) => f.id === selectedFrameId) + 1}
+                    正在编辑分镜 {currentProject?.frames?.findIndex((f: any) => f.id === selectedFrameId) + 1}
                 </div>
             </div>
 
@@ -440,7 +448,7 @@ function StoryboardInspector() {
                     className="w-full h-24 bg-input-bg border border-glass-border rounded-lg p-3 text-xs text-text-secondary resize-none focus:outline-none focus:border-primary/50"
                     value={selectedFrame.action_description || ""}
                     onChange={(e) => updateFrame({ action_description: e.target.value })}
-                    placeholder="Describe the action..."
+                    placeholder="描述分镜动作..."
                 />
             </div>
 
@@ -451,7 +459,7 @@ function StoryboardInspector() {
                     className="w-full h-16 bg-input-bg border border-glass-border rounded-lg p-3 text-xs text-text-secondary resize-none focus:outline-none focus:border-primary/50"
                     value={selectedFrame.dialogue || ""}
                     onChange={(e) => updateFrame({ dialogue: e.target.value })}
-                    placeholder="Speaker: Content"
+                    placeholder="角色：对白内容"
                 />
             </div>
 
@@ -480,13 +488,13 @@ function StoryboardInspector() {
                             <div className="flex justify-between items-center">
                                 <label className="text-xs font-bold text-text-muted uppercase">{tp("characters")}</label>
                                 <span className={`text-[0.625rem] ${isLimitReached ? "text-yellow-500 font-bold" : "text-text-muted"}`}>
-                                    {referenceCount}/{referenceLimit} Images
+                                    {referenceCount}/{referenceLimit} 张图片
                                 </span>
                             </div>
 
                             {/* Scene Selector */}
                             <div className="mb-2 space-y-2">
-                                <label className="text-[0.625rem] font-bold text-text-muted uppercase">Scene</label>
+                                <label className="text-[0.625rem] font-bold text-text-muted uppercase">场景</label>
                                 <select
                                     className="w-full bg-input-bg border border-glass-border rounded p-2 text-xs text-text-secondary focus:outline-none"
                                     value={selectedFrame.scene_id || ""}
@@ -505,13 +513,13 @@ function StoryboardInspector() {
                                         const predictedCount = (newSceneHasImage ? 1 : 0) + charImageCount + propImageCount;
 
                                         if (predictedCount > referenceLimit) {
-                                            alert(`Cannot select this scene: Reference image limit (${referenceLimit}) would be exceeded. Deselect some characters or props first.`);
+                                            alert(`无法选择此场景：将超过 ${referenceLimit} 张参考图的上限。请先取消选择部分角色或道具。`);
                                             return;
                                         }
                                         updateFrame({ scene_id: newSceneId });
                                     }}
                                 >
-                                    <option value="">Select Scene...</option>
+                                    <option value="">选择场景...</option>
                                     {currentProject?.scenes?.map((scene: any) => (
                                         <option key={scene.id} value={scene.id}>{scene.name}</option>
                                     ))}
@@ -520,7 +528,7 @@ function StoryboardInspector() {
                                 {/* Show Scene Description if selected */}
                                 {selectedScene?.description && (
                                     <div className="bg-glass p-2 rounded text-[0.625rem] text-text-secondary italic border border-border-subtle">
-                                        <span className="font-bold not-italic text-text-muted">Scene: </span>
+                                        <span className="font-bold not-italic text-text-muted">场景：</span>
                                         {selectedScene.description}
                                     </div>
                                 )}
@@ -528,7 +536,7 @@ function StoryboardInspector() {
 
                             {/* Character Toggles */}
                             <div className="space-y-2">
-                                <label className="text-[0.625rem] font-bold text-text-muted uppercase">Characters</label>
+                                <label className="text-[0.625rem] font-bold text-text-muted uppercase">角色</label>
                                 <div className="grid grid-cols-2 gap-2">
                                     {currentProject?.characters?.map((char: any) => {
                                         const isSelected = selectedFrame.character_ids?.includes(char.id);
@@ -576,7 +584,7 @@ function StoryboardInspector() {
                             {/* Prop Toggles */}
                             {currentProject?.props && currentProject.props.length > 0 && (
                                 <div className="space-y-2">
-                                    <label className="text-[0.625rem] font-bold text-text-muted uppercase">Props</label>
+                                    <label className="text-[0.625rem] font-bold text-text-muted uppercase">道具</label>
                                     <div className="grid grid-cols-2 gap-2">
                                         {currentProject.props.map((prop: any) => {
                                             const isSelected = selectedFrame.prop_ids?.includes(prop.id);
@@ -646,13 +654,13 @@ function StoryboardInspector() {
                         value={selectedFrame.camera_angle || ""}
                         onChange={(e) => updateFrame({ camera_angle: e.target.value })}
                     >
-                        <option value="">Angle...</option>
-                        <option value="Wide Shot">Wide Shot</option>
-                        <option value="Medium Shot">Medium Shot</option>
-                        <option value="Close Up">Close Up</option>
-                        <option value="Low Angle">Low Angle</option>
-                        <option value="High Angle">High Angle</option>
-                        <option value="Over the Shoulder">Over the Shoulder</option>
+                        <option value="">选择景别...</option>
+                        <option value="Wide Shot">全景</option>
+                        <option value="Medium Shot">中景</option>
+                        <option value="Close Up">特写</option>
+                        <option value="Low Angle">低角度</option>
+                        <option value="High Angle">高角度</option>
+                        <option value="Over the Shoulder">过肩镜头</option>
                     </select>
                 </div>
             </div>
@@ -664,24 +672,24 @@ function StoryboardInspector() {
                     <button
                         onClick={handleComposePrompt}
                         className="flex items-center gap-1 text-[0.625rem] bg-glass hover:bg-hover-bg px-2 py-1 rounded text-foreground transition-colors"
-                        title="Auto-generate prompt from metadata"
+                        title="根据元数据自动生成提示词"
                     >
-                        <Wand2 size={10} /> Auto-Compose
+                        <Wand2 size={10} /> 自动编写
                     </button>
                     <button
                         onClick={() => handlePolish()}
                         disabled={isPolishing}
                         className="flex items-center gap-1 text-[0.625rem] bg-purple-600 hover:bg-purple-700 px-2 py-1 rounded text-white transition-colors ml-2 disabled:opacity-50"
-                        title="AI Polish Prompt"
+                        title="AI 润色提示词"
                     >
-                        {isPolishing ? <Sparkles size={10} className="animate-spin" /> : <Sparkles size={10} />} Polish
+                        {isPolishing ? <Sparkles size={10} className="animate-spin" /> : <Sparkles size={10} />} 润色
                     </button>
                 </div>
                 <textarea
                     className="w-full h-32 bg-input-bg border border-glass-border rounded-lg p-3 text-xs text-text-secondary resize-none focus:outline-none focus:border-primary/50"
                     value={selectedFrame.image_prompt || ""}
                     onChange={(e) => updateFrame({ image_prompt: e.target.value })}
-                    placeholder="Full image generation prompt..."
+                    placeholder="输入完整的图片生成提示词..."
                 />
 
                 {/* Polished Result Display - Bilingual */}
@@ -694,7 +702,7 @@ function StoryboardInspector() {
                     >
                         <div className="flex justify-between items-start">
                             <span className="text-xs font-bold text-purple-400 flex items-center gap-1">
-                                <Wand2 size={12} /> AI Bilingual Polish
+                                <Wand2 size={12} /> AI 双语润色
                             </span>
                             <button
                                 onClick={() => {
@@ -714,11 +722,11 @@ function StoryboardInspector() {
                         {/* Chinese Prompt */}
                         <div className="space-y-1">
                             <div className="flex justify-between items-center">
-                                <span className="text-[0.625rem] font-bold text-text-muted uppercase">CN (Preview)</span>
+                                <span className="text-[0.625rem] font-bold text-text-muted uppercase">中文（预览）</span>
                                 <button
                                     onClick={() => {
                                         navigator.clipboard.writeText(polishedPrompt.cn);
-                                        alert("CN prompt copied");
+                                        alert("中文提示词已复制");
                                     }}
                                     className="text-[0.625rem] text-text-secondary hover:text-foreground bg-surface px-2 py-0.5 rounded"
                                 >
@@ -733,16 +741,16 @@ function StoryboardInspector() {
                         {/* English Prompt */}
                         <div className="space-y-1">
                             <div className="flex justify-between items-center">
-                                <span className="text-[0.625rem] font-bold text-text-muted uppercase">EN (Generation)</span>
+                                <span className="text-[0.625rem] font-bold text-text-muted uppercase">英文（用于生成）</span>
                                 <div className="flex gap-1">
                                     <button
                                         onClick={() => {
                                             navigator.clipboard.writeText(polishedPrompt.en);
-                                            alert("English prompt copied");
+                                            alert("英文提示词已复制");
                                         }}
                                         className="text-[0.625rem] text-text-secondary hover:text-foreground bg-surface px-2 py-0.5 rounded"
                                     >
-                                        Copy
+                                        复制
                                     </button>
                                     <button
                                         onClick={() => {
@@ -780,7 +788,7 @@ function StoryboardInspector() {
                                             handlePolish(feedbackText.trim());
                                         }
                                     }}
-                                    placeholder="Feedback for refinement..."
+                                    placeholder="输入进一步润色要求..."
                                     className="flex-1 text-[0.625rem] bg-input-bg border border-purple-500/20 rounded px-2 py-1.5 text-foreground placeholder-text-muted focus:outline-none focus:border-purple-500/50"
                                 />
                                 <button
@@ -806,12 +814,12 @@ function MotionInspector() {
         <div className="space-y-6">
             <div className="space-y-3">
                 <h3 className="text-sm font-bold text-foreground flex items-center gap-2">
-                    <Video size={14} /> Motion Params
+                    <Video size={14} /> 动态参数
                 </h3>
                 <div className="space-y-4">
                     <div className="space-y-1">
                         <div className="flex justify-between text-xs text-text-secondary">
-                            <span>Motion Bucket</span>
+                            <span>动态幅度</span>
                             <span>127</span>
                         </div>
                         <input type="range" className="w-full h-1 bg-glass rounded-lg appearance-none cursor-pointer" />
@@ -850,7 +858,7 @@ function AudioInspector({ project }: { project: any }) {
                     <span className="text-xs font-mono text-text-secondary">{assignedCount}/{totalCount}</span>
                 </div>
                 <p className="text-xs text-text-muted">
-                    {assignedCount === totalCount ? "All characters casted." : "Some characters need voices."}
+                    {assignedCount === totalCount ? "所有角色均已配置音色。" : "部分角色仍需配置音色。"}
                 </p>
             </div>
         </div>

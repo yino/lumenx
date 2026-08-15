@@ -5,6 +5,7 @@ import { createPortal } from "react-dom";
 import { useTranslations } from "next-intl";
 import { X, Plus, Copy, Trash2, Sparkles, Star, ChevronLeft } from "lucide-react";
 import { playgroundApi } from "@/lib/api";
+import { IS_CLOUD_DEPLOYMENT } from "@/lib/deployment";
 import { usePlaygroundStore, type PlaygroundTemplate } from "./usePlaygroundStore";
 
 const CATEGORIES = [
@@ -135,7 +136,9 @@ export default function PromptTemplateModal() {
     async (id: string) => {
       setDeletingId(id);
       try {
-        await playgroundApi.deleteTemplate(id);
+        const template = templates.find((item) => item.id === id);
+        if (!template) return;
+        await playgroundApi.deleteTemplate(id, template.version);
         removeTemplate(id);
       } catch {
         /* silent */
@@ -143,7 +146,7 @@ export default function PromptTemplateModal() {
         setDeletingId(null);
       }
     },
-    [removeTemplate],
+    [removeTemplate, templates],
   );
 
   const handleCreate = useCallback(async () => {
@@ -156,7 +159,7 @@ export default function PromptTemplateModal() {
         prompt: form.prompt.trim(),
         negative_prompt: currentNegativePrompt || undefined,
         default_mode: currentMode,
-        default_model_id: currentModelId || undefined,
+        default_model_id: IS_CLOUD_DEPLOYMENT ? undefined : currentModelId || undefined,
         default_parameters: Object.keys(currentParams).length > 0 ? currentParams : undefined,
       });
       addTemplate(created as unknown as PlaygroundTemplate);

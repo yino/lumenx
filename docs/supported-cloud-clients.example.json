@@ -1,0 +1,11 @@
+{
+  "environment": "production-cn",
+  "supported_cloud_clients": [
+    {
+      "name": "hosted-web",
+      "owner": "frontend-team",
+      "api_contract": "/api/v1",
+      "validated_at": "2026-08-07T12:00:00+00:00"
+    }
+  ]
+}
