@@ -63,7 +63,7 @@ services:
       LUMENX_DATABASE_PORT: ${LUMENX_DATABASE_PORT:-5432}
       LUMENX_DATABASE_NAME: ${LUMENX_DATABASE_NAME:-lumenx}
       # 迁移需要建表/改表权限，请使用外部库的管理员账号
-      LUMENX_DATABASE_USER: ${LUMENX_DATABASE_ADMIN_USER:app}
+      LUMENX_DATABASE_USER: ${LUMENX_DATABASE_ADMIN_USER:-app}
       # 外部库管理员密码：固定密码直接填在 .env，不用密码文件
       LUMENX_DATABASE_PASSWORD: ${LUMENX_DATABASE_ADMIN_PASSWORD:-123456}
     command: ["alembic", "upgrade", "head"]
