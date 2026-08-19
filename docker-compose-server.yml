@@ -1,11 +1,12 @@
 x-cloud-environment: &cloud-environment
   LUMENX_DEPLOYMENT_MODE: cloud
   # PostgreSQL 已独立部署，这里只填写外部数据库连接信息
-  LUMENX_DATABASE_HOST: ${LUMENX_DATABASE_HOST:?请在 .env 配置外部 PostgreSQL 地址}
+  LUMENX_DATABASE_HOST: ${LUMENX_DATABASE_HOST:-172.17.0.1}
   LUMENX_DATABASE_PORT: ${LUMENX_DATABASE_PORT:-5432}
   LUMENX_DATABASE_NAME: ${LUMENX_DATABASE_NAME:-lumenx}
-  LUMENX_DATABASE_USER: ${LUMENX_DATABASE_USER:-lumenx_app}
-  LUMENX_DATABASE_PASSWORD_FILE: /run/secrets/postgres_app_password
+  LUMENX_DATABASE_USER: ${LUMENX_DATABASE_USER:-app}
+  # 外部库应用密码：固定密码直接填在 .env，不用密码文件
+  LUMENX_DATABASE_PASSWORD: ${LUMENX_DATABASE_PASSWORD:?请在 .env 配置外部 PostgreSQL 应用密码}
   LUMENX_DATABASE_RESOURCE_ID: ${LUMENX_DATABASE_RESOURCE_ID:-}
   LUMENX_REDIS_URL: redis://redis:6379/0
   LUMENX_REDIS_RESOURCE_ID: ${LUMENX_REDIS_RESOURCE_ID:-}
@@ -34,7 +35,6 @@ x-cloud-environment: &cloud-environment
   NO_PROXY: "*.aliyuncs.com,localhost,127.0.0.1,${LUMENX_DATABASE_HOST:-postgres},redis"
 
 x-cloud-secrets: &cloud-secrets
-  - postgres_app_password
   - session_secret
   - oss_access_key_id
   - oss_access_key_secret
@@ -59,14 +59,13 @@ services:
       dockerfile: docker/Dockerfile.backend
     environment:
       LUMENX_DEPLOYMENT_MODE: cloud
-      LUMENX_DATABASE_HOST: ${LUMENX_DATABASE_HOST:?请在 .env 配置外部 PostgreSQL 地址}
+      LUMENX_DATABASE_HOST: ${LUMENX_DATABASE_HOST:-172.17.0.1}
       LUMENX_DATABASE_PORT: ${LUMENX_DATABASE_PORT:-5432}
       LUMENX_DATABASE_NAME: ${LUMENX_DATABASE_NAME:-lumenx}
       # 迁移需要建表/改表权限，请使用外部库的管理员账号
-      LUMENX_DATABASE_USER: ${LUMENX_DATABASE_ADMIN_USER:?请在 .env 配置外部 PostgreSQL 管理员用户}
-      LUMENX_DATABASE_PASSWORD_FILE: /run/secrets/postgres_password
-    secrets:
-      - postgres_password
+      LUMENX_DATABASE_USER: ${LUMENX_DATABASE_ADMIN_USER:app}
+      # 外部库管理员密码：固定密码直接填在 .env，不用密码文件
+      LUMENX_DATABASE_PASSWORD: ${LUMENX_DATABASE_ADMIN_PASSWORD:123456}
     command: ["alembic", "upgrade", "head"]
     # 外部库不在 compose 内，无法用 depends_on 等待；失败自动重试直到外部库就绪
     restart: "on-failure"
@@ -211,10 +210,6 @@ volumes:
   lumenx-nginx-legacy-logs:
 
 secrets:
-  postgres_password:
-    file: ${LUMENX_POSTGRES_PASSWORD_FILE:-./secrets/postgres_password.txt}
-  postgres_app_password:
-    file: ${LUMENX_POSTGRES_APP_PASSWORD_FILE:-./secrets/postgres_app_password.txt}
   session_secret:
     file: ${LUMENX_SESSION_SECRET_FILE:-./secrets/session_secret.txt}
   oss_access_key_id:
