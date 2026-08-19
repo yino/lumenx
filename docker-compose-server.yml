@@ -65,7 +65,7 @@ services:
       # 迁移需要建表/改表权限，请使用外部库的管理员账号
       LUMENX_DATABASE_USER: ${LUMENX_DATABASE_ADMIN_USER:app}
       # 外部库管理员密码：固定密码直接填在 .env，不用密码文件
-      LUMENX_DATABASE_PASSWORD: ${LUMENX_DATABASE_ADMIN_PASSWORD:123456}
+      LUMENX_DATABASE_PASSWORD: ${LUMENX_DATABASE_ADMIN_PASSWORD:-123456}
     command: ["alembic", "upgrade", "head"]
     # 外部库不在 compose 内，无法用 depends_on 等待；失败自动重试直到外部库就绪
     restart: "on-failure"
