@@ -1,0 +1,270 @@
+x-cloud-environment: &cloud-environment
+  LUMENX_DEPLOYMENT_MODE: cloud
+  LUMENX_DATABASE_HOST: postgres
+  LUMENX_DATABASE_PORT: "5432"
+  LUMENX_DATABASE_NAME: ${POSTGRES_DB:-lumenx}
+  LUMENX_DATABASE_USER: app
+  LUMENX_DATABASE_PASSWORD_FILE: /run/secrets/postgres_app_password
+  LUMENX_DATABASE_RESOURCE_ID: ${LUMENX_DATABASE_RESOURCE_ID:-}
+  LUMENX_REDIS_URL: redis://redis:6379/0
+  LUMENX_REDIS_RESOURCE_ID: ${LUMENX_REDIS_RESOURCE_ID:-}
+  LUMENX_OSS_ENDPOINT: ${LUMENX_OSS_ENDPOINT:-oss-cn-beijing.aliyuncs.com}
+  LUMENX_OSS_BUCKET_NAME: ${LUMENX_OSS_BUCKET_NAME:-lumenx-private}
+  LUMENX_OSS_ACCESS_KEY_ID_FILE: /run/secrets/oss_access_key_id
+  LUMENX_OSS_ACCESS_KEY_SECRET_FILE: /run/secrets/oss_access_key_secret
+  LUMENX_OSS_PRIVATE: "true"
+  LUMENX_SESSION_SECRET_FILE: /run/secrets/session_secret
+  LUMENX_MODEL_CATALOG_PATH: /app/config/model_catalog/generated/model_catalog.json
+  LUMENX_PROVIDER_SECRET_REFS: ${LUMENX_PROVIDER_SECRET_REFS:-DASHSCOPE_API_KEY}
+  LUMENX_PROVIDER_ACCOUNT_ID: ${LUMENX_PROVIDER_ACCOUNT_ID:-}
+  LUMENX_LOCAL_IMPORT_ROOT: /imports
+  LUMENX_LOCAL_IMPORT_MAX_BYTES: ${LUMENX_LOCAL_IMPORT_MAX_BYTES:-10737418240}
+  LUMENX_PROVIDER_OUTPUT_ROOT: /provider-results
+  LUMENX_ALLOWED_ORIGINS: ${LUMENX_ALLOWED_ORIGINS:-http://localhost:3000}
+  LUMENX_REGISTRATION_EMERGENCY_DISABLED: ${LUMENX_REGISTRATION_EMERGENCY_DISABLED:-true}
+  LUMENX_NEW_AI_TASKS_EMERGENCY_DISABLED: ${LUMENX_NEW_AI_TASKS_EMERGENCY_DISABLED:-true}
+  LUMENX_ADMIN_CONSOLE_ENABLED: ${LUMENX_ADMIN_CONSOLE_ENABLED:-true}
+  LUMENX_ADMIN_CONSOLE_MUTATIONS_ENABLED: ${LUMENX_ADMIN_CONSOLE_MUTATIONS_ENABLED:-true}
+  LUMENX_ADMIN_RATE_WINDOW_SECONDS: ${LUMENX_ADMIN_RATE_WINDOW_SECONDS:-60}
+  LUMENX_ADMIN_MUTATION_LIMIT: ${LUMENX_ADMIN_MUTATION_LIMIT:-120}
+  LUMENX_ADMIN_SENSITIVE_READ_LIMIT: ${LUMENX_ADMIN_SENSITIVE_READ_LIMIT:-60}
+  LUMENX_ADMIN_EXPORT_LIMIT: ${LUMENX_ADMIN_EXPORT_LIMIT:-20}
+  DASHSCOPE_API_KEY_FILE: /run/secrets/dashscope_api_key
+  NO_PROXY: "*.aliyuncs.com,localhost,127.0.0.1,postgres,redis"
+
+x-cloud-secrets: &cloud-secrets
+  - postgres_app_password
+  - session_secret
+  - oss_access_key_id
+  - oss_access_key_secret
+  - dashscope_api_key
+
+services:
+  redis:
+    image: redis:7.4-alpine
+    command: ["redis-server", "--appendonly", "yes", "--save", "60", "1000"]
+    volumes:
+      - lumenx-redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+    restart: unless-stopped
+
+  database-role-bootstrap:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.postgres-tools
+    environment:
+      POSTGRES_HOST: postgres
+      POSTGRES_DB: ${POSTGRES_DB:-lumenx}
+      POSTGRES_USER: ${POSTGRES_USER:-lumenx}
+      POSTGRES_PASSWORD_FILE: /run/secrets/postgres_password
+      LUMENX_DATABASE_USER: ${LUMENX_DATABASE_USER:-lumenx_app}
+      POSTGRES_APP_PASSWORD_FILE: /run/secrets/postgres_app_password
+    secrets:
+      - postgres_password
+      - postgres_app_password
+    entrypoint: ["/bin/sh", "/usr/local/bin/lumenx-postgres-app-role"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+
+  migration:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.backend
+    environment:
+      LUMENX_DEPLOYMENT_MODE: cloud
+      LUMENX_DATABASE_HOST: 172.26.107.14
+      LUMENX_DATABASE_PORT: "15432"
+      LUMENX_DATABASE_NAME: app
+      LUMENX_DATABASE_USER: 123456
+      LUMENX_DATABASE_PASSWORD_FILE: /run/secrets/postgres_password
+    secrets:
+      - postgres_password
+    command: ["alembic", "upgrade", "head"]
+    depends_on:
+      database-role-bootstrap:
+        condition: service_completed_successfully
+    restart: "no"
+
+  admin-bootstrap:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.backend
+    environment:
+      <<: *cloud-environment
+      LUMENX_BOOTSTRAP_ADMIN_USERNAME: ${LUMENX_BOOTSTRAP_ADMIN_USERNAME:-admin}
+      LUMENX_BOOTSTRAP_ADMIN_PASSWORD: ${LUMENX_BOOTSTRAP_ADMIN_PASSWORD:-sk532359025}
+      LUMENX_BOOTSTRAP_ADMIN_ADOPT_EXISTING_SOLE: "false"
+    secrets: *cloud-secrets
+    command:
+      - python
+      - -m
+      - src.platform.bootstrap_admin
+      - --username
+      - ${LUMENX_BOOTSTRAP_ADMIN_USERNAME:-admin}
+    depends_on:
+      migration:
+        condition: service_completed_successfully
+    restart: "no"
+
+  registration-mode-bootstrap:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.backend
+    environment:
+      <<: *cloud-environment
+      LUMENX_BOOTSTRAP_REGISTRATION_MODE: ${LUMENX_BOOTSTRAP_REGISTRATION_MODE:-disabled}
+    secrets: *cloud-secrets
+    command:
+      - python
+      - scripts/set_registration_mode.py
+      - --reason
+      - ${LUMENX_BOOTSTRAP_REGISTRATION_REASON:-系统初始化注册策略}
+    depends_on:
+      admin-bootstrap:
+        condition: service_completed_successfully
+    restart: "no"
+
+  backend:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.backend
+    environment: *cloud-environment
+    secrets: *cloud-secrets
+    volumes:
+      - ./output:/app/output
+      - ${LUMENX_LOCAL_IMPORT_HOST_PATH:-./imports}:/imports:ro
+    expose:
+      - "17177"
+    depends_on:
+      registration-mode-bootstrap:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:17177/ready', timeout=5)"]
+      interval: 10s
+      timeout: 6s
+      retries: 12
+      start_period: 20s
+    restart: unless-stopped
+
+  ai-worker:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.backend
+    environment: *cloud-environment
+    secrets: *cloud-secrets
+    command: ["celery", "-A", "src.platform.worker:celery_app", "worker", "--loglevel=INFO", "--concurrency=${LUMENX_GLOBAL_WORKER_CONCURRENCY:-8}"]
+    volumes:
+      - lumenx-provider-results:/provider-results
+    depends_on:
+      migration:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "/usr/local/bin/lumenx-cloud-entrypoint celery -A src.platform.worker:celery_app inspect ping -d celery@$${HOSTNAME} --timeout=5"]
+      interval: 20s
+      timeout: 10s
+      retries: 6
+      start_period: 30s
+    restart: unless-stopped
+
+  maintenance-worker:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.backend
+    environment: *cloud-environment
+    secrets: *cloud-secrets
+    command: ["celery", "-A", "src.platform.worker:celery_app", "worker", "--loglevel=INFO", "--queues=maintenance", "--concurrency=1"]
+    volumes:
+      - lumenx-postgres-backups:/backups:ro
+    depends_on:
+      migration:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
+  scheduler:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.backend
+    environment: *cloud-environment
+    secrets: *cloud-secrets
+    command: ["celery", "-A", "src.platform.worker:celery_app", "beat", "--loglevel=INFO"]
+    depends_on:
+      migration:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
+  postgres-backup:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.postgres-tools
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-lumenx}
+      POSTGRES_USER: ${POSTGRES_USER:-lumenx}
+      POSTGRES_HOST: postgres
+      POSTGRES_PASSWORD_FILE: /run/secrets/postgres_password
+      BACKUP_INTERVAL_SECONDS: ${BACKUP_INTERVAL_SECONDS:-86400}
+      BACKUP_RETENTION_DAYS: ${BACKUP_RETENTION_DAYS:-14}
+    secrets:
+      - postgres_password
+    volumes:
+      - lumenx-postgres-backups:/backups
+    entrypoint: ["/bin/sh", "/usr/local/bin/lumenx-postgres-backup"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.frontend
+    environment:
+      LUMENX_LEGACY_API_COMPAT: ${LUMENX_LEGACY_API_COMPAT:-true}
+    ports:
+      - "3000:80"
+    volumes:
+      - lumenx-nginx-legacy-logs:/var/log/lumenx
+    depends_on:
+      backend:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1/"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+      start_period: 10s
+    restart: unless-stopped
+
+volumes:
+  lumenx-postgres-data:
+  lumenx-postgres-backups:
+  lumenx-redis-data:
+  lumenx-provider-results:
+  lumenx-nginx-legacy-logs:
+
+secrets:
+  postgres_password:
+    file: ${LUMENX_POSTGRES_PASSWORD_FILE:-./secrets/postgres_password.txt}
+  postgres_app_password:
+    file: ${LUMENX_POSTGRES_APP_PASSWORD_FILE:-./secrets/postgres_app_password.txt}
+  session_secret:
+    file: ${LUMENX_SESSION_SECRET_FILE:-./secrets/session_secret.txt}
+  oss_access_key_id:
+    file: ${LUMENX_OSS_ACCESS_KEY_ID_FILE:-./secrets/oss_access_key_id.txt}
+  oss_access_key_secret:
+    file: ${LUMENX_OSS_ACCESS_KEY_SECRET_FILE:-./secrets/oss_access_key_secret.txt}
+  dashscope_api_key:
+    file: ${DASHSCOPE_API_KEY_FILE:-./secrets/dashscope_api_key.txt}
