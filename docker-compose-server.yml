@@ -1,9 +1,10 @@
 x-cloud-environment: &cloud-environment
   LUMENX_DEPLOYMENT_MODE: cloud
-  LUMENX_DATABASE_HOST: postgres
-  LUMENX_DATABASE_PORT: "5432"
-  LUMENX_DATABASE_NAME: ${POSTGRES_DB:-lumenx}
-  LUMENX_DATABASE_USER: app
+  # PostgreSQL 已独立部署，这里只填写外部数据库连接信息
+  LUMENX_DATABASE_HOST: ${LUMENX_DATABASE_HOST:?请在 .env 配置外部 PostgreSQL 地址}
+  LUMENX_DATABASE_PORT: ${LUMENX_DATABASE_PORT:-5432}
+  LUMENX_DATABASE_NAME: ${LUMENX_DATABASE_NAME:-lumenx}
+  LUMENX_DATABASE_USER: ${LUMENX_DATABASE_USER:-lumenx_app}
   LUMENX_DATABASE_PASSWORD_FILE: /run/secrets/postgres_app_password
   LUMENX_DATABASE_RESOURCE_ID: ${LUMENX_DATABASE_RESOURCE_ID:-}
   LUMENX_REDIS_URL: redis://redis:6379/0
@@ -30,7 +31,7 @@ x-cloud-environment: &cloud-environment
   LUMENX_ADMIN_SENSITIVE_READ_LIMIT: ${LUMENX_ADMIN_SENSITIVE_READ_LIMIT:-60}
   LUMENX_ADMIN_EXPORT_LIMIT: ${LUMENX_ADMIN_EXPORT_LIMIT:-20}
   DASHSCOPE_API_KEY_FILE: /run/secrets/dashscope_api_key
-  NO_PROXY: "*.aliyuncs.com,localhost,127.0.0.1,postgres,redis"
+  NO_PROXY: "*.aliyuncs.com,localhost,127.0.0.1,${LUMENX_DATABASE_HOST:-postgres},redis"
 
 x-cloud-secrets: &cloud-secrets
   - postgres_app_password
@@ -52,44 +53,23 @@ services:
       retries: 12
     restart: unless-stopped
 
-  database-role-bootstrap:
-    build:
-      context: .
-      dockerfile: docker/Dockerfile.postgres-tools
-    environment:
-      POSTGRES_HOST: postgres
-      POSTGRES_DB: ${POSTGRES_DB:-lumenx}
-      POSTGRES_USER: ${POSTGRES_USER:-lumenx}
-      POSTGRES_PASSWORD_FILE: /run/secrets/postgres_password
-      LUMENX_DATABASE_USER: ${LUMENX_DATABASE_USER:-lumenx_app}
-      POSTGRES_APP_PASSWORD_FILE: /run/secrets/postgres_app_password
-    secrets:
-      - postgres_password
-      - postgres_app_password
-    entrypoint: ["/bin/sh", "/usr/local/bin/lumenx-postgres-app-role"]
-    depends_on:
-      postgres:
-        condition: service_healthy
-    restart: "no"
-
   migration:
     build:
       context: .
       dockerfile: docker/Dockerfile.backend
     environment:
       LUMENX_DEPLOYMENT_MODE: cloud
-      LUMENX_DATABASE_HOST: 172.26.107.14
-      LUMENX_DATABASE_PORT: "15432"
-      LUMENX_DATABASE_NAME: app
-      LUMENX_DATABASE_USER: 123456
+      LUMENX_DATABASE_HOST: ${LUMENX_DATABASE_HOST:?请在 .env 配置外部 PostgreSQL 地址}
+      LUMENX_DATABASE_PORT: ${LUMENX_DATABASE_PORT:-5432}
+      LUMENX_DATABASE_NAME: ${LUMENX_DATABASE_NAME:-lumenx}
+      # 迁移需要建表/改表权限，请使用外部库的管理员账号
+      LUMENX_DATABASE_USER: ${LUMENX_DATABASE_ADMIN_USER:?请在 .env 配置外部 PostgreSQL 管理员用户}
       LUMENX_DATABASE_PASSWORD_FILE: /run/secrets/postgres_password
     secrets:
       - postgres_password
     command: ["alembic", "upgrade", "head"]
-    depends_on:
-      database-role-bootstrap:
-        condition: service_completed_successfully
-    restart: "no"
+    # 外部库不在 compose 内，无法用 depends_on 等待；失败自动重试直到外部库就绪
+    restart: "on-failure"
 
   admin-bootstrap:
     build:
@@ -183,8 +163,6 @@ services:
     environment: *cloud-environment
     secrets: *cloud-secrets
     command: ["celery", "-A", "src.platform.worker:celery_app", "worker", "--loglevel=INFO", "--queues=maintenance", "--concurrency=1"]
-    volumes:
-      - lumenx-postgres-backups:/backups:ro
     depends_on:
       migration:
         condition: service_completed_successfully
@@ -203,27 +181,6 @@ services:
       migration:
         condition: service_completed_successfully
       redis:
-        condition: service_healthy
-    restart: unless-stopped
-
-  postgres-backup:
-    build:
-      context: .
-      dockerfile: docker/Dockerfile.postgres-tools
-    environment:
-      POSTGRES_DB: ${POSTGRES_DB:-lumenx}
-      POSTGRES_USER: ${POSTGRES_USER:-lumenx}
-      POSTGRES_HOST: postgres
-      POSTGRES_PASSWORD_FILE: /run/secrets/postgres_password
-      BACKUP_INTERVAL_SECONDS: ${BACKUP_INTERVAL_SECONDS:-86400}
-      BACKUP_RETENTION_DAYS: ${BACKUP_RETENTION_DAYS:-14}
-    secrets:
-      - postgres_password
-    volumes:
-      - lumenx-postgres-backups:/backups
-    entrypoint: ["/bin/sh", "/usr/local/bin/lumenx-postgres-backup"]
-    depends_on:
-      postgres:
         condition: service_healthy
     restart: unless-stopped
 
@@ -249,8 +206,6 @@ services:
     restart: unless-stopped
 
 volumes:
-  lumenx-postgres-data:
-  lumenx-postgres-backups:
   lumenx-redis-data:
   lumenx-provider-results:
   lumenx-nginx-legacy-logs:
