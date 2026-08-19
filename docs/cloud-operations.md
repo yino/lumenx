@@ -47,15 +47,20 @@ docker compose run --rm migration alembic current
 
 先在 staging 对生产备份副本执行同一迁移。出现失败时停止新版本部署，保留数据库现场和迁移日志，不运行 `alembic downgrade` 删除账务或审计记录。
 
+`0014_expand_admin_console` 会新增人工充值订单/事件/对账报告和系统媒体 scope，并把既有媒体回填为 `scope=user`；`0015_system_media_copy_access` 保留用户系统场景副本对源媒体的只读访问；`0017_physical_admin_identity` 新增独立 `admin_users/admin_sessions`，撤销旧共享管理员会话并删除 `users.is_platform_admin`；`0018_admin_recovery_rls` 为显式唯一管理员身份恢复提供受限的系统更新策略。原用户、钱包、工作区和资产保持普通用户归属，不会转换或关联到管理员。全新库和从 `0008_audit_event_insert_policy` 升级的旧库都必须运行 `scripts/verify_postgres_migrations.py`。产生独立管理员、管理员审计或财务记录后禁止降级合并身份或删除结构；后续错误只能用新的前向迁移和补偿流水修正。
+
 ## 首个平台管理员
 
-管理员初始化命令幂等。用户不存在时按正常注册事务创建用户、钱包、默认工作区和会话；用户已存在时只提升权限，不重置密码或覆盖数据。
+Compose 会在迁移成功后通过 `admin-bootstrap` 幂等创建首个平台管理员。本地默认用户名是 `admin`；本地初始密码由 `.env` 的 `LUMENX_BOOTSTRAP_ADMIN_PASSWORD` 提供。生产部署必须在首次启动前替换该密码，禁止沿用仓库示例值。
 
 ```bash
-docker compose run --rm backend python -m src.platform.bootstrap_admin --phone 13800138000
+docker compose run --rm admin-bootstrap
+docker compose run --rm backend python -m src.platform.bootstrap_admin --username <管理员用户名>
 ```
 
-密码从终端安全读取。不要使用 `--password` 传生产密码，以免进入 shell 历史。记录输出的用户 ID，后续模型种子和对账命令需要它。
+命令从 `LUMENX_BOOTSTRAP_ADMIN_PASSWORD` 读取密码，数据库只保存 Argon2 哈希。命令不会把密码输出到日志；重复执行不会重置既有管理员密码，也不会创建普通用户、钱包或工作区。记录输出的管理员 ID，后续模型种子和对账命令需要它。管理员遗失密码时，替换环境中的新密码后显式执行 `python -m src.platform.bootstrap_admin --username <管理员用户名> --rotate-existing`；该操作撤销全部后台会话并要求下次登录改密。完整后台操作和事故处置见 `docs/system-admin-console.md`。
+
+本地 Compose 保留数据卷中若恰好有一个不同用户名的独立管理员，`docker-compose.override.yml` 会启用一次性自动接管：保留管理员 ID 和全部审计/财务关联，将其改为 `.env` 配置身份，撤销旧后台会话并追加审计。配置身份已存在时不会再次轮换密码；零个或多个异名管理员时拒绝自动接管。生产和发布配置不启用该开关，普通 bootstrap 继续失败关闭；确认目标后使用 `make docker-admin-adopt` 显式恢复。
 
 ## 模型和平台配置
 
@@ -63,14 +68,14 @@ docker compose run --rm backend python -m src.platform.bootstrap_admin --phone 1
 
 ```bash
 docker compose run --rm backend python -m src.platform.model_catalog_seeder \
-  --admin-user-id <管理员用户ID> \
+  --admin-id <管理员ID> \
   --tokens-per-ticket 1000 \
   --reason "首次导入仓库模型目录"
 ```
 
 在平台管理页检查模型能力、主/备用路由、参数边界、计量公式、凭据引用和每用户并发。全局 worker 并发只读来自部署环境。先执行“校验”，再填写原因激活。回滚配置也会创建新版本，不能修改历史版本。
 
-首次激活时使用注册模式 `disabled`，并保持“允许创建 AI 新任务”关闭。完成中文发布证据、迁移、部署栈 smoke、真实 staging canary 和数据对账后，先显式解除相应环境熔断，再把注册最多切换为 `invite_only`。`verified_open` 预留给未来短信验证码，验证码服务未就绪时激活会失败；系统不存在 `open_unverified`。
+生产首次激活时使用注册模式 `disabled`，并保持“允许创建 AI 新任务”关闭。完成中文发布证据、迁移、部署栈 smoke、真实 staging canary 和数据对账后，先显式解除相应环境熔断，再按运营决策切换为 `invite_only` 或 `open`。`open` 表示已明确接受暂不校验验证码的手机号注册风险；`verified_open` 预留给未来短信验证码，验证码服务未就绪时激活会失败。本地 Compose 通过独立的 `registration-mode-bootstrap` 默认激活 `open`，生产默认仍为 `disabled`。
 
 邀请只能由平台管理员创建，必须绑定规范化手机号、填写中文原因和过期时间。邀请码明文只在创建响应中显示一次，数据库只保存 HMAC 摘要；不要把邀请码写入日志、工单或长期文档。邀请可在消费前撤销，注册会把邀请消费与用户、钱包、初始流水、默认工作区和会话放在同一事务中。环境变量 `LUMENX_REGISTRATION_EMERGENCY_DISABLED` 和 `LUMENX_NEW_AI_TASKS_EMERGENCY_DISABLED` 是只关不启的紧急熔断，不能绕过数据库策略。
 
@@ -141,7 +146,7 @@ pg_restore --exit-on-error --clean --if-exists --no-owner \
 
 ```bash
 docker compose run --rm backend python -m src.platform.ticket_reconciliation \
-  --admin-user-id <管理员用户ID> \
+  --admin-id <管理员ID> \
   --stale-after-minutes 30
 ```
 
@@ -198,6 +203,6 @@ python scripts/load_test_cloud.py
 5. 将流量切回上一兼容 API 版本。数据库只执行 expand/contract 兼容迁移，不执行会删除用户、任务、审计、配置或账务数据的 schema downgrade。
 6. 修复后创建新的平台配置版本并填写原因，先关闭两个功能开关激活；完成迁移、导入 dry-run、对账和回归验证后，先恢复 AI 新任务，最后恢复注册。确认稳定后再移除环境紧急熔断。
 
-第 6 步中的“恢复注册”仅指 `invite_only`。在独立短信验证与账号恢复方案上线前，禁止切换为公开注册。回滚期间不得撤销已消费邀请或删除未消费邀请；如需停止新注册，使用 `disabled` 或紧急熔断，保留邀请审计历史。
+第 6 步中的“恢复注册”应恢复到事故前已审核的 `invite_only` 或 `open` 模式，不能在事故处理中临时扩大开放范围。`open` 不校验验证码，启用前必须明确记录风险接受；如需停止新注册，使用 `disabled` 或紧急熔断。回滚期间不得撤销已消费邀请或删除未消费邀请，并保留邀请与配置审计历史。
 
 回滚期间保留 PostgreSQL、OSS、Redis 派发日志、关联 ID 和配置版本。Redis 队列可重建，PostgreSQL 中的任务、预扣、用量和不可变流水才是恢复依据。

@@ -10,10 +10,13 @@ from src.apps.comic_gen.models import Character
 from src.platform.asset_api import install_cloud_asset_api
 from src.platform.auth.sessions import SessionPrincipal
 from src.platform.content_service import CloudContentService
+from src.platform.contracts import MediaWrite
 from src.platform.db_models import AssetRecord, WorkspaceRecord
+from src.platform.media_storage import CloudMediaStorage
 from tests.test_content_api import FakeSessions
 from tests.test_content_repositories import RepositoryDatabase, _create_scope
 from tests.test_content_service import FakeScriptProcessor
+from tests.test_media_storage import FakePrivateObjectStore
 
 
 @pytest.fixture
@@ -53,7 +56,6 @@ def asset_api():
         session_id=int(context.identity.session_id),
         phone_canonical="+8613800138000",
         phone_verified=False,
-        is_platform_admin=False,
     )
     sessions = FakeSessions(principal)
     auth = SimpleNamespace(database=database, sessions=sessions)
@@ -87,6 +89,56 @@ def _headers(workspace_id: str, *, version: int | None = None) -> dict[str, str]
     if version is not None:
         headers["If-Match"] = str(version)
     return headers
+
+
+def test_system_voice_catalog_is_available_without_ai_generation(asset_api) -> None:
+    (
+        _database,
+        context,
+        sessions,
+        client,
+        _source_series_id,
+        _target_series_id,
+        _project_id,
+    ) = asset_api
+
+    response = client.get("/voices", headers=_headers(context.workspace_id))
+
+    assert response.status_code == 200
+    voices = response.json()
+    assert voices
+    assert all(
+        {
+            "id",
+            "name",
+            "gender",
+            "model",
+            "family",
+            "supports_instruction",
+            "dialect",
+            "lang_primary",
+            "origin",
+        }
+        <= voice.keys()
+        for voice in voices
+    )
+    by_id = {voice["id"]: voice for voice in voices}
+    assert by_id["longxiaochun_v2"] == {
+        "id": "longxiaochun_v2",
+        "name": "龙小淳 (知性女)",
+        "gender": "Female",
+        "model": "cosyvoice-v2",
+        "family": "cosyvoice",
+        "supports_instruction": False,
+        "dialect": None,
+        "lang_primary": None,
+        "origin": "system",
+    }
+    assert by_id["Cherry"]["family"] == "qwen3"
+    assert by_id["Cherry"]["supports_instruction"] is True
+    assert by_id["Jada"]["dialect"] == "shanghai"
+    assert by_id["Bodega"]["lang_primary"] == "es"
+    assert sessions.calls[-1] == ("session-token", None)
 
 
 def test_cloud_asset_crud_uses_scoped_route_and_optimistic_versions(asset_api) -> None:
@@ -182,6 +234,65 @@ def test_cloud_asset_routes_hide_other_workspace_resources(asset_api) -> None:
         "code": "CONTENT_NOT_FOUND",
         "message": "资源不存在",
     }
+
+
+def test_generated_asset_media_becomes_selected_variant(asset_api) -> None:
+    (
+        database,
+        context,
+        _sessions,
+        client,
+        _source_series_id,
+        _target_series_id,
+        project_id,
+    ) = asset_api
+    character = client.post(
+        f"/projects/{project_id}/characters",
+        json={"name": "林墨", "description": "主角"},
+        headers=_headers(context.workspace_id),
+    ).json()
+    media = CloudMediaStorage(database, FakePrivateObjectStore()).store(
+        context,
+        MediaWrite(
+            content=b"generated-image",
+            content_type="image/png",
+            filename="lin-mo.png",
+            project_id=project_id,
+            provenance={"origin": "ai_task"},
+        ),
+    )
+
+    first = client.post(
+        f"/projects/{project_id}/assets/update_image",
+        json={
+            "asset_id": character["id"],
+            "asset_type": "character",
+            "media_id": media.media_id,
+        },
+        headers=_headers(context.workspace_id, version=character["version"]),
+    )
+
+    assert first.status_code == 200, first.text
+    reference = f"media:{media.media_id}"
+    payload = first.json()
+    assert payload["image_url"] == reference
+    assert payload["avatar_url"] == reference
+    assert payload["reference_sheet"]["selected_image_id"]
+    assert [
+        item["url"] for item in payload["reference_sheet"]["image_variants"]
+    ] == [reference]
+
+    repeated = client.post(
+        f"/projects/{project_id}/assets/update_image",
+        json={
+            "asset_id": character["id"],
+            "asset_type": "character",
+            "media_id": media.media_id,
+        },
+        headers=_headers(context.workspace_id, version=payload["version"]),
+    )
+    assert repeated.status_code == 200, repeated.text
+    assert len(repeated.json()["reference_sheet"]["image_variants"]) == 1
 
 
 def test_library_promotion_fork_and_series_import_are_scoped(asset_api) -> None:

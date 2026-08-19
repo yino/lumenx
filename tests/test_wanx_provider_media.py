@@ -1,7 +1,10 @@
 import base64
 from pathlib import Path
 
+import pytest
+
 from src.models.wanx import WanxModel
+from src.platform.provider_errors import ProviderTerminalFailureError
 
 
 PNG_1X1_BASE64 = (
@@ -109,6 +112,87 @@ class TestWanxProviderMediaIntegration:
 
         assert captured["create_payload"]["input"]["img_url"] == "oss://dashscope-temp/image-001"
         assert captured["create_headers"]["X-DashScope-OssResourceResolve"] == "enable"
+
+    def test_wan27_i2v_uses_multimodal_media_protocol(self, monkeypatch):
+        monkeypatch.setenv("DASHSCOPE_API_KEY", "test-key")
+        _install_fake_uploader(monkeypatch, configured=False)
+
+        captured = {}
+        _install_fake_requests(monkeypatch, captured)
+        monkeypatch.setattr(
+            "src.models.wanx.WanxModel._create_dashscope_temp_url",
+            lambda self, local_path, model_name: "oss://dashscope-temp/image-027",
+        )
+
+        img_path = _write_output_file(
+            "uploads/wan27_i2v_local.png",
+            base64.b64decode(PNG_1X1_BASE64),
+        )
+        model = WanxModel({"params": {}})
+        model.generate(
+            prompt="demo",
+            output_path="output/video/wan27_i2v_local.mp4",
+            img_path=img_path,
+            model_name="wan2.7-i2v",
+            resolution="720p",
+            ratio="16:9",
+        )
+
+        payload = captured["create_payload"]
+        assert payload["input"] == {
+            "prompt": "demo",
+            "media": [
+                {"type": "first_frame", "url": "oss://dashscope-temp/image-027"},
+            ],
+        }
+        assert payload["parameters"] == {
+            "duration": 5,
+            "prompt_extend": True,
+            "watermark": False,
+            "resolution": "720P",
+        }
+        assert captured["create_headers"]["X-DashScope-OssResourceResolve"] == "enable"
+
+    def test_wan27_i2v_reports_provider_failed_as_terminal(self, monkeypatch):
+        monkeypatch.setenv("DASHSCOPE_API_KEY", "test-key")
+        _install_fake_uploader(monkeypatch, configured=False)
+
+        captured = {}
+        _install_fake_requests(monkeypatch, captured)
+        monkeypatch.setattr(
+            "src.models.wanx.requests.get",
+            lambda *_, **__: _FakeResponse(
+                200,
+                {
+                    "output": {
+                        "task_status": "FAILED",
+                        "code": "InvalidParameter",
+                        "message": "input.media is required",
+                    }
+                },
+            ),
+        )
+        monkeypatch.setattr(
+            "src.models.wanx.WanxModel._create_dashscope_temp_url",
+            lambda self, local_path, model_name: "oss://dashscope-temp/image-failed",
+        )
+
+        img_path = _write_output_file(
+            "uploads/wan27_i2v_failed.png",
+            base64.b64decode(PNG_1X1_BASE64),
+        )
+        model = WanxModel({"params": {}})
+
+        with pytest.raises(ProviderTerminalFailureError) as captured_error:
+            model.generate(
+                prompt="demo",
+                output_path="output/video/wan27_i2v_failed.mp4",
+                img_path=img_path,
+                model_name="wan2.7-i2v",
+                resolution="720p",
+            )
+
+        assert captured_error.value.provider_status == "FAILED"
 
     def test_i2v_local_audio_without_oss_uses_temp_url_and_header(self, monkeypatch):
         monkeypatch.setenv("DASHSCOPE_API_KEY", "test-key")

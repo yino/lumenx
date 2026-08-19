@@ -15,6 +15,7 @@ from typing import Callable, Dict, List, Mapping, Optional, Tuple
 from ..utils.oss_utils import OSSImageUploader
 from ..utils.provider_media import resolve_media_input, resolve_media_inputs
 from ..utils.provider_registry import resolve_provider_backend
+from ..platform.provider_errors import ProviderTerminalFailureError
 
 logger = get_logger(__name__)
 
@@ -328,7 +329,7 @@ class WanxModel(VideoGenModel):
                     prompt=prompt,
                     img_url=img_url,
                     model_name=final_model_name,
-                    resolution=resolution if not is_wan27_i2v else None,
+                    resolution=resolution,
                     ratio=ratio if is_wan27_i2v else None,
                     duration=duration,
                     prompt_extend=prompt_extend,
@@ -569,31 +570,38 @@ class WanxModel(VideoGenModel):
         if extra_headers:
             headers.update(dict(extra_headers))
         
+        is_wan27 = model_name.startswith("wan2.7-")
         payload = {
-            "model": model_name,  # Use passed model name (wan2.5-i2v, wan2.6-i2v, or wan2.7-i2v)
-            "input": {
-                "prompt": prompt,
-                "img_url": img_url
-            },
+            "model": model_name,
+            "input": {"prompt": prompt},
             "parameters": {
                 "duration": duration,
                 "prompt_extend": prompt_extend,
                 "watermark": watermark,
-                "audio": True,  # Auto-generate audio
-                "shot_type": shot_type  # single or multi (only works when prompt_extend=True)
-            }
+            },
         }
 
-        # Wan2.7 uses ratio; older models use resolution
-        if ratio:
-            payload["parameters"]["ratio"] = ratio
-        elif resolution:
-            payload["parameters"]["resolution"] = resolution
+        if is_wan27:
+            payload["input"]["media"] = [
+                {"type": "first_frame", "url": img_url},
+            ]
+            if audio_url:
+                payload["input"]["media"].append(
+                    {"type": "driving_audio", "url": audio_url},
+                )
+            if resolution:
+                payload["parameters"]["resolution"] = str(resolution).upper()
+        else:
+            payload["input"]["img_url"] = img_url
+            payload["parameters"]["audio"] = True
+            payload["parameters"]["shot_type"] = shot_type
+            if resolution:
+                payload["parameters"]["resolution"] = resolution
         
         # Add optional parameters
         if negative_prompt:
             payload["input"]["negative_prompt"] = negative_prompt
-        if audio_url:
+        if audio_url and not is_wan27:
             payload["input"]["audio_url"] = audio_url
             del payload["parameters"]["audio"]  # audio_url takes precedence
         if seed:
@@ -659,9 +667,18 @@ class WanxModel(VideoGenModel):
             elif task_status == 'FAILED':
                 error_msg = poll_result.get('output', {}).get('message', 'Unknown error')
                 code = poll_result.get('output', {}).get('code', '')
-                raise RuntimeError(f"{model_name} task failed: {code} - {error_msg}")
+                raise ProviderTerminalFailureError(
+                    f"{model_name} task failed: {code} - {error_msg}",
+                    provider_status=task_status,
+                )
             
-            elif task_status in ['CANCELED', 'UNKNOWN']:
+            elif task_status == 'CANCELED':
+                raise ProviderTerminalFailureError(
+                    f"{model_name} task {task_status}",
+                    provider_status=task_status,
+                )
+
+            elif task_status == 'UNKNOWN':
                 raise RuntimeError(f"{model_name} task {task_status}: {poll_result}")
             
             # PENDING or RUNNING - continue polling
@@ -769,9 +786,18 @@ class WanxModel(VideoGenModel):
             elif task_status == 'FAILED':
                 error_msg = poll_result.get('output', {}).get('message', 'Unknown error')
                 code = poll_result.get('output', {}).get('code', '')
-                raise RuntimeError(f"{model_name} task failed: {code} - {error_msg}")
+                raise ProviderTerminalFailureError(
+                    f"{model_name} task failed: {code} - {error_msg}",
+                    provider_status=task_status,
+                )
             
-            elif task_status in ['CANCELED', 'UNKNOWN']:
+            elif task_status == 'CANCELED':
+                raise ProviderTerminalFailureError(
+                    f"{model_name} task {task_status}",
+                    provider_status=task_status,
+                )
+
+            elif task_status == 'UNKNOWN':
                 raise RuntimeError(f"{model_name} task {task_status}: {poll_result}")
             
         raise RuntimeError(f"{model_name} task timed out after {max_wait_time}s")
@@ -895,9 +921,18 @@ class WanxModel(VideoGenModel):
             elif task_status == 'FAILED':
                 error_msg = poll_result.get('output', {}).get('message', 'Unknown error')
                 code = poll_result.get('output', {}).get('code', '')
-                raise RuntimeError(f"{model_name} task failed: {code} - {error_msg}")
+                raise ProviderTerminalFailureError(
+                    f"{model_name} task failed: {code} - {error_msg}",
+                    provider_status=task_status,
+                )
 
-            elif task_status in ['CANCELED', 'UNKNOWN']:
+            elif task_status == 'CANCELED':
+                raise ProviderTerminalFailureError(
+                    f"{model_name} task {task_status}",
+                    provider_status=task_status,
+                )
+
+            elif task_status == 'UNKNOWN':
                 raise RuntimeError(f"{model_name} task {task_status}: {poll_result}")
 
             # PENDING or RUNNING - continue polling

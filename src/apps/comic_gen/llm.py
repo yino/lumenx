@@ -324,6 +324,7 @@ DEFAULT_STORYBOARD_EXTRACTION_PROMPT = """# 角色
 6. **角度枚举**: 必须从以下选项中选择: 平视 | 俯视 | 仰视 | 鸟瞰 | 蚁视 | 过肩 | 荷兰角 | 主观视角
 7. **时长**: 基于动作复杂度估算整数秒（范围 3-10 秒）。简单静态 3-4s，标准动作 5-6s，复杂/情绪镜头 7-10s。
 8. **对白**: 如果帧中有角色说话，dialogue 和 speaker 必须填写。一帧只能有一个说话人——多人对话必须拆为多帧。
+9. **输出预算**: 最多生成 18 帧。优先保留场景切换、关键动作、重要对白和情绪转折；次要反应与连续动作可以合并，字段内容保持简洁。
 
 # 剧本格式说明
 - **场景标题行**: `1-1 地点名称 [时间] [内/外]`
@@ -559,6 +560,15 @@ class ScriptProcessor:
             created_at=time.time(),
             updated_at=time.time()
         )
+
+    def create_script_from_extraction(
+        self,
+        title: str,
+        original_text: str,
+        data: Dict[str, Any],
+    ) -> Script:
+        """Build a validated Script from an already completed entity extraction."""
+        return self._create_script_from_data(title, original_text, data)
 
     def create_draft_script(self, title: str, text: str) -> Script:
         """

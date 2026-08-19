@@ -23,6 +23,15 @@ def build_security_app() -> TestClient:
     def mutate():
         return {"ok": True}
 
+    @app.post("/admin/auth/login")
+    @app.post("/api/v1/admin/auth/login")
+    def admin_login():
+        return {"ok": True}
+
+    @app.post("/admin/mutate")
+    def admin_mutate():
+        return {"ok": True}
+
     return TestClient(app)
 
 
@@ -47,6 +56,57 @@ def test_cookie_mutation_requires_same_origin_and_csrf() -> None:
     assert denied_origin.status_code == 403
     assert denied_origin.json()["code"] == "ORIGIN_DENIED"
     assert denied_csrf.json()["code"] == "CSRF_INVALID"
+    assert allowed.status_code == 200
+
+
+@pytest.mark.parametrize(
+    "path",
+    ["/admin/auth/login", "/api/v1/admin/auth/login"],
+)
+def test_normal_user_cookie_does_not_block_independent_admin_login(path: str) -> None:
+    client = build_security_app()
+    client.cookies.set("lumenx_session", "normal-user-session")
+    client.cookies.set("lumenx_csrf", "normal-user-csrf")
+
+    response = client.post(path)
+
+    assert response.status_code == 200
+    assert response.json() == {"ok": True}
+
+
+def test_admin_cookie_uses_independent_origin_and_csrf_namespace() -> None:
+    client = build_security_app()
+    client.cookies.set("lumenx_session", "normal-user-session")
+    client.cookies.set("lumenx_csrf", "normal-user-csrf")
+    client.cookies.set("lumenx_admin_session", "admin-session")
+    client.cookies.set("lumenx_admin_csrf", "admin-csrf")
+
+    normal_csrf = client.post(
+        "/admin/mutate",
+        headers={
+            "origin": "https://studio.example.com",
+            "x-csrf-token": "normal-user-csrf",
+        },
+    )
+    denied_origin = client.post(
+        "/admin/mutate",
+        headers={
+            "origin": "https://evil.example",
+            "x-csrf-token": "admin-csrf",
+        },
+    )
+    allowed = client.post(
+        "/admin/mutate",
+        headers={
+            "origin": "https://studio.example.com",
+            "x-csrf-token": "admin-csrf",
+        },
+    )
+
+    assert normal_csrf.status_code == 403
+    assert normal_csrf.json()["code"] == "CSRF_INVALID"
+    assert denied_origin.status_code == 403
+    assert denied_origin.json()["code"] == "ORIGIN_DENIED"
     assert allowed.status_code == 200
 
 

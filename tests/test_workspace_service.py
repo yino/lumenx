@@ -7,7 +7,7 @@ import pytest
 from sqlalchemy import select
 
 from src.platform.content_service import CloudContentService
-from src.platform.contracts import MediaWrite, UserContext, WorkspaceContext
+from src.platform.contracts import AdminContext, MediaWrite, UserContext, WorkspaceContext
 from src.platform.db_models import (
     AITaskRecord,
     ImportBatchRecord,
@@ -140,11 +140,7 @@ def test_expired_workspace_cleanup_deletes_content_but_preserves_task_history() 
             )
         )
 
-    admin = UserContext(
-        user_id=base_context.identity.user_id,
-        session_id=base_context.identity.session_id,
-        is_platform_admin=True,
-    )
+    admin = AdminContext(admin_id="9001", session_id="9101", username="admin")
     result = service.cleanup_expired(admin, now=checked_at)
 
     assert result.deleted == 1

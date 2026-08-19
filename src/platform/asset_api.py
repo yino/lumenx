@@ -6,6 +6,7 @@ from fastapi import APIRouter, Depends, FastAPI, File, HTTPException, Request, U
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field
 
+from ..audio.tts import VOICES
 from .ai_gateway_api import AITaskSubmitter, CloudAIRequestAdapter
 from .ai_request_policy import enforce_cloud_ai_request
 from .asset_repositories import AssetConflictError, StoredAsset
@@ -181,6 +182,23 @@ def _group_assets(assets: list[StoredAsset]) -> dict[str, list[dict[str, Any]]]:
     return grouped
 
 
+def _system_voice_catalog() -> list[dict[str, Any]]:
+    return [
+        {
+            "id": meta["model_id"],
+            "name": meta["name"],
+            "gender": meta.get("gender", "Unknown"),
+            "model": meta.get("model", "cosyvoice-v2"),
+            "family": meta.get("family", "cosyvoice"),
+            "supports_instruction": meta.get("supports_instruction", False),
+            "dialect": meta.get("dialect"),
+            "lang_primary": meta.get("lang_primary"),
+            "origin": "system",
+        }
+        for meta in VOICES.values()
+    ]
+
+
 def _parse_expected_version(request: Request) -> int:
     raw_value = request.headers.get("if-match")
     if not raw_value:
@@ -237,10 +255,15 @@ def install_cloud_asset_api(
             identity=UserContext(
                 user_id=str(principal.user_id),
                 session_id=str(principal.session_id),
-                is_platform_admin=principal.is_platform_admin,
             ),
             workspace_id=canonical_workspace_id,
         )
+
+    @router.get("/voices")
+    def list_system_voices(
+        _context: WorkspaceContext = Depends(require_context),
+    ) -> list[dict[str, Any]]:
+        return _system_voice_catalog()
 
     @router.get("/projects/{project_id}/assets")
     def list_project_assets(

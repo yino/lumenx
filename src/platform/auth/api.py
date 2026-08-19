@@ -6,10 +6,11 @@ from datetime import datetime
 
 from fastapi import APIRouter, Depends, FastAPI, Request, Response
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel, Field
+from pydantic import AliasChoices, BaseModel, Field
 from redis import Redis
 
-from ..contracts import UserContext
+from ..contracts import AdminContext, UserContext
+from ..admin_access import create_require_platform_admin_principal, platform_admin_context
 from ..audit import AuditService
 from ..error_protocol import request_correlation_id
 from ..database import Database
@@ -19,6 +20,7 @@ from ..runtime_policy import RuntimePolicyResolver, RuntimePolicyUnavailableErro
 from ..settings import DeploymentSettings
 from .admin import (
     AdminAuthorizationError,
+    ProtectedAdministratorActionError,
     ResetCredentialError,
     SupportPasswordResetService,
     UserAdministrationService,
@@ -42,6 +44,17 @@ from .sessions import (
     clear_session_cookies,
     set_session_cookies,
 )
+from .admin_identity import (
+    ADMIN_CSRF_COOKIE_NAME,
+    ADMIN_SESSION_COOKIE_NAME,
+    AdminAccountSuspendedError,
+    AdminAuthenticationService,
+    AdminCredentialError,
+    AdminSessionPrincipal,
+    AdminSessionService,
+    clear_admin_session_cookies,
+    set_admin_session_cookies,
+)
 
 
 class RegisterRequest(BaseModel):
@@ -51,7 +64,11 @@ class RegisterRequest(BaseModel):
 
 
 class LoginRequest(BaseModel):
-    phone: str = Field(min_length=1, max_length=40)
+    identifier: str = Field(
+        min_length=1,
+        max_length=40,
+        validation_alias=AliasChoices("identifier", "phone"),
+    )
     password: str = Field(min_length=1, max_length=128)
 
 
@@ -62,15 +79,26 @@ class ChangePasswordRequest(BaseModel):
 
 class UserProfileResponse(BaseModel):
     id: int
-    phone: str
+    phone: str | None
+    username: str | None
+    account_label: str
     phone_verified: bool
     phone_verification_status: str
-    is_platform_admin: bool
     default_workspace_id: int
 
 
 class AuthResponse(BaseModel):
     user: UserProfileResponse
+
+
+class AdminProfileResponse(BaseModel):
+    id: int
+    username: str
+    must_change_password: bool
+
+
+class AdminAuthResponse(BaseModel):
+    admin: AdminProfileResponse
 
 
 class MessageResponse(BaseModel):
@@ -133,6 +161,8 @@ class AuthApplication:
     registration: RegistrationService
     authentication: AuthenticationService
     sessions: SessionService
+    admin_authentication: AdminAuthenticationService
+    admin_sessions: AdminSessionService
     user_administration: UserAdministrationService
     support_reset: SupportPasswordResetService
     rate_limiter: AuthRateLimiter
@@ -152,17 +182,18 @@ def _network_source(request: Request) -> str:
 def _profile(
     *,
     user_id: int,
-    phone: str,
+    phone: str | None,
     phone_verified: bool,
-    is_platform_admin: bool,
     workspace_id: int,
+    username: str | None = None,
 ) -> UserProfileResponse:
     return UserProfileResponse(
         id=user_id,
         phone=phone,
+        username=username,
+        account_label=username or phone or str(user_id),
         phone_verified=phone_verified,
         phone_verification_status="已验证" if phone_verified else "未验证",
-        is_platform_admin=is_platform_admin,
         default_workspace_id=workspace_id,
     )
 
@@ -179,20 +210,6 @@ def create_auth_router(application: AuthApplication) -> APIRouter:
             request.headers.get("x-csrf-token") if request.method in UNSAFE_METHODS else None
         )
         return application.sessions.resolve(token, csrf_token=csrf_token)
-
-    def require_admin(
-        principal: SessionPrincipal = Depends(require_principal),
-    ) -> SessionPrincipal:
-        if not principal.is_platform_admin:
-            raise AdminAuthorizationError("仅平台管理员可以执行此操作")
-        return principal
-
-    def admin_identity(principal: SessionPrincipal) -> UserContext:
-        return UserContext(
-            user_id=str(principal.user_id),
-            session_id=str(principal.session_id),
-            is_platform_admin=True,
-        )
 
     def auth_started(request: Request, action: str) -> None:
         request.state.auth_action = action
@@ -285,7 +302,6 @@ def create_auth_router(application: AuthApplication) -> APIRouter:
                 user_id=result.user_id,
                 phone=result.phone_canonical,
                 phone_verified=result.phone_verified,
-                is_platform_admin=False,
                 workspace_id=result.workspace_id,
             )
         )
@@ -297,11 +313,11 @@ def create_auth_router(application: AuthApplication) -> APIRouter:
         application.rate_limiter.check(
             "login",
             application.login_rate,
-            phone_canonical=payload.phone.strip(),
+            phone_canonical=payload.identifier.strip(),
             network_source=network,
         )
         result = application.authentication.login(
-            payload.phone,
+            payload.identifier,
             payload.password,
             network_fingerprint=application.rate_limiter.fingerprint(network),
             user_agent=request.headers.get("user-agent"),
@@ -311,7 +327,6 @@ def create_auth_router(application: AuthApplication) -> APIRouter:
             UserContext(
                 user_id=str(result.user_id),
                 session_id=str(result.session.record.id),
-                is_platform_admin=result.is_platform_admin,
             ),
             action="auth.login",
             target_type="session",
@@ -325,8 +340,8 @@ def create_auth_router(application: AuthApplication) -> APIRouter:
             user=_profile(
                 user_id=result.user_id,
                 phone=result.phone_canonical,
+                username=result.username,
                 phone_verified=result.phone_verified,
-                is_platform_admin=result.is_platform_admin,
                 workspace_id=result.workspace_id,
             )
         )
@@ -358,8 +373,8 @@ def create_auth_router(application: AuthApplication) -> APIRouter:
             user=_profile(
                 user_id=principal.user_id,
                 phone=principal.phone_canonical,
+                username=principal.username,
                 phone_verified=principal.phone_verified,
-                is_platform_admin=principal.is_platform_admin,
                 workspace_id=workspace_id,
             )
         )
@@ -392,7 +407,6 @@ def create_auth_router(application: AuthApplication) -> APIRouter:
         identity = UserContext(
             user_id=str(principal.user_id),
             session_id=str(principal.session_id),
-            is_platform_admin=principal.is_platform_admin,
         )
         return [
             SessionResponse(
@@ -418,7 +432,6 @@ def create_auth_router(application: AuthApplication) -> APIRouter:
         identity = UserContext(
             user_id=str(principal.user_id),
             session_id=str(principal.session_id),
-            is_platform_admin=principal.is_platform_admin,
         )
         if not application.sessions.revoke_session(identity, session_id):
             return MessageResponse(message="会话不存在或已失效")
@@ -443,7 +456,6 @@ def create_auth_router(application: AuthApplication) -> APIRouter:
         identity = UserContext(
             user_id=str(principal.user_id),
             session_id=str(principal.session_id),
-            is_platform_admin=principal.is_platform_admin,
         )
         application.sessions.revoke_all(identity)
         audit.record(
@@ -477,8 +489,130 @@ def create_auth_router(application: AuthApplication) -> APIRouter:
         )
         return MessageResponse(message="密码已重置，请使用新密码登录")
 
+    return router
+
+
+def create_admin_router(application: AuthApplication) -> APIRouter:
+    router = APIRouter(prefix="/admin", tags=["系统管理员认证"])
+    audit = AuditService(application.database)
+    require_admin = create_require_platform_admin_principal(
+        application.admin_sessions,
+        denied_message="仅系统管理员可以执行此操作",
+    )
+
+    def admin_identity(principal: AdminSessionPrincipal) -> AdminContext:
+        return platform_admin_context(principal)
+
+    def invitation_response(record, *, plaintext_code: str | None = None) -> InvitationResponse:
+        return InvitationResponse(
+            id=record.id,
+            phone=record.phone_canonical,
+            status=record.status,
+            expires_at=record.expires_at,
+            created_at=record.created_at,
+            consumed_at=record.consumed_at,
+            revoked_at=record.revoked_at,
+            issue_reason=record.issue_reason,
+            revoke_reason=record.revoke_reason,
+            invitation_code=plaintext_code,
+        )
+
+    @router.post("/auth/login", response_model=AdminAuthResponse)
+    def admin_login(
+        payload: LoginRequest,
+        request: Request,
+        response: Response,
+    ) -> AdminAuthResponse:
+        network = _network_source(request)
+        application.rate_limiter.check(
+            "admin_login",
+            application.login_rate,
+            phone_canonical=f"admin:{payload.identifier.strip().lower()}",
+            network_source=network,
+        )
+        result = application.admin_authentication.login(
+            payload.identifier,
+            payload.password,
+            network_fingerprint=application.rate_limiter.fingerprint(network),
+            user_agent=request.headers.get("user-agent"),
+        )
+        set_admin_session_cookies(response, result.session)
+        identity = AdminContext(
+            admin_id=str(result.admin_id),
+            session_id=str(result.session.record.id),
+            username=result.username,
+        )
+        audit.record(
+            identity,
+            action="admin_auth.login",
+            target_type="admin_session",
+            target_id=str(result.session.record.id),
+            request=request,
+            after={"session_created": True},
+        )
+        return AdminAuthResponse(
+            admin=AdminProfileResponse(
+                id=result.admin_id,
+                username=result.username,
+                must_change_password=result.must_change_password,
+            )
+        )
+
+    @router.get("/auth/me", response_model=AdminAuthResponse)
+    def current_admin(
+        principal: AdminSessionPrincipal = Depends(require_admin),
+    ) -> AdminAuthResponse:
+        return AdminAuthResponse(
+            admin=AdminProfileResponse(
+                id=principal.admin_id,
+                username=principal.username,
+                must_change_password=principal.must_change_password,
+            )
+        )
+
+    @router.post("/auth/logout", response_model=MessageResponse)
+    def admin_logout(
+        request: Request,
+        response: Response,
+        principal: AdminSessionPrincipal = Depends(require_admin),
+    ) -> MessageResponse:
+        token = request.cookies.get(ADMIN_SESSION_COOKIE_NAME)
+        if token:
+            application.admin_sessions.logout(token)
+        audit.record(
+            admin_identity(principal),
+            action="admin_auth.logout",
+            target_type="admin_session",
+            target_id=str(principal.session_id),
+            request=request,
+            after={"revoked": True},
+        )
+        clear_admin_session_cookies(response)
+        return MessageResponse(message="已退出系统管理后台")
+
+    @router.post("/auth/password", response_model=MessageResponse)
+    def change_admin_password(
+        payload: ChangePasswordRequest,
+        request: Request,
+        principal: AdminSessionPrincipal = Depends(require_admin),
+    ) -> MessageResponse:
+        application.admin_authentication.change_password(
+            principal,
+            payload.current_password,
+            payload.new_password,
+        )
+        audit.record(
+            admin_identity(principal),
+            action="admin_auth.password.change",
+            target_type="admin_user",
+            target_id=str(principal.admin_id),
+            request=request,
+            after={"other_admin_sessions_revoked": True},
+        )
+        return MessageResponse(message="管理员密码已更新，其他后台会话已退出")
+
     @router.post(
-        "/admin/users/{user_id}/suspend",
+        "/users/{user_id}/suspend",
         response_model=MessageResponse,
         tags=["用户管理"],
     )
@@ -486,7 +620,7 @@ def create_auth_router(application: AuthApplication) -> APIRouter:
         user_id: int,
         payload: AdminReasonRequest,
         request: Request,
-        principal: SessionPrincipal = Depends(require_admin),
+        principal: AdminSessionPrincipal = Depends(require_admin),
     ) -> MessageResponse:
         application.user_administration.set_status(
             admin_identity(principal), user_id, "suspended", payload.reason,
@@ -495,7 +629,7 @@ def create_auth_router(application: AuthApplication) -> APIRouter:
         return MessageResponse(message="用户已停用，所有会话已撤销")
 
     @router.post(
-        "/admin/users/{user_id}/reactivate",
+        "/users/{user_id}/reactivate",
         response_model=MessageResponse,
         tags=["用户管理"],
     )
@@ -503,7 +637,7 @@ def create_auth_router(application: AuthApplication) -> APIRouter:
         user_id: int,
         payload: AdminReasonRequest,
         request: Request,
-        principal: SessionPrincipal = Depends(require_admin),
+        principal: AdminSessionPrincipal = Depends(require_admin),
     ) -> MessageResponse:
         application.user_administration.set_status(
             admin_identity(principal), user_id, "active", payload.reason,
@@ -512,7 +646,7 @@ def create_auth_router(application: AuthApplication) -> APIRouter:
         return MessageResponse(message="用户已恢复")
 
     @router.post(
-        "/admin/users/{user_id}/revoke-sessions",
+        "/users/{user_id}/revoke-sessions",
         response_model=MessageResponse,
         tags=["用户管理"],
     )
@@ -520,7 +654,7 @@ def create_auth_router(application: AuthApplication) -> APIRouter:
         user_id: int,
         payload: AdminReasonRequest,
         request: Request,
-        principal: SessionPrincipal = Depends(require_admin),
+        principal: AdminSessionPrincipal = Depends(require_admin),
     ) -> MessageResponse:
         count = application.user_administration.revoke_sessions(
             admin_identity(principal), user_id, payload.reason,
@@ -529,7 +663,7 @@ def create_auth_router(application: AuthApplication) -> APIRouter:
         return MessageResponse(message=f"已撤销 {count} 个会话")
 
     @router.post(
-        "/admin/users/{user_id}/reset-credentials",
+        "/users/{user_id}/reset-credentials",
         response_model=ResetCredentialResponse,
         tags=["用户管理"],
     )
@@ -537,7 +671,7 @@ def create_auth_router(application: AuthApplication) -> APIRouter:
         user_id: int,
         payload: AdminReasonRequest,
         request: Request,
-        principal: SessionPrincipal = Depends(require_admin),
+        principal: AdminSessionPrincipal = Depends(require_admin),
     ) -> ResetCredentialResponse:
         issued = application.user_administration.issue_reset_credential(
             admin_identity(principal), user_id, payload.reason,
@@ -549,12 +683,12 @@ def create_auth_router(application: AuthApplication) -> APIRouter:
         )
 
     @router.get(
-        "/admin/invitations",
+        "/invitations",
         response_model=list[InvitationResponse],
         tags=["注册邀请管理"],
     )
     def list_invitations(
-        principal: SessionPrincipal = Depends(require_admin),
+        principal: AdminSessionPrincipal = Depends(require_admin),
     ) -> list[InvitationResponse]:
         if application.invitations is None:
             raise RuntimeError("邀请注册服务尚未就绪")
@@ -564,7 +698,7 @@ def create_auth_router(application: AuthApplication) -> APIRouter:
         ]
 
     @router.post(
-        "/admin/invitations",
+        "/invitations",
         response_model=InvitationResponse,
         status_code=201,
         tags=["注册邀请管理"],
@@ -572,7 +706,7 @@ def create_auth_router(application: AuthApplication) -> APIRouter:
     def create_invitation(
         payload: InvitationCreateRequest,
         request: Request,
-        principal: SessionPrincipal = Depends(require_admin),
+        principal: AdminSessionPrincipal = Depends(require_admin),
     ) -> InvitationResponse:
         if application.invitations is None:
             raise RuntimeError("邀请注册服务尚未就绪")
@@ -589,7 +723,7 @@ def create_auth_router(application: AuthApplication) -> APIRouter:
         )
 
     @router.post(
-        "/admin/invitations/{invitation_id}/revoke",
+        "/invitations/{invitation_id}/revoke",
         response_model=InvitationResponse,
         tags=["注册邀请管理"],
     )
@@ -597,7 +731,7 @@ def create_auth_router(application: AuthApplication) -> APIRouter:
         invitation_id: int,
         payload: AdminReasonRequest,
         request: Request,
-        principal: SessionPrincipal = Depends(require_admin),
+        principal: AdminSessionPrincipal = Depends(require_admin),
     ) -> InvitationResponse:
         if application.invitations is None:
             raise RuntimeError("邀请注册服务尚未就绪")
@@ -642,6 +776,7 @@ def install_cloud_auth(app: FastAPI, settings: DeploymentSettings) -> AuthApplic
             config_version_id=active.config_version_id,
         )
     sessions = SessionService(database, session_secret, policy=session_policy)
+    admin_sessions = AdminSessionService(database, session_secret, policy=session_policy)
     feature_gate = CloudFeatureGate(
         database,
         registration_emergency_disabled=settings.registration_emergency_disabled,
@@ -665,6 +800,13 @@ def install_cloud_auth(app: FastAPI, settings: DeploymentSettings) -> AuthApplic
             policy_resolver=authentication_policy_from_database,
         ),
         sessions=sessions,
+        admin_authentication=AdminAuthenticationService(
+            database,
+            session_secret,
+            password_service=password_service,
+            session_policy=session_policy,
+        ),
+        admin_sessions=admin_sessions,
         user_administration=UserAdministrationService(
             database,
             session_secret,
@@ -696,6 +838,7 @@ def install_cloud_auth(app: FastAPI, settings: DeploymentSettings) -> AuthApplic
     app.state.auth_application = application
     app.state.database = database
     app.include_router(create_auth_router(application))
+    app.include_router(create_admin_router(application))
 
     def record_auth_failure(request: Request, error_code: str) -> None:
         action = getattr(request.state, "auth_action", "session")
@@ -724,8 +867,30 @@ def install_cloud_auth(app: FastAPI, settings: DeploymentSettings) -> AuthApplic
             status_code=403 if exc.code in {"ACCOUNT_SUSPENDED", "CSRF_INVALID"} else 401,
             content={"code": exc.code, "message": str(exc)},
         )
-        clear_session_cookies(response)
+        if exc.code.startswith("ADMIN_"):
+            clear_admin_session_cookies(response)
+        else:
+            clear_session_cookies(response)
         return response
+
+    @app.exception_handler(AdminCredentialError)
+    def handle_admin_credential_error(request: Request, exc: AdminCredentialError):
+        record_auth_failure(request, "ADMIN_INVALID_CREDENTIALS")
+        return JSONResponse(
+            status_code=401,
+            content={"code": "ADMIN_INVALID_CREDENTIALS", "message": str(exc)},
+        )
+
+    @app.exception_handler(AdminAccountSuspendedError)
+    def handle_admin_suspended_error(
+        request: Request,
+        exc: AdminAccountSuspendedError,
+    ):
+        record_auth_failure(request, "ADMIN_ACCOUNT_SUSPENDED")
+        return JSONResponse(
+            status_code=403,
+            content={"code": "ADMIN_ACCOUNT_SUSPENDED", "message": str(exc)},
+        )
 
     @app.exception_handler(CredentialError)
     def handle_credential_error(request: Request, exc: CredentialError):
@@ -816,6 +981,16 @@ def install_cloud_auth(app: FastAPI, settings: DeploymentSettings) -> AuthApplic
         return JSONResponse(
             status_code=400,
             content={"code": "RESET_CREDENTIAL_INVALID", "message": str(exc)},
+        )
+
+    @app.exception_handler(ProtectedAdministratorActionError)
+    def handle_protected_administrator_action(
+        _request: Request,
+        exc: ProtectedAdministratorActionError,
+    ):
+        return JSONResponse(
+            status_code=409,
+            content={"code": "SOLE_ADMIN_PROTECTED", "message": str(exc)},
         )
 
     def close_auth_resources() -> None:

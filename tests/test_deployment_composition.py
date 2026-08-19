@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import os
 from pathlib import Path
+import subprocess
+import sys
 
 from src.platform.composition import compose_deployment_adapters
 from src.platform.configuration_service import ConfigurationService
@@ -113,6 +116,12 @@ def test_compose_uses_distinct_admin_and_rls_application_database_roles() -> Non
     assert "LUMENX_DATABASE_RESOURCE_ID: ${LUMENX_DATABASE_RESOURCE_ID:-}" in compose
     assert "LUMENX_REDIS_RESOURCE_ID: ${LUMENX_REDIS_RESOURCE_ID:-}" in compose
     assert "database-role-bootstrap:" in compose
+    assert "registration-mode-bootstrap:" in compose
+    assert "ai-tasks-bootstrap:" in Path("docker-compose.override.yml").read_text(encoding="utf-8")
+    assert "scripts/set_local_ai_mode.py" in Path("docker-compose.override.yml").read_text(encoding="utf-8")
+    assert 'LUMENX_NEW_AI_TASKS_EMERGENCY_DISABLED: "false"' in Path("docker-compose.override.yml").read_text(encoding="utf-8")
+    assert "LUMENX_BOOTSTRAP_REGISTRATION_MODE" in compose
+    assert "scripts/set_registration_mode.py" in compose
     assert "dockerfile: docker/Dockerfile.postgres-tools" in compose
     postgres_tools = Path("docker/Dockerfile.postgres-tools").read_text(encoding="utf-8")
     assert not Path("Dockerfile.postgres-tools").exists()
@@ -121,6 +130,44 @@ def test_compose_uses_distinct_admin_and_rls_application_database_roles() -> Non
     assert "condition: service_completed_successfully" in compose
     assert "lumenx-cloud-entrypoint celery -A src.platform.worker:celery_app inspect ping" in compose
     assert '"http://127.0.0.1/"' in compose
+
+
+def test_makefile_exposes_explicit_sole_admin_adoption_recovery() -> None:
+    makefile = Path("Makefile").read_text(encoding="utf-8")
+
+    assert "docker-admin-adopt:" in makefile
+    assert "--adopt-existing-sole-admin" in makefile
+    assert "$(COMPOSE) run --rm migration" in makefile
+    assert "docker-admin-adopt  一次性接管唯一的异名管理员" in makefile
+
+
+def test_local_compose_automatically_adopts_only_the_sole_legacy_admin() -> None:
+    compose = Path("docker-compose.yml").read_text(encoding="utf-8")
+    local_override = Path("docker-compose.override.yml").read_text(encoding="utf-8")
+    release_override = Path("docker-compose.release.yml").read_text(encoding="utf-8")
+
+    assert 'LUMENX_BOOTSTRAP_ADMIN_ADOPT_EXISTING_SOLE: "false"' in compose
+    assert 'LUMENX_BOOTSTRAP_ADMIN_ADOPT_EXISTING_SOLE: "true"' in local_override
+    assert "LUMENX_ALLOW_DEFAULT_BOOTSTRAP_ADMIN_PASSWORD: \"true\"" in local_override
+    assert "LUMENX_BOOTSTRAP_ADMIN_ADOPT_EXISTING_SOLE" not in release_override
+
+
+def test_local_ai_bootstrap_is_explicitly_guarded_and_production_stays_closed() -> None:
+    script = Path("scripts/set_local_ai_mode.py").read_text(encoding="utf-8")
+    local_override = Path("docker-compose.override.yml").read_text(encoding="utf-8")
+    production = Path("docker-compose.yml").read_text(encoding="utf-8")
+
+    assert "LUMENX_LOCAL_DOCKER" in script
+    assert "LUMENX_LOCAL_AI_BOOTSTRAP_ENABLED" in script
+    assert "configuration.local_ai_bootstrap" in script
+    assert 'LUMENX_NEW_AI_TASKS_EMERGENCY_DISABLED: "false"' in local_override
+    assert "LUMENX_PROVIDER_SECRET_REFS: DASHSCOPE_API_KEY,ARK_API_KEY" in local_override
+    assert "ARK_API_KEY: ${LUMENX_LOCAL_ARK_API_KEY:" in local_override
+    assert "SEEDANCE_PROVIDER_MODE: ark" in local_override
+    assert 'AICapability.VIDEO_I2V: "seedance-2.0-i2v"' in script
+    assert 'AICapability.VIDEO_R2V: "seedance-2.0-r2v"' in script
+    assert "LUMENX_NEW_AI_TASKS_EMERGENCY_DISABLED:-true" in production
+    assert "ai-tasks-bootstrap:" not in production
 
 
 def test_frontend_image_fails_when_dependency_install_is_incomplete() -> None:
@@ -143,10 +190,36 @@ def test_backend_image_always_contains_database_migrations() -> None:
 
 def test_release_smoke_runs_as_module_from_application_root() -> None:
     release_compose = Path("docker-compose.release.yml").read_text(encoding="utf-8")
+    release_smoke = Path("scripts/cloud_release_smoke.py").read_text(encoding="utf-8")
 
     assert "dockerfile: docker/Dockerfile.backend" in release_compose
     assert 'command: ["python", "-m", "scripts.cloud_release_smoke"]' in release_compose
     assert 'command: ["python", "scripts/cloud_release_smoke.py"]' not in release_compose
+    assert "LUMENX_BOOTSTRAP_ADMIN_USERNAME: releaseadmin" in release_compose
+    assert "PlatformAdminBootstrapService" not in release_smoke
+    assert "uuid.UUID" not in release_smoke
+    assert "/api/v1/admin/recharge-orders" in release_smoke
+    assert "/api/v1/admin/system-scenes" in release_smoke
+    assert "/api/v1/system-scenes/{scene_id}/copy" in release_smoke
+
+
+def test_postgres_migration_verifier_runs_directly_from_project_root() -> None:
+    environment = os.environ.copy()
+    environment.pop("LUMENX_DATABASE_URL", None)
+    environment.pop("PYTHONPATH", None)
+
+    result = subprocess.run(
+        [sys.executable, "scripts/verify_postgres_migrations.py"],
+        cwd=Path(__file__).resolve().parents[1],
+        env=environment,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode != 0
+    assert "迁移验证缺少 PostgreSQL 管理连接" in result.stderr
+    assert "ModuleNotFoundError" not in result.stderr
 
 
 def test_release_nginx_syntax_check_does_not_require_a_running_backend() -> None:
@@ -227,19 +300,24 @@ def test_local_compose_uses_env_values_and_docker_managed_volumes() -> None:
 
     assert "name: lumenx-local" in override
     assert "secrets: !reset {}" in override
-    assert override.count("secrets: !reset []") == 8
+    assert override.count("secrets: !reset []") == 11
     assert "local-output:/app/output" in override
     assert "local-imports:/imports:ro" in override
     assert '"127.0.0.1:3000:80"' in override
     assert '"127.0.0.1:15433:5432"' in override
-    assert override.count("pull_policy: build") == 8
+    assert override.count("pull_policy: build") == 11
+    assert 'LUMENX_REGISTRATION_EMERGENCY_DISABLED: "false"' in override
+    assert "LUMENX_BOOTSTRAP_REGISTRATION_MODE:-open" in override
     assert "\n    ports:" not in production_postgres
     assert "./output" not in override
     assert "./imports" not in override
     assert "./secrets" not in override
     assert "docker-env: docker-env" not in makefile
     assert "docker-config: docker-env" in makefile
-    assert "$(COMPOSE) -f docker-compose.yml config --quiet" in makefile
+    assert (
+        "$(COMPOSE) -f docker-compose.yml -f docker-compose.release.yml config --quiet"
+        in makefile
+    )
 
     backup = Path("docker/postgres-backup.sh").read_text(encoding="utf-8")
     assert 'if [ -n "${POSTGRES_PASSWORD_FILE:-}" ]; then' in backup
@@ -253,4 +331,7 @@ def test_local_docker_env_setup_never_prints_secret_values() -> None:
     assert "chmod 600" in setup
     assert "openssl rand -hex 32" in setup
     assert "未输出任何凭据" in setup
+    assert "LUMENX_LOCAL_ARK_API_KEY" in setup
+    assert "LUMENX_LOCAL_ARK_BASE_URL" in setup
+    assert "LUMENX_LOCAL_ARK_SEEDANCE_MODEL" in setup
     assert "set -x" not in setup

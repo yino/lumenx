@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from dataclasses import replace
 from types import SimpleNamespace
 from unittest.mock import Mock
 
@@ -13,7 +12,8 @@ from sqlalchemy import select
 from src.platform.administration_api import install_cloud_platform_administration_api
 from src.platform.auth.admin import AdminAuthorizationError, UserAdministrationService
 from src.platform.auth.security import PasswordService
-from src.platform.auth.sessions import SessionPrincipal
+from src.platform.auth.admin_identity import AdminSessionPrincipal
+from src.platform.auth.sessions import SessionAuthenticationError
 from src.platform.db_models import (
     AITaskRecord,
     AuditEventRecord,
@@ -109,12 +109,11 @@ def administration_client():
         )
 
     sessions = Mock()
-    sessions.resolve.return_value = SessionPrincipal(
-        user_id=user_id,
-        session_id=int(context.identity.session_id),
-        phone_canonical="+8613800138000",
-        phone_verified=False,
-        is_platform_admin=True,
+    sessions.resolve.return_value = AdminSessionPrincipal(
+        admin_id=9001,
+        session_id=9101,
+        username="admin",
+        must_change_password=False,
     )
     app = FastAPI()
     runtime_policy = Mock()
@@ -126,7 +125,7 @@ def administration_client():
         app,
         SimpleNamespace(
             database=database,
-            sessions=sessions,
+            admin_sessions=sessions,
             user_administration=UserAdministrationService(database, "s" * 32),
             runtime_policy=runtime_policy,
         ),
@@ -139,8 +138,12 @@ def administration_client():
             content={"code": "ADMIN_REQUIRED", "message": str(exc)},
         )
 
+    @app.exception_handler(SessionAuthenticationError)
+    def handle_admin_unauthenticated(_request: Request, exc: SessionAuthenticationError):
+        return JSONResponse(status_code=401, content={"code": exc.code, "message": str(exc)})
+
     client = TestClient(app)
-    client.cookies.set("lumenx_session", "admin-session")
+    client.cookies.set("lumenx_admin_session", "admin-session")
     yield client, sessions, context
     database.engine.dispose()
 
@@ -218,15 +221,14 @@ def test_platform_admin_can_create_user_with_workspace_wallet_and_audit(
         assert workspace is not None and workspace.user_id == user.id
         assert wallet is not None and wallet.available_microtickets == 1_500_000
         assert audit is not None and audit.reason == "运营后台开户"
-        assert audit.actor_user_id == int(context.identity.user_id)
+        assert audit.actor_admin_id == 9001
+        assert audit.actor_user_id is None
 
 
 def test_platform_administration_denies_normal_user(administration_client) -> None:
     client, sessions, _context = administration_client
-    sessions.resolve.return_value = replace(
-        sessions.resolve.return_value,
-        is_platform_admin=False,
-    )
+    client.cookies.delete("lumenx_admin_session")
+    client.cookies.set("lumenx_session", "normal-user-session")
 
     for path in (
         "/admin/users",
@@ -236,11 +238,8 @@ def test_platform_administration_denies_normal_user(administration_client) -> No
         "/admin/import-batches",
     ):
         response = client.get(path)
-        assert response.status_code == 403
-        assert response.json() == {
-            "code": "ADMIN_REQUIRED",
-            "message": "仅平台管理员可以查看平台管理数据",
-        }
+        assert response.status_code == 401
+        assert response.json()["code"] == "ADMIN_AUTH_REQUIRED"
 
     denied_create = client.post(
         "/admin/users",
@@ -251,4 +250,4 @@ def test_platform_administration_denies_normal_user(administration_client) -> No
             "reason": "越权尝试",
         },
     )
-    assert denied_create.status_code == 403
+    assert denied_create.status_code == 401

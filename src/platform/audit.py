@@ -6,8 +6,10 @@ from collections.abc import Mapping
 from typing import Any
 
 from fastapi import Request
+from sqlalchemy import insert
+from sqlalchemy.orm import Session
 
-from .contracts import UserContext
+from .contracts import AdminContext, UserContext
 from .credentials import reject_plaintext_secrets
 from .database import Database
 from .db_models import AuditEventRecord
@@ -54,13 +56,18 @@ def request_network_fingerprint(request: Request) -> str:
     return hashlib.sha256(f"{source}|{user_agent}".encode("utf-8")).hexdigest()
 
 
+def append_audit_event(session: Session, **values: Any) -> None:
+    """Append an audit row without requesting it back through SELECT RLS."""
+    session.execute(insert(AuditEventRecord.__table__).inline().values(**values))
+
+
 class AuditService:
     def __init__(self, database: Database) -> None:
         self.database = database
 
     def record(
         self,
-        identity: UserContext,
+        identity: UserContext | AdminContext,
         *,
         action: str,
         target_type: str,
@@ -76,29 +83,39 @@ class AuditService:
             raise ValueError("审计动作名称无效")
         if not target_type.strip() or len(target_type) > 80:
             raise ValueError("审计目标类型无效")
-        actor_id = parse_database_id(identity.user_id, field="操作用户 ID")
-        canonical_target_user = (
-            parse_database_id(target_user_id, field="目标用户 ID")
-            if target_user_id
-            else actor_id
-        )
+        if isinstance(identity, AdminContext):
+            actor_user_id = None
+            actor_admin_id = parse_database_id(identity.admin_id, field="操作管理员 ID")
+            canonical_target_user = (
+                parse_database_id(target_user_id, field="目标用户 ID")
+                if target_user_id
+                else None
+            )
+        else:
+            actor_user_id = parse_database_id(identity.user_id, field="操作用户 ID")
+            actor_admin_id = None
+            canonical_target_user = (
+                parse_database_id(target_user_id, field="目标用户 ID")
+                if target_user_id
+                else actor_user_id
+            )
         canonical_workspace = parse_optional_database_id(
             workspace_id,
             field="工作区 ID",
         )
         with self.database.transaction(identity) as session:
-            session.add(
-                AuditEventRecord(
-                    actor_user_id=actor_id,
-                    target_user_id=canonical_target_user,
-                    workspace_id=canonical_workspace,
-                    action=action.strip(),
-                    target_type=target_type.strip(),
-                    target_id=target_id,
-                    reason=reason.strip() if reason else None,
-                    before_summary=_safe_summary(before),
-                    after_summary=_safe_summary(after),
-                    correlation_id=request_correlation_id(request),
-                    network_fingerprint=request_network_fingerprint(request),
-                )
+            append_audit_event(
+                session,
+                actor_user_id=actor_user_id,
+                actor_admin_id=actor_admin_id,
+                target_user_id=canonical_target_user,
+                workspace_id=canonical_workspace,
+                action=action.strip(),
+                target_type=target_type.strip(),
+                target_id=target_id,
+                reason=reason.strip() if reason else None,
+                before_summary=_safe_summary(before),
+                after_summary=_safe_summary(after),
+                correlation_id=request_correlation_id(request),
+                network_fingerprint=request_network_fingerprint(request),
             )

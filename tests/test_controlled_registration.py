@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import uuid
-from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 
 import pytest
@@ -10,6 +9,7 @@ from sqlalchemy import func, select
 from src.platform.auth.invitations import InvitationError, InvitationService
 from src.platform.auth.registration import RegistrationPolicy, RegistrationService
 from src.platform.configuration_schemas import RegistrationMode
+from src.platform.contracts import AdminContext
 from src.platform.db_models import (
     AuditEventRecord,
     Base,
@@ -25,7 +25,7 @@ def invitation_environment():
     database = RepositoryDatabase()
     Base.metadata.create_all(database.engine, checkfirst=True)
     context = _create_scope(database)
-    admin = replace(context.identity, is_platform_admin=True)
+    admin = AdminContext(admin_id="9001", session_id="9101", username="admin")
     invitations = InvitationService(database, "i" * 32)
     yield database, admin, invitations
     database.engine.dispose()

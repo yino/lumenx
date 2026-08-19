@@ -1,8 +1,10 @@
 FROM python:3.11-slim
 
-# Install FFmpeg and system dependencies
+# Install FFmpeg, libass support, and a font with complete Simplified Chinese glyphs.
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ffmpeg \
+    fontconfig \
+    fonts-noto-cjk \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app

@@ -9,10 +9,8 @@ from fastapi import APIRouter, Depends, FastAPI, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
-from .auth.admin import AdminAuthorizationError
+from .admin_access import create_require_platform_admin
 from .auth.api import AuthApplication
-from .auth.protection import UNSAFE_METHODS
-from .auth.sessions import SessionAuthenticationError, SessionPrincipal
 from .configuration_schemas import ConfigurationDraft
 from .configuration_service import (
     ConfigurationConflictError,
@@ -21,7 +19,7 @@ from .configuration_service import (
     ConfigurationValidationError,
     StoredConfiguration,
 )
-from .contracts import UserContext
+from .contracts import AdminContext
 from .settings import DeploymentSettings
 
 
@@ -139,7 +137,8 @@ def _configuration_response(configuration: StoredConfiguration) -> dict[str, Any
         "reason": configuration.draft.reason,
         "platform": configuration.draft.platform.model_dump(mode="json"),
         "routes": [route.model_dump(mode="json") for route in configuration.draft.routes],
-        "created_by_user_id": configuration.created_by_user_id,
+        "created_by_admin_id": configuration.created_by_admin_id,
+        "legacy_created_by_user_id": configuration.legacy_created_by_user_id,
         "created_at": configuration.created_at,
         "activated_at": configuration.activated_at,
         "superseded_at": configuration.superseded_at,
@@ -157,38 +156,25 @@ def install_cloud_configuration_api(
     )
     router = APIRouter(prefix="/admin/configuration", tags=["平台配置管理"])
 
-    def require_admin(request: Request) -> UserContext:
-        token = request.cookies.get("lumenx_session")
-        if not token:
-            raise SessionAuthenticationError("AUTH_REQUIRED", "请先登录")
-        csrf_token = (
-            request.headers.get("x-csrf-token")
-            if request.method in UNSAFE_METHODS
-            else None
-        )
-        principal: SessionPrincipal = auth.sessions.resolve(token, csrf_token=csrf_token)
-        if not principal.is_platform_admin:
-            raise AdminAuthorizationError("仅平台管理员可以管理平台配置")
-        return UserContext(
-            user_id=str(principal.user_id),
-            session_id=str(principal.session_id),
-            is_platform_admin=True,
-        )
+    require_admin = create_require_platform_admin(
+        auth.admin_sessions,
+        denied_message="仅平台管理员可以管理平台配置",
+    )
 
     @router.get("/versions")
-    def list_versions(identity: UserContext = Depends(require_admin)) -> list[dict[str, Any]]:
+    def list_versions(identity: AdminContext = Depends(require_admin)) -> list[dict[str, Any]]:
         return [
             _configuration_response(configuration)
             for configuration in service.list_versions(identity)
         ]
 
     @router.get("/active")
-    def get_active(identity: UserContext = Depends(require_admin)) -> dict[str, Any]:
+    def get_active(identity: AdminContext = Depends(require_admin)) -> dict[str, Any]:
         return _configuration_response(service.get_active(identity))
 
     @router.get("/deployment-state")
     def get_deployment_state(
-        _identity: UserContext = Depends(require_admin),
+        _identity: AdminContext = Depends(require_admin),
     ) -> dict[str, Any]:
         return {
             "worker_concurrency": observed_worker_concurrency,
@@ -217,7 +203,7 @@ def install_cloud_configuration_api(
     @router.get("/versions/{version_id}")
     def get_version(
         version_id: str,
-        identity: UserContext = Depends(require_admin),
+        identity: AdminContext = Depends(require_admin),
     ) -> dict[str, Any]:
         return _configuration_response(service.get_version(identity, version_id))
 
@@ -225,7 +211,7 @@ def install_cloud_configuration_api(
     def create_version(
         payload: ConfigurationDraft,
         request: Request,
-        identity: UserContext = Depends(require_admin),
+        identity: AdminContext = Depends(require_admin),
     ) -> dict[str, Any]:
         return _configuration_response(
             service.create_version(
@@ -238,7 +224,7 @@ def install_cloud_configuration_api(
     @router.post("/versions/{version_id}/validate")
     def validate_version(
         version_id: str,
-        identity: UserContext = Depends(require_admin),
+        identity: AdminContext = Depends(require_admin),
     ) -> dict[str, Any]:
         configuration = service.validate_version(identity, version_id)
         return {
@@ -252,7 +238,7 @@ def install_cloud_configuration_api(
         version_id: str,
         payload: ConfigurationReasonRequest,
         request: Request,
-        identity: UserContext = Depends(require_admin),
+        identity: AdminContext = Depends(require_admin),
     ) -> dict[str, Any]:
         return _configuration_response(
             service.activate_version(
@@ -268,7 +254,7 @@ def install_cloud_configuration_api(
         version_id: str,
         payload: ConfigurationReasonRequest,
         request: Request,
-        identity: UserContext = Depends(require_admin),
+        identity: AdminContext = Depends(require_admin),
     ) -> dict[str, Any]:
         return _configuration_response(
             service.disable_version(
@@ -284,7 +270,7 @@ def install_cloud_configuration_api(
         version_id: str,
         payload: ConfigurationReasonRequest,
         request: Request,
-        identity: UserContext = Depends(require_admin),
+        identity: AdminContext = Depends(require_admin),
     ) -> dict[str, Any]:
         return _configuration_response(
             service.rollback_to_new_version(

@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import json
 import uuid
-from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -10,7 +9,7 @@ from sqlalchemy import func, select
 
 from src.apps.comic_gen.models import Character, GlobalAssetLibrary, Script, Series
 from src.apps.playground.models import PlaygroundGeneration, PlaygroundMode, PlaygroundOutput
-from src.platform.contracts import UserContext
+from src.platform.contracts import AdminContext, UserContext
 from src.platform.db_models import (
     AITaskRecord,
     AuditEventRecord,
@@ -121,7 +120,7 @@ def import_environment(tmp_path: Path):
     AuditEventRecord.__table__.create(database.engine)
     AITaskRecord.__table__.create(database.engine)
     context = _create_scope(database)
-    admin = replace(context.identity, is_platform_admin=True)
+    admin = AdminContext(admin_id="9001", session_id="9101", username="admin")
     object_store = FakePrivateObjectStore()
     storage = CloudMediaStorage(database, object_store)
     service = LocalImportService(

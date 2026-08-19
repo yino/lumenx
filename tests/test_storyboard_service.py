@@ -4,7 +4,7 @@ import uuid
 
 import pytest
 
-from src.apps.comic_gen.models import StoryboardFrame
+from src.apps.comic_gen.models import DialogueStructured, StoryboardFrame
 from src.platform.content_repositories import (
     OptimisticVersionConflictError,
     PostgresProjectRepository,
@@ -15,6 +15,9 @@ from src.platform.media_storage import CloudMediaStorage
 from src.platform.storyboard_service import (
     CloudStoryboardService,
     StoryboardValidationError,
+    _build_srt,
+    _effective_dialogue,
+    _format_srt_timestamp,
 )
 from tests.test_content_repositories import RepositoryDatabase, _create_scope, _script
 from tests.test_media_storage import FakePrivateObjectStore
@@ -60,6 +63,45 @@ def _store_media(
             project_id=project_id,
         ),
     ).media_id
+
+
+def test_subtitles_prefer_structured_dialogue_and_use_real_timeline() -> None:
+    frames = [
+        StoryboardFrame(
+            id="frame-1",
+            scene_id="scene-1",
+            dialogue="旧台词",
+            speaker="林渊",
+            dialogue_structured=DialogueStructured(
+                speaker="旁白",
+                line="  <b>真龙</b>\n出狱！  ",
+            ),
+        ),
+        StoryboardFrame(id="frame-2", scene_id="scene-1"),
+        StoryboardFrame(
+            id="frame-3",
+            scene_id="scene-2",
+            dialogue="警报解除。",
+        ),
+    ]
+
+    assert _effective_dialogue(frames[0]) == "真龙 出狱！"
+    assert _format_srt_timestamp(3661.009) == "01:01:01,009"
+    assert _build_srt(frames, [5.038, 2.5, 7.035]) == (
+        "1\n"
+        "00:00:00,000 --> 00:00:05,038\n"
+        "林渊：真龙 出狱！\n\n"
+        "2\n"
+        "00:00:07,538 --> 00:00:14,573\n"
+        "警报解除。\n"
+    )
+
+
+def test_subtitle_builder_rejects_mismatched_durations() -> None:
+    frame = StoryboardFrame(id="frame-1", scene_id="scene-1", dialogue="台词")
+
+    with pytest.raises(ValueError, match="数量不一致"):
+        _build_srt([frame], [])
 
 
 def test_storyboard_crud_and_workbench_use_optimistic_versions(
@@ -231,4 +273,3 @@ def test_storyboard_media_references_are_scoped_media_ids(storyboard_service) ->
             other_media_id,
             expected_version=5,
         )
-

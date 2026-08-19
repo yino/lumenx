@@ -6,11 +6,10 @@ from typing import Literal
 from fastapi import APIRouter, Depends, FastAPI, HTTPException, Request
 from pydantic import BaseModel, Field, PositiveInt
 
-from .auth.admin import AdminAuthorizationError
+from .admin_access import create_require_platform_admin
 from .audit import AuditService
 from .auth.api import AuthApplication
-from .auth.sessions import SessionAuthenticationError, SessionPrincipal
-from .contracts import UserContext
+from .contracts import AdminContext
 from .local_import import (
     LocalImportConflictError,
     LocalImportService,
@@ -48,18 +47,10 @@ def install_cloud_import_api(
     audit = AuditService(auth.database)
     router = APIRouter(prefix="/admin/imports", tags=["本地数据导入"])
 
-    def require_admin(request: Request) -> UserContext:
-        token = request.cookies.get("lumenx_session")
-        if not token:
-            raise SessionAuthenticationError("AUTH_REQUIRED", "请先登录")
-        principal: SessionPrincipal = auth.sessions.resolve(token)
-        if not principal.is_platform_admin:
-            raise AdminAuthorizationError("仅平台管理员可以执行本地数据导入")
-        return UserContext(
-            user_id=str(principal.user_id),
-            session_id=str(principal.session_id),
-            is_platform_admin=True,
-        )
+    require_admin = create_require_platform_admin(
+        auth.admin_sessions,
+        denied_message="仅平台管理员可以执行本地数据导入",
+    )
 
     def execute_service(operation):
         try:
@@ -79,7 +70,7 @@ def install_cloud_import_api(
     def dry_run(
         payload: ImportDryRunRequest,
         request: Request,
-        admin: UserContext = Depends(require_admin),
+        admin: AdminContext = Depends(require_admin),
     ) -> dict:
         result = execute_service(
             lambda: service.dry_run(
@@ -111,7 +102,7 @@ def install_cloud_import_api(
     def execute(
         batch_id: str,
         request: Request,
-        admin: UserContext = Depends(require_admin),
+        admin: AdminContext = Depends(require_admin),
     ) -> dict:
         result = execute_service(lambda: service.execute(admin, batch_id))
         detail = execute_service(lambda: service.get_batch(admin, batch_id))
@@ -132,7 +123,7 @@ def install_cloud_import_api(
         return result
 
     @router.get("/{batch_id}")
-    def get_batch(batch_id: str, admin: UserContext = Depends(require_admin)) -> dict:
+    def get_batch(batch_id: str, admin: AdminContext = Depends(require_admin)) -> dict:
         return execute_service(lambda: service.get_batch(admin, batch_id))
 
     @router.post("/{batch_id}/rollback")
@@ -140,7 +131,7 @@ def install_cloud_import_api(
         batch_id: str,
         payload: ImportRollbackRequest,
         request: Request,
-        admin: UserContext = Depends(require_admin),
+        admin: AdminContext = Depends(require_admin),
     ) -> dict:
         detail = execute_service(lambda: service.get_batch(admin, batch_id))
         result = execute_service(lambda: service.rollback(admin, batch_id, payload.reason))

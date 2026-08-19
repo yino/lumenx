@@ -10,21 +10,18 @@ from typing import Any, Protocol
 from sqlalchemy import select, update
 
 from .ai_task_state import AITaskStateConflictError, AITaskStateService
-from .contracts import CredentialProvider, ModelRouteSnapshot, UserContext, WorkspaceContext
+from .contracts import CredentialProvider, ModelRouteSnapshot, SystemContext, UserContext, WorkspaceContext
 from .database import Database
 from .db_models import AITaskAttemptRecord, AITaskRecord
 from .metering import evaluate_metering_tokens
 from .identifiers import parse_database_id
 from .model_routing import RequestScopedModelClient, RequestScopedModelClientFactory
 from .observability import events, metrics
+from .provider_errors import ProviderRequestRejectedError, ProviderTerminalFailureError
 from .ticket_settlement import TicketSettlementService
 
 
-WORKER_IDENTITY = UserContext(
-    user_id="0",
-    session_id="ai-worker",
-    is_platform_admin=True,
-)
+WORKER_IDENTITY = SystemContext(service_name="ai-worker")
 
 
 class AIWorkerError(RuntimeError):
@@ -111,6 +108,8 @@ class ProviderSubmissionRecorder:
         self.lease = lease
         self.recorded = False
         self.billable_acknowledged = False
+        self.provider_task_id: str | None = None
+        self.provider_request_id: str | None = None
 
     def __call__(
         self,
@@ -133,6 +132,8 @@ class ProviderSubmissionRecorder:
         self.billable_acknowledged = (
             self.billable_acknowledged or billable_acknowledged
         )
+        self.provider_task_id = provider_task_id or self.provider_task_id
+        self.provider_request_id = provider_request_id or self.provider_request_id
 
 
 def _required_text(snapshot: Mapping[str, Any], key: str) -> str:
@@ -210,7 +211,7 @@ class AIWorkerTaskRepository:
         self,
         database: Database,
         *,
-        worker_identity: UserContext = WORKER_IDENTITY,
+        worker_identity: SystemContext = WORKER_IDENTITY,
     ) -> None:
         self.database = database
         self.worker_identity = worker_identity
@@ -335,24 +336,21 @@ class AIWorkerService:
         stage: str,
         error: Exception,
     ) -> WorkerExecutionResult:
-        error_code = (
-            "MODEL_CLIENT_UNAVAILABLE"
-            if stage == "model_client"
-            else (
-                "PROVIDER_INPUT_UNAVAILABLE"
-                if stage == "provider_input"
-                else "PROVIDER_INVOCATION_FAILED"
-            )
+        provider_rejection = (
+            error if isinstance(error, ProviderRequestRejectedError) else None
         )
-        message = (
-            "模型服务暂时不可用，请稍后重试"
-            if stage == "model_client"
-            else (
-                "AI 输入资源不可用，请刷新后重试"
-                if stage == "provider_input"
-                else "AI 生成失败，请稍后重试"
-            )
-        )
+        if provider_rejection is not None:
+            error_code = provider_rejection.safe_error_code
+            message = provider_rejection.safe_error_message
+        elif stage == "model_client":
+            error_code = "MODEL_CLIENT_UNAVAILABLE"
+            message = "模型服务暂时不可用，请稍后重试"
+        elif stage == "provider_input":
+            error_code = "PROVIDER_INPUT_UNAVAILABLE"
+            message = "AI 输入资源不可用，请刷新后重试"
+        else:
+            error_code = "PROVIDER_INVOCATION_FAILED"
+            message = "AI 生成失败，请稍后重试"
         self.settlement.release_nonbillable(
             lease.context,
             task_id=lease.task_id,
@@ -475,6 +473,7 @@ class AIWorkerService:
 
         submission = ProviderSubmissionRecorder(self.task_state, lease)
         provider_started_at = time.perf_counter()
+        outcome: ProviderInvocationOutcome | None = None
         try:
             outcome = self.provider_invoker.invoke(client, lease, submission)
             if not isinstance(outcome, ProviderInvocationOutcome):
@@ -499,6 +498,53 @@ class AIWorkerService:
                 },
             )
             if submission.billable_acknowledged:
+                if isinstance(exc, ProviderTerminalFailureError):
+                    self.settlement.release_unmetered_billable_failure(
+                        lease.context,
+                        task_id=lease.task_id,
+                        attempt_id=lease.attempt_id,
+                        support_review_reason="供应商明确返回终态失败",
+                        safe_error_code="PROVIDER_TERMINAL_FAILURE",
+                        safe_error_message="AI 生成失败，预扣算力券已全部退回",
+                        attempt_diagnostic={
+                            "billing_state": "acknowledged",
+                            "error_type": type(exc).__name__,
+                            "stage": "provider_invocation",
+                            "provider_status": exc.provider_status,
+                        },
+                    )
+                    return WorkerExecutionResult(
+                        task_id=lease.task_id,
+                        attempt_id=lease.attempt_id,
+                        status="support_review",
+                        acquired=True,
+                    )
+                if submission.provider_task_id is None:
+                    self.settlement.release_unmetered_billable_failure(
+                        lease.context,
+                        task_id=lease.task_id,
+                        attempt_id=lease.attempt_id,
+                        support_review_reason="同步供应商结果无法按任务报价安全计量",
+                        safe_error_code="PROVIDER_USAGE_REVIEW_REQUIRED",
+                        safe_error_message="AI 结果未能安全结算，预扣算力券已全部退回",
+                        attempt_diagnostic={
+                            "billing_state": "acknowledged",
+                            "error_type": type(exc).__name__,
+                            "stage": "provider_invocation",
+                            "provider_request_id_present": bool(
+                                submission.provider_request_id
+                            ),
+                        },
+                        raw_provider_usage=(
+                            outcome.raw_usage if outcome is not None else None
+                        ),
+                    )
+                    return WorkerExecutionResult(
+                        task_id=lease.task_id,
+                        attempt_id=lease.attempt_id,
+                        status="support_review",
+                        acquired=True,
+                    )
                 return self._mark_ambiguous(
                     lease,
                     stage="provider_invocation",

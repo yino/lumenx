@@ -11,6 +11,7 @@ from pydantic import SecretStr
 from .configuration_schemas import AICapability, ModelRouteConfig
 from .configuration_service import ConfigurationService, StoredConfiguration
 from .contracts import CredentialProvider, ModelRouteSnapshot, UserContext
+from .video_providers import ModelIdVideoProviderFactory, VideoProviderFactory
 
 
 class ModelRouteUnavailableError(LookupError):
@@ -212,14 +213,17 @@ class RequestScopedModelClientFactory:
         self,
         credential_provider: CredentialProvider,
         builders: Mapping[str, ModelClientBuilder] | None = None,
+        video_providers: VideoProviderFactory | None = None,
     ) -> None:
         self.credential_provider = credential_provider
         self.builders = dict(builders or self._default_builders())
+        self.video_providers = video_providers or ModelIdVideoProviderFactory(
+            credential_provider
+        )
 
     @staticmethod
     def _default_builders() -> dict[str, ModelClientBuilder]:
         return {
-            "ark": RequestScopedModelClientFactory._build_ark,
             "dashscope": RequestScopedModelClientFactory._build_dashscope,
             "mulerouter": RequestScopedModelClientFactory._build_mulerouter,
             "openai": RequestScopedModelClientFactory._build_openai,
@@ -249,10 +253,6 @@ class RequestScopedModelClientFactory:
             from src.models.image import WanxImageModel
 
             return WanxImageModel(config)
-        if snapshot.capability.startswith("video."):
-            from src.models.wanx import WanxModel
-
-            return WanxModel(config)
         if snapshot.capability in {"script.analysis", "prompt.polish"}:
             from src.apps.comic_gen.llm_adapter import LLMAdapter
 
@@ -261,20 +261,15 @@ class RequestScopedModelClientFactory:
                 api_key=credential.get_secret_value(),
                 model=snapshot.provider_model_id,
             )
+        if snapshot.capability == "speech.tts":
+            from src.audio.tts import TTSProcessor
+
+            return TTSProcessor(
+                api_key=credential.get_secret_value(),
+                model=snapshot.provider_model_id,
+            )
         raise ModelClientUnavailableError(
             f"DashScope 暂不支持能力 {snapshot.capability}"
-        )
-
-    @staticmethod
-    def _build_ark(snapshot: ModelRouteSnapshot, credential: SecretStr) -> Any:
-        if not snapshot.capability.startswith("video."):
-            raise ModelClientUnavailableError(
-                f"Ark 暂不支持能力 {snapshot.capability}"
-            )
-        from src.models.ark_seedance import ArkSeedanceVideoModel
-
-        return ArkSeedanceVideoModel(
-            RequestScopedModelClientFactory._adapter_config(snapshot, credential)
         )
 
     @staticmethod
@@ -287,10 +282,6 @@ class RequestScopedModelClientFactory:
             from src.models.mulerouter import MuleRouterImageModel
 
             return MuleRouterImageModel(config)
-        if snapshot.capability.startswith("video."):
-            from src.models.mulerouter import MuleRouterVideoModel
-
-            return MuleRouterVideoModel(config)
         raise ModelClientUnavailableError(
             f"MuleRouter 暂不支持能力 {snapshot.capability}"
         )
@@ -310,6 +301,11 @@ class RequestScopedModelClientFactory:
         )
 
     def create(self, snapshot: ModelRouteSnapshot) -> RequestScopedModelClient:
+        if snapshot.capability.startswith("video."):
+            return RequestScopedModelClient(
+                snapshot=snapshot,
+                adapter=self.video_providers.create(snapshot.provider_model_id),
+            )
         builder = self.builders.get(snapshot.provider)
         if builder is None:
             raise ModelClientUnavailableError(

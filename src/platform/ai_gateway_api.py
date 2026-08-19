@@ -246,6 +246,12 @@ class CloudAIRequestAdapter:
                 "AI_REQUEST_INVALID",
                 "AI 请求格式无效",
             )
+        effective_capability = capability
+        if (
+            operation == "video.task.create"
+            and raw_payload.get("generation_mode") == "r2v"
+        ):
+            effective_capability = "video.r2v"
         try:
             enforce_no_client_ai_overrides(raw_payload)
         except ClientAIOverrideError as exc:
@@ -279,10 +285,20 @@ class CloudAIRequestAdapter:
         else:
             content = {"operation": operation, **payload}
         project_id = request.path_params.get("project_id")
+        if project_id is None and raw_payload.get("script_id") is not None:
+            try:
+                project_id = str(
+                    parse_database_id(raw_payload["script_id"], field="项目 ID")
+                )
+            except ValueError as exc:
+                raise AIGatewayContractError(
+                    "AI_REQUEST_INVALID",
+                    "项目 ID 无效",
+                ) from exc
         response = submit_ai_task(
             self.submitter,
             context,
-            capability=capability,
+            capability=effective_capability,
             idempotency_key=idempotency_key,
             content=content,
             project_id=str(project_id) if project_id is not None else None,
@@ -334,7 +350,6 @@ def install_cloud_ai_gateway_api(
             identity=UserContext(
                 user_id=str(principal.user_id),
                 session_id=str(principal.session_id),
-                is_platform_admin=principal.is_platform_admin,
             ),
             workspace_id=workspace_id,
         )

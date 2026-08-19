@@ -142,12 +142,9 @@ export default function AccountSecurityPanel() {
             <ShieldCheck size={21} />
           </div>
           <div className="min-w-0 flex-1">
-            <p className="font-mono text-sm text-foreground">{formatPhone(user.phone)}</p>
+            <p className="font-mono text-sm text-foreground">{user.username || (user.phone ? formatPhone(user.phone) : user.account_label)}</p>
             <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-text-secondary">
               <span>{user.phone_verification_status}</span>
-              {user.is_platform_admin && (
-                <span className="rounded bg-accent/10 px-1.5 py-0.5 text-accent">平台管理员</span>
-              )}
             </div>
           </div>
           <button

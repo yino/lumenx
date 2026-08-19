@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 from pathlib import Path
 import sys
 
@@ -14,9 +15,9 @@ from sqlalchemy import select
 
 from src.platform.configuration_schemas import RegistrationMode
 from src.platform.configuration_service import ConfigurationService
-from src.platform.contracts import UserContext
+from src.platform.contracts import AdminContext, SystemContext
 from src.platform.database import Database
-from src.platform.db_models import UserRecord
+from src.platform.db_models import AdminUserRecord
 from src.platform.settings import DeploymentMode, get_deployment_settings
 
 
@@ -26,6 +27,8 @@ def main() -> int:
     )
     parser.add_argument(
         "mode",
+        nargs="?",
+        default=os.getenv("LUMENX_BOOTSTRAP_REGISTRATION_MODE", "disabled"),
         choices=[mode.value for mode in RegistrationMode],
         help="disabled、invite_only、open 或 verified_open",
     )
@@ -43,32 +46,27 @@ def main() -> int:
         )
 
     database = Database(settings.database_url)
-    system_identity = UserContext(
-        user_id="0",
-        session_id="registration-mode-operator",
-        is_platform_admin=True,
-    )
+    system_identity = SystemContext(service_name="registration-mode-operator")
     try:
         with database.transaction(system_identity) as session:
-            admin_id = session.scalar(
-                select(UserRecord.id)
+            admin = session.scalar(
+                select(AdminUserRecord)
                 .where(
-                    UserRecord.is_platform_admin.is_(True),
-                    UserRecord.status == "active",
+                    AdminUserRecord.status == "active",
                 )
-                .order_by(UserRecord.created_at.asc(), UserRecord.id.asc())
+                .order_by(AdminUserRecord.created_at.asc(), AdminUserRecord.id.asc())
                 .limit(1)
             )
-        if admin_id is None:
+        if admin is None:
             raise RuntimeError("没有可用于发布配置的有效平台管理员")
 
-        admin = UserContext(
-            user_id=str(admin_id),
+        admin_identity = AdminContext(
+            admin_id=str(admin.id),
             session_id="registration-mode-operator",
-            is_platform_admin=True,
+            username=admin.username,
         )
         service = ConfigurationService(database, verification_provider_available=False)
-        active = service.get_active(admin)
+        active = service.get_active(admin_identity)
         previous_mode = active.draft.platform.feature_flags.registration_mode
         if previous_mode is mode:
             print(
@@ -92,9 +90,9 @@ def main() -> int:
         draft = active.draft.model_copy(
             update={"reason": args.reason.strip(), "platform": platform}
         )
-        created = service.create_version(admin, draft)
+        created = service.create_version(admin_identity, draft)
         activated = service.activate_version(
-            admin,
+            admin_identity,
             created.id,
             reason=args.reason,
         )

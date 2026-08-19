@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import uuid
-from dataclasses import replace
 from types import SimpleNamespace
 from unittest.mock import Mock
 
@@ -11,7 +10,8 @@ from fastapi.responses import JSONResponse
 from fastapi.testclient import TestClient
 
 from src.platform.auth.admin import AdminAuthorizationError
-from src.platform.auth.sessions import SessionPrincipal
+from src.platform.auth.admin_identity import AdminSessionPrincipal
+from src.platform.auth.sessions import SessionAuthenticationError
 from src.platform.configuration_api import (
     _deployment_resource_fingerprints,
     install_cloud_configuration_api,
@@ -36,17 +36,16 @@ def configuration_client():
     AuditEventRecord.__table__.create(database.engine)
     context = _create_scope(database)
     sessions = Mock()
-    sessions.resolve.return_value = SessionPrincipal(
-        user_id=int(context.identity.user_id),
-        session_id=int(context.identity.session_id),
-        phone_canonical="+8613800138000",
-        phone_verified=False,
-        is_platform_admin=True,
+    sessions.resolve.return_value = AdminSessionPrincipal(
+        admin_id=9001,
+        session_id=9101,
+        username="admin",
+        must_change_password=False,
     )
     app = FastAPI()
     install_cloud_configuration_api(
         app,
-        SimpleNamespace(database=database, sessions=sessions),
+        SimpleNamespace(database=database, admin_sessions=sessions),
         SimpleNamespace(
             global_worker_concurrency=3,
             deployment_mode=DeploymentMode.CLOUD,
@@ -75,8 +74,13 @@ def configuration_client():
             content={"code": "ADMIN_REQUIRED", "message": str(exc)},
         )
 
+    @app.exception_handler(SessionAuthenticationError)
+    def handle_admin_unauthenticated(_request: Request, exc: SessionAuthenticationError):
+        return JSONResponse(status_code=401, content={"code": exc.code, "message": str(exc)})
+
     client = TestClient(app)
-    client.cookies.set("lumenx_session", "admin-session")
+    client.cookies.set("lumenx_admin_session", "admin-session")
+    client.headers.update({"x-csrf-token": "admin-csrf"})
     yield client, sessions
     database.engine.dispose()
 
@@ -153,18 +157,13 @@ def test_configuration_api_denies_normal_user_without_disclosing_routes(
     configuration_client,
 ) -> None:
     client, sessions = configuration_client
-    sessions.resolve.return_value = replace(
-        sessions.resolve.return_value,
-        is_platform_admin=False,
-    )
+    client.cookies.delete("lumenx_admin_session")
+    client.cookies.set("lumenx_session", "normal-user-session")
 
     response = client.get("/admin/configuration/versions")
 
-    assert response.status_code == 403
-    assert response.json() == {
-        "code": "ADMIN_REQUIRED",
-        "message": "仅平台管理员可以管理平台配置",
-    }
+    assert response.status_code == 401
+    assert response.json()["code"] == "ADMIN_AUTH_REQUIRED"
     assert "secret_ref" not in response.text
 
 

@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from sqlalchemy import select
 
 from .configuration_schemas import RegistrationMode
-from .contracts import UserContext
+from .contracts import SystemContext
 from .database import Database
 from .db_models import ConfigVersionRecord, PlatformConfigRecord
 
@@ -30,11 +30,7 @@ class CloudFeatureState:
 class CloudFeatureGate:
     """Fail-closed rollout gates backed by the active platform configuration."""
 
-    _SYSTEM_IDENTITY = UserContext(
-        user_id="0",
-        session_id="cloud-feature-gate",
-        is_platform_admin=True,
-    )
+    _SYSTEM_IDENTITY = SystemContext(service_name="cloud-feature-gate")
 
     def __init__(
         self,

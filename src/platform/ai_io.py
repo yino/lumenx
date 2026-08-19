@@ -72,6 +72,16 @@ class ProviderOutputDownloader(Protocol):
     ) -> DownloadedProviderOutput: ...
 
 
+class AIResultApplier(Protocol):
+    def apply(
+        self,
+        context: WorkspaceContext,
+        task: Any,
+        media_ids: Sequence[str],
+        content: str | Mapping[str, Any] | None,
+    ) -> str | dict[str, Any] | None: ...
+
+
 class AIProviderInputResolver:
     def __init__(
         self,
@@ -278,7 +288,8 @@ def _validate_output_content(output: DownloadedProviderOutput) -> None:
         "image/webp": content.startswith(b"RIFF") and content[8:12] == b"WEBP",
         "video/mp4": len(content) >= 12 and content[4:8] == b"ftyp",
         "video/webm": content.startswith(b"\x1aE\xdf\xa3"),
-        "audio/mpeg": content.startswith(b"ID3") or content.startswith(b"\xff\xfb"),
+        "audio/mpeg": content.startswith(b"ID3")
+        or content.startswith((b"\xff\xfb", b"\xff\xf3", b"\xff\xf2")),
         "audio/wav": content.startswith(b"RIFF") and content[8:12] == b"WAVE",
         "audio/ogg": content.startswith(b"OggS"),
     }
@@ -306,11 +317,13 @@ class AIOutputFinalizationService:
         settlement: TicketSettlementService,
         media_storage: CloudMediaStorage,
         downloader: ProviderOutputDownloader,
+        result_applier: AIResultApplier | None = None,
     ) -> None:
         self.task_state = task_state
         self.settlement = settlement
         self.media_storage = media_storage
         self.downloader = downloader
+        self.result_applier = result_applier
 
     def finalize(
         self,
@@ -371,6 +384,13 @@ class AIOutputFinalizationService:
                     output_index=index,
                 )
                 media_ids.append(stored.media_id)
+            if self.result_applier is not None:
+                content = self.result_applier.apply(
+                    context,
+                    aggregate.task,
+                    media_ids,
+                    content,
+                )
         except Exception:
             failure = self.settlement.settle_billable_failure(
                 context,

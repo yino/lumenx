@@ -11,7 +11,7 @@ from sqlalchemy import delete, exists, or_, select, update
 
 from .ai_dispatch import CeleryRecoveryDispatcher
 from .ai_recovery import AIRecoveryRepository
-from .contracts import UserContext
+from .contracts import SystemContext
 from .database import Database
 from .db_models import (
     AITaskRecord,
@@ -40,11 +40,7 @@ MEDIA_MAINTENANCE_TASK = "lumenx.maintenance.cleanup_media"
 RECONCILIATION_MAINTENANCE_TASK = "lumenx.maintenance.reconcile_tasks_holds"
 BACKUP_MAINTENANCE_TASK = "lumenx.maintenance.verify_backup"
 
-MAINTENANCE_IDENTITY = UserContext(
-    user_id="00000000-0000-0000-0000-000000000001",
-    session_id="scheduled-maintenance",
-    is_platform_admin=True,
-)
+MAINTENANCE_IDENTITY = SystemContext(service_name="scheduled-maintenance")
 
 
 class MaintenanceAuthorizationError(PermissionError):
@@ -110,8 +106,8 @@ class BackupVerificationReport:
     required_tables: tuple[str, ...]
 
 
-def _require_admin(identity: UserContext) -> None:
-    if not identity.is_platform_admin:
+def _require_admin(identity: SystemContext) -> None:
+    if not isinstance(identity, SystemContext):
         raise MaintenanceAuthorizationError("仅平台管理员维护身份可以执行定时维护")
 
 
@@ -125,7 +121,7 @@ class SessionExpiryService:
 
     def run(
         self,
-        identity: UserContext = MAINTENANCE_IDENTITY,
+        identity: SystemContext = MAINTENANCE_IDENTITY,
         *,
         now: datetime | None = None,
     ) -> SessionExpiryReport:
@@ -179,7 +175,7 @@ class RetentionCleanupService:
 
     def run(
         self,
-        identity: UserContext = MAINTENANCE_IDENTITY,
+        identity: SystemContext = MAINTENANCE_IDENTITY,
         *,
         now: datetime | None = None,
     ) -> RetentionCleanupReport:
@@ -333,7 +329,7 @@ class OrphanMediaCleanupService:
 
     def run(
         self,
-        identity: UserContext = MAINTENANCE_IDENTITY,
+        identity: SystemContext = MAINTENANCE_IDENTITY,
         *,
         now: datetime | None = None,
         stale_after: timedelta = timedelta(hours=24),
@@ -436,7 +432,7 @@ class TaskHoldMaintenanceService:
 
     def run(
         self,
-        identity: UserContext = MAINTENANCE_IDENTITY,
+        identity: SystemContext = MAINTENANCE_IDENTITY,
         *,
         now: datetime | None = None,
         stale_hold_after: timedelta = timedelta(minutes=30),
@@ -497,7 +493,7 @@ class BackupVerificationService:
 
     def run(
         self,
-        identity: UserContext = MAINTENANCE_IDENTITY,
+        identity: SystemContext = MAINTENANCE_IDENTITY,
         *,
         now: datetime | None = None,
         max_age: timedelta = timedelta(hours=36),

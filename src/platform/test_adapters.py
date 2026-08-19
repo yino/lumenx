@@ -75,6 +75,9 @@ class DeterministicPrivateObjectStore:
             f"?expires={expires_at}&signature={signature}"
         )
 
+    def get(self, object_key: str) -> bytes:
+        return self._path(object_key).read_bytes()
+
     def verify(self, object_key: str, expires_at: int, signature: str) -> Path:
         if expires_at < int(time.time()):
             raise ValueError("测试对象授权已过期")

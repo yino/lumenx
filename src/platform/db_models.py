@@ -29,17 +29,68 @@ DATABASE_ID = BigInteger().with_variant(Integer, "sqlite")
 
 class UserRecord(Base):
     __tablename__ = "users"
-    __table_args__ = (CheckConstraint("status IN ('active', 'suspended')", name="ck_users_status"),)
+    __table_args__ = (
+        CheckConstraint("status IN ('active', 'suspended')", name="ck_users_status"),
+        CheckConstraint(
+            "phone_canonical IS NOT NULL OR username IS NOT NULL",
+            name="ck_users_login_identity",
+        ),
+    )
 
     id: Mapped[int] = mapped_column(DATABASE_ID, primary_key=True, autoincrement=True)
-    phone_canonical: Mapped[str] = mapped_column(String(32), unique=True, nullable=False)
+    phone_canonical: Mapped[str | None] = mapped_column(String(32), unique=True)
+    username: Mapped[str | None] = mapped_column(String(32), unique=True)
     password_hash: Mapped[str] = mapped_column(Text, nullable=False)
     status: Mapped[str] = mapped_column(String(24), default="active", nullable=False)
     phone_verified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     password_changed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
-    is_platform_admin: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+
+class AdminUserRecord(Base):
+    __tablename__ = "admin_users"
+    __table_args__ = (
+        CheckConstraint("status IN ('active', 'suspended')", name="ck_admin_users_status"),
+    )
+
+    id: Mapped[int] = mapped_column(DATABASE_ID, primary_key=True, autoincrement=True)
+    username: Mapped[str] = mapped_column(String(32), unique=True, nullable=False)
+    password_hash: Mapped[str] = mapped_column(Text, nullable=False)
+    status: Mapped[str] = mapped_column(String(24), default="active", nullable=False)
+    password_changed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    must_change_password: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+
+class AdminSessionRecord(Base):
+    __tablename__ = "admin_sessions"
+    __table_args__ = (
+        CheckConstraint(
+            "idle_expires_at <= absolute_expires_at",
+            name="ck_admin_sessions_expiry_order",
+        ),
+        CheckConstraint(
+            "idle_timeout_seconds IS NULL OR idle_timeout_seconds > 0",
+            name="ck_admin_sessions_idle_timeout_positive",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(DATABASE_ID, primary_key=True, autoincrement=True)
+    admin_user_id: Mapped[int] = mapped_column(DATABASE_ID, nullable=False)
+    token_hash: Mapped[str] = mapped_column(String(64), unique=True, nullable=False)
+    csrf_token_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    last_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    idle_expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    absolute_expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    idle_timeout_seconds: Mapped[int | None] = mapped_column(Integer)
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    network_fingerprint: Mapped[str | None] = mapped_column(String(128))
+    user_agent: Mapped[str | None] = mapped_column(String(512))
 
 class WorkspaceRecord(Base):
     __tablename__ = "workspaces"
@@ -77,10 +128,17 @@ class AuthSessionRecord(Base):
 
 class PasswordResetCredentialRecord(Base):
     __tablename__ = "password_reset_credentials"
+    __table_args__ = (
+        CheckConstraint(
+            "(legacy_created_by_user_id IS NULL) <> (created_by_admin_id IS NULL)",
+            name="ck_password_reset_credentials_created_actor",
+        ),
+    )
 
     id: Mapped[int] = mapped_column(DATABASE_ID, primary_key=True, autoincrement=True)
     user_id: Mapped[int] = mapped_column(DATABASE_ID, nullable=False)
-    created_by_admin_id: Mapped[int] = mapped_column(DATABASE_ID, nullable=False)
+    legacy_created_by_user_id: Mapped[int | None] = mapped_column(DATABASE_ID)
+    created_by_admin_id: Mapped[int | None] = mapped_column(DATABASE_ID)
     token_hash: Mapped[str] = mapped_column(String(64), unique=True, nullable=False)
     reason: Mapped[str] = mapped_column(Text, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
@@ -102,12 +160,17 @@ class RegistrationInvitationRecord(Base):
             "AND consumed_at IS NULL)",
             name="ck_registration_invitations_consumption",
         ),
+        CheckConstraint(
+            "(legacy_created_by_user_id IS NULL) <> (created_by_admin_id IS NULL)",
+            name="ck_registration_invitations_created_actor",
+        ),
     )
 
     id: Mapped[int] = mapped_column(DATABASE_ID, primary_key=True, autoincrement=True)
     phone_canonical: Mapped[str] = mapped_column(String(32), nullable=False)
     invitation_hash: Mapped[str] = mapped_column(String(64), unique=True, nullable=False)
-    created_by_admin_id: Mapped[int] = mapped_column(DATABASE_ID, nullable=False)
+    legacy_created_by_user_id: Mapped[int | None] = mapped_column(DATABASE_ID)
+    created_by_admin_id: Mapped[int | None] = mapped_column(DATABASE_ID)
     issue_reason: Mapped[str] = mapped_column(Text, nullable=False)
     status: Mapped[str] = mapped_column(String(24), default="active", nullable=False)
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
@@ -168,17 +231,25 @@ class MediaObjectRecord(Base):
     __table_args__ = (
         CheckConstraint("size_bytes >= 0", name="ck_media_objects_size_nonnegative"),
         CheckConstraint(
-            "lifecycle_state IN ('pending', 'active', 'deleted', 'failed')",
+            "lifecycle_state IN ('pending', 'active', 'quarantined', 'deleted', 'failed')",
             name="ck_media_objects_lifecycle",
+        ),
+        CheckConstraint("scope IN ('user', 'system')", name="ck_media_objects_scope"),
+        CheckConstraint(
+            "(scope = 'system' AND user_id IS NULL AND workspace_id IS NULL "
+            "AND project_id IS NULL) OR "
+            "(scope = 'user' AND user_id IS NOT NULL AND workspace_id IS NOT NULL)",
+            name="ck_media_objects_scope_owner",
         ),
         UniqueConstraint("object_key", name="uq_media_objects_object_key"),
         UniqueConstraint("user_id", "workspace_id", "id", name="uq_media_objects_owner_id"),
     )
 
     id: Mapped[int] = mapped_column(DATABASE_ID, primary_key=True, autoincrement=True)
-    user_id: Mapped[int] = mapped_column(DATABASE_ID, nullable=False)
-    workspace_id: Mapped[int] = mapped_column(DATABASE_ID, nullable=False)
+    user_id: Mapped[int | None] = mapped_column(DATABASE_ID)
+    workspace_id: Mapped[int | None] = mapped_column(DATABASE_ID)
     project_id: Mapped[int | None] = mapped_column(DATABASE_ID)
+    scope: Mapped[str] = mapped_column(String(24), default="user", nullable=False)
     object_key: Mapped[str] = mapped_column(Text, unique=True, nullable=False)
     mime_type: Mapped[str] = mapped_column(String(255), nullable=False)
     size_bytes: Mapped[int] = mapped_column(BigInteger, nullable=False)
@@ -234,7 +305,8 @@ class TicketWalletRecord(Base):
     __table_args__ = (
         CheckConstraint(
             "available_microtickets >= 0 AND held_microtickets >= 0 AND "
-            "lifetime_granted_microtickets >= 0 AND lifetime_spent_microtickets >= 0",
+            "lifetime_granted_microtickets >= 0 AND lifetime_spent_microtickets >= 0 AND "
+            "lifetime_recharged_microtickets >= 0 AND lifetime_refunded_microtickets >= 0",
             name="ck_ticket_wallets_nonnegative",
         ),
         CheckConstraint("version > 0", name="ck_ticket_wallets_version_positive"),
@@ -246,6 +318,12 @@ class TicketWalletRecord(Base):
     held_microtickets: Mapped[int] = mapped_column(BigInteger, default=0, nullable=False)
     lifetime_granted_microtickets: Mapped[int] = mapped_column(BigInteger, default=0, nullable=False)
     lifetime_spent_microtickets: Mapped[int] = mapped_column(BigInteger, default=0, nullable=False)
+    lifetime_recharged_microtickets: Mapped[int] = mapped_column(
+        BigInteger, default=0, nullable=False
+    )
+    lifetime_refunded_microtickets: Mapped[int] = mapped_column(
+        BigInteger, default=0, nullable=False
+    )
     version: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
@@ -366,7 +444,8 @@ class TicketLedgerRecord(Base):
             name="ck_ticket_ledger_balances_nonnegative",
         ),
         CheckConstraint(
-            "entry_type IN ('grant', 'hold', 'settlement', 'release', 'adjustment', 'compensation')",
+            "entry_type IN ('grant', 'hold', 'settlement', 'release', 'adjustment', "
+            "'compensation', 'manual_recharge', 'manual_recharge_refund')",
             name="ck_ticket_ledger_entry_type",
         ),
     )
@@ -378,6 +457,9 @@ class TicketLedgerRecord(Base):
     task_id: Mapped[int | None] = mapped_column(DATABASE_ID)
     hold_id: Mapped[int | None] = mapped_column(DATABASE_ID)
     actor_user_id: Mapped[int | None] = mapped_column(DATABASE_ID)
+    actor_admin_id: Mapped[int | None] = mapped_column(DATABASE_ID)
+    manual_recharge_order_id: Mapped[int | None] = mapped_column(DATABASE_ID)
+    manual_recharge_event_id: Mapped[int | None] = mapped_column(DATABASE_ID)
     entry_type: Mapped[str] = mapped_column(String(32), nullable=False)
     amount_microtickets: Mapped[int] = mapped_column(BigInteger, nullable=False)
     available_delta: Mapped[int] = mapped_column(BigInteger, nullable=False)
@@ -386,6 +468,151 @@ class TicketLedgerRecord(Base):
     held_after: Mapped[int] = mapped_column(BigInteger, nullable=False)
     reason: Mapped[str | None] = mapped_column(Text)
     correlation: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class ManualRechargeOrderRecord(Base):
+    __tablename__ = "manual_recharge_orders"
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('pending', 'completed', 'cancelled', 'partially_refunded', 'refunded')",
+            name="ck_manual_recharge_orders_status",
+        ),
+        CheckConstraint("currency = 'CNY'", name="ck_manual_recharge_orders_currency"),
+        CheckConstraint("cash_amount_fen > 0", name="ck_manual_recharge_orders_cash_positive"),
+        CheckConstraint(
+            "ticket_amount_microtickets > 0",
+            name="ck_manual_recharge_orders_tickets_positive",
+        ),
+        CheckConstraint(
+            "refunded_cash_fen >= 0 AND refunded_cash_fen <= cash_amount_fen",
+            name="ck_manual_recharge_orders_refunded_cash",
+        ),
+        CheckConstraint(
+            "refunded_microtickets >= 0 AND "
+            "refunded_microtickets <= ticket_amount_microtickets",
+            name="ck_manual_recharge_orders_refunded_tickets",
+        ),
+        CheckConstraint("version > 0", name="ck_manual_recharge_orders_version_positive"),
+        CheckConstraint(
+            "(created_by_user_id IS NULL) <> (created_by_admin_id IS NULL)",
+            name="ck_manual_recharge_orders_created_actor",
+        ),
+        UniqueConstraint("order_number", name="uq_manual_recharge_orders_number"),
+        UniqueConstraint(
+            "created_by_admin_id",
+            "create_idempotency_key",
+            name="uq_manual_recharge_orders_create_idempotency",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(DATABASE_ID, primary_key=True, autoincrement=True)
+    order_number: Mapped[str] = mapped_column(String(40), nullable=False)
+    user_id: Mapped[int] = mapped_column(DATABASE_ID, nullable=False)
+    cash_amount_fen: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    ticket_amount_microtickets: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    currency: Mapped[str] = mapped_column(String(8), default="CNY", nullable=False)
+    status: Mapped[str] = mapped_column(String(32), default="pending", nullable=False)
+    exchange_snapshot: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
+    offline_reference: Mapped[str | None] = mapped_column(String(160))
+    create_reason: Mapped[str] = mapped_column(Text, nullable=False)
+    cancel_reason: Mapped[str | None] = mapped_column(Text)
+    refunded_cash_fen: Mapped[int] = mapped_column(BigInteger, default=0, nullable=False)
+    refunded_microtickets: Mapped[int] = mapped_column(BigInteger, default=0, nullable=False)
+    create_idempotency_key: Mapped[str] = mapped_column(String(160), nullable=False)
+    create_request_fingerprint: Mapped[str] = mapped_column(String(64), nullable=False)
+    version: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
+    created_by_user_id: Mapped[int | None] = mapped_column(DATABASE_ID)
+    created_by_admin_id: Mapped[int | None] = mapped_column(DATABASE_ID)
+    completed_by_user_id: Mapped[int | None] = mapped_column(DATABASE_ID)
+    completed_by_admin_id: Mapped[int | None] = mapped_column(DATABASE_ID)
+    cancelled_by_user_id: Mapped[int | None] = mapped_column(DATABASE_ID)
+    cancelled_by_admin_id: Mapped[int | None] = mapped_column(DATABASE_ID)
+    last_refunded_by_user_id: Mapped[int | None] = mapped_column(DATABASE_ID)
+    last_refunded_by_admin_id: Mapped[int | None] = mapped_column(DATABASE_ID)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    cancelled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    refunded_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class ManualRechargeOrderEventRecord(Base):
+    __tablename__ = "manual_recharge_order_events"
+    __table_args__ = (
+        CheckConstraint(
+            "event_type IN ('created', 'completed', 'cancelled', 'refunded')",
+            name="ck_manual_recharge_order_events_type",
+        ),
+        CheckConstraint("cash_amount_fen >= 0", name="ck_manual_recharge_events_cash"),
+        CheckConstraint(
+            "ticket_amount_microtickets >= 0",
+            name="ck_manual_recharge_events_tickets",
+        ),
+        CheckConstraint(
+            "version_before >= 0 AND version_after > version_before",
+            name="ck_manual_recharge_events_versions",
+        ),
+        CheckConstraint(
+            "(actor_user_id IS NULL) <> (actor_admin_id IS NULL)",
+            name="ck_manual_recharge_events_actor",
+        ),
+        UniqueConstraint(
+            "actor_admin_id",
+            "event_type",
+            "idempotency_key",
+            name="uq_manual_recharge_events_idempotency",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(DATABASE_ID, primary_key=True, autoincrement=True)
+    order_id: Mapped[int] = mapped_column(DATABASE_ID, nullable=False)
+    user_id: Mapped[int] = mapped_column(DATABASE_ID, nullable=False)
+    actor_user_id: Mapped[int | None] = mapped_column(DATABASE_ID)
+    actor_admin_id: Mapped[int | None] = mapped_column(DATABASE_ID)
+    event_type: Mapped[str] = mapped_column(String(32), nullable=False)
+    idempotency_key: Mapped[str] = mapped_column(String(160), nullable=False)
+    request_fingerprint: Mapped[str] = mapped_column(String(64), nullable=False)
+    cash_amount_fen: Mapped[int] = mapped_column(BigInteger, default=0, nullable=False)
+    ticket_amount_microtickets: Mapped[int] = mapped_column(
+        BigInteger, default=0, nullable=False
+    )
+    ledger_entry_id: Mapped[int | None] = mapped_column(DATABASE_ID)
+    version_before: Mapped[int] = mapped_column(Integer, nullable=False)
+    version_after: Mapped[int] = mapped_column(Integer, nullable=False)
+    reason: Mapped[str] = mapped_column(Text, nullable=False)
+    snapshot: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class ManualRechargeReconciliationReportRecord(Base):
+    __tablename__ = "manual_recharge_reconciliation_reports"
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('consistent', 'mismatch')",
+            name="ck_manual_recharge_reconciliation_status",
+        ),
+        CheckConstraint(
+            "severity IN ('info', 'warning', 'high')",
+            name="ck_manual_recharge_reconciliation_severity",
+        ),
+        CheckConstraint(
+            "(actor_user_id IS NULL) <> (actor_admin_id IS NULL)",
+            name="ck_manual_recharge_reports_actor",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(DATABASE_ID, primary_key=True, autoincrement=True)
+    order_id: Mapped[int | None] = mapped_column(DATABASE_ID)
+    user_id: Mapped[int | None] = mapped_column(DATABASE_ID)
+    actor_user_id: Mapped[int | None] = mapped_column(DATABASE_ID)
+    actor_admin_id: Mapped[int | None] = mapped_column(DATABASE_ID)
+    status: Mapped[str] = mapped_column(String(24), nullable=False)
+    severity: Mapped[str] = mapped_column(String(24), nullable=False)
+    details: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
+    correlation_id: Mapped[str] = mapped_column(String(80), nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
@@ -429,13 +656,18 @@ class ConfigVersionRecord(Base):
             "status IN ('draft', 'active', 'superseded', 'disabled')",
             name="ck_config_versions_status",
         ),
+        CheckConstraint(
+            "(created_by_user_id IS NULL) <> (created_by_admin_id IS NULL)",
+            name="ck_config_versions_created_actor",
+        ),
     )
 
     id: Mapped[int] = mapped_column(DATABASE_ID, primary_key=True, autoincrement=True)
     version_number: Mapped[int] = mapped_column(BigInteger, unique=True, nullable=False)
     status: Mapped[str] = mapped_column(String(24), default="draft", nullable=False)
     schema_version: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
-    created_by_user_id: Mapped[int] = mapped_column(DATABASE_ID, nullable=False)
+    created_by_user_id: Mapped[int | None] = mapped_column(DATABASE_ID)
+    created_by_admin_id: Mapped[int | None] = mapped_column(DATABASE_ID)
     reason: Mapped[str] = mapped_column(Text, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     activated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
@@ -505,6 +737,7 @@ class AuditEventRecord(Base):
 
     id: Mapped[int] = mapped_column(DATABASE_ID, primary_key=True, autoincrement=True)
     actor_user_id: Mapped[int | None] = mapped_column(DATABASE_ID)
+    actor_admin_id: Mapped[int | None] = mapped_column(DATABASE_ID)
     target_user_id: Mapped[int | None] = mapped_column(DATABASE_ID)
     workspace_id: Mapped[int | None] = mapped_column(DATABASE_ID)
     action: Mapped[str] = mapped_column(String(120), nullable=False)
@@ -529,6 +762,10 @@ class ImportBatchRecord(Base):
             "status IN ('pending', 'dry_run', 'running', 'completed', 'failed', 'reverted')",
             name="ck_import_batches_status",
         ),
+        CheckConstraint(
+            "(actor_admin_user_id IS NULL) <> (actor_admin_id IS NULL)",
+            name="ck_import_batches_admin_actor",
+        ),
         UniqueConstraint(
             "target_user_id",
             "target_workspace_id",
@@ -538,7 +775,8 @@ class ImportBatchRecord(Base):
     )
 
     id: Mapped[int] = mapped_column(DATABASE_ID, primary_key=True, autoincrement=True)
-    actor_admin_user_id: Mapped[int] = mapped_column(DATABASE_ID, nullable=False)
+    actor_admin_user_id: Mapped[int | None] = mapped_column(DATABASE_ID)
+    actor_admin_id: Mapped[int | None] = mapped_column(DATABASE_ID)
     target_user_id: Mapped[int] = mapped_column(DATABASE_ID, nullable=False)
     target_workspace_id: Mapped[int] = mapped_column(DATABASE_ID, nullable=False)
     source_fingerprint: Mapped[str] = mapped_column(String(64), nullable=False)

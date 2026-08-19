@@ -33,7 +33,6 @@ def ticket_history_client():
         session_id=int(context.identity.session_id),
         phone_canonical="+8613800138000",
         phone_verified=False,
-        is_platform_admin=False,
     )
     app = FastAPI()
     install_cloud_ticket_history_api(
@@ -90,7 +89,6 @@ def test_wallet_history_never_accepts_foreign_user_scope(ticket_history_client) 
         session_id=int(foreign_context.identity.session_id),
         phone_canonical="+8613900139000",
         phone_verified=False,
-        is_platform_admin=False,
     )
 
     response = client.get("/wallet/history", params={"view": "usage"})

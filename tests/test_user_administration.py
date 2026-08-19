@@ -11,7 +11,7 @@ from src.platform.auth.admin import (
     UserAdministrationService,
 )
 from src.platform.auth.security import PasswordService
-from src.platform.contracts import UserContext
+from src.platform.contracts import AdminContext, UserContext
 from src.platform.db_models import (
     AuditEventRecord,
     PasswordResetCredentialRecord,
@@ -28,8 +28,8 @@ class AdministrationDatabase:
         yield self.session
 
 
-def admin_context() -> UserContext:
-    return UserContext(user_id="1", is_platform_admin=True)
+def admin_context() -> AdminContext:
+    return AdminContext(admin_id="1", session_id="11", username="admin")
 
 
 def test_non_admin_cannot_change_user_status() -> None:
@@ -62,7 +62,6 @@ def test_suspension_revokes_sessions_and_appends_audit() -> None:
         phone_canonical="+8613800138000",
         password_hash="hash",
         status="active",
-        is_platform_admin=False,
     )
     session = Mock()
     session.get.return_value = target
@@ -79,6 +78,31 @@ def test_suspension_revokes_sessions_and_appends_audit() -> None:
     assert "token" not in str(audit.after_summary).lower()
 
 
+@pytest.mark.parametrize("operation", ["suspend", "revoke_sessions"])
+def test_same_integer_user_and_admin_ids_are_independent(operation: str) -> None:
+    target = UserRecord(
+        id=1,
+        username="admin",
+        phone_canonical=None,
+        password_hash="hash",
+        status="active",
+    )
+    session = Mock()
+    session.get.return_value = target
+    session.scalar.return_value = 1
+    session.execute.return_value.rowcount = 1
+    service = UserAdministrationService(AdministrationDatabase(session), "s" * 32)
+
+    if operation == "suspend":
+        service.set_status(admin_context(), target.id, "suspended", "安全处置")
+        assert target.status == "suspended"
+    else:
+        service.revoke_sessions(admin_context(), target.id, "安全处置")
+        assert target.status == "active"
+    assert isinstance(session.add.call_args.args[0], AuditEventRecord)
+    assert session.add.call_args.args[0].actor_admin_id == 1
+
+
 def test_reset_credential_is_single_use_and_revokes_sessions() -> None:
     now = datetime(2026, 8, 10, tzinfo=UTC)
     user = UserRecord(
@@ -86,7 +110,6 @@ def test_reset_credential_is_single_use_and_revokes_sessions() -> None:
         phone_canonical="+8613800138000",
         password_hash="old-hash",
         status="active",
-        is_platform_admin=False,
     )
     record = PasswordResetCredentialRecord(
         id=3,

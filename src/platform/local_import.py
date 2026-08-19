@@ -29,7 +29,8 @@ from .content_repositories import (
     PostgresProjectRepository,
     PostgresSeriesRepository,
 )
-from .contracts import MediaWrite, UserContext, WorkspaceContext
+from .admin_access import require_platform_admin_context
+from .contracts import AdminContext, MediaWrite, UserContext, WorkspaceContext
 from .database import Database
 from .db_models import (
     AITaskRecord,
@@ -432,13 +433,15 @@ class LocalImportService:
         }
 
     @staticmethod
-    def _require_admin(identity: UserContext) -> None:
-        if not identity.is_platform_admin:
-            raise AdminAuthorizationError("仅平台管理员可以执行本地数据导入")
+    def _require_admin(identity: AdminContext) -> None:
+        try:
+            require_platform_admin_context(identity)
+        except PermissionError as exc:
+            raise AdminAuthorizationError("仅平台管理员可以执行本地数据导入") from exc
 
     def _target_context(
         self,
-        admin: UserContext,
+        admin: AdminContext,
         target_user_id: str,
         target_workspace_id: str,
     ) -> WorkspaceContext:
@@ -466,7 +469,7 @@ class LocalImportService:
 
     def dry_run(
         self,
-        admin: UserContext,
+        admin: AdminContext,
         *,
         target_user_id: str,
         target_workspace_id: str,
@@ -499,8 +502,8 @@ class LocalImportService:
             )
             if batch is None:
                 batch = ImportBatchRecord(
-                    actor_admin_user_id=parse_database_id(
-                        admin.user_id,
+                    actor_admin_id=parse_database_id(
+                        admin.admin_id,
                         field="管理员 ID",
                     ),
                     target_user_id=target_user,
@@ -539,7 +542,7 @@ class LocalImportService:
             batch_id = str(batch.id)
         return {"batch_id": batch_id, **report}
 
-    def execute(self, admin: UserContext, batch_id: str) -> dict[str, Any]:
+    def execute(self, admin: AdminContext, batch_id: str) -> dict[str, Any]:
         self._require_admin(admin)
         try:
             batch_database_id = parse_database_id(batch_id, field="导入批次 ID")
@@ -619,7 +622,7 @@ class LocalImportService:
             final_status = batch.status
         return {"batch_id": batch_id, "status": final_status, **result}
 
-    def get_batch(self, admin: UserContext, batch_id: str) -> dict[str, Any]:
+    def get_batch(self, admin: AdminContext, batch_id: str) -> dict[str, Any]:
         self._require_admin(admin)
         try:
             batch_database_id = parse_database_id(batch_id, field="导入批次 ID")
@@ -653,7 +656,7 @@ class LocalImportService:
                 "rollback_reason": batch.rollback_reason,
             }
 
-    def rollback(self, admin: UserContext, batch_id: str, reason: str) -> dict[str, Any]:
+    def rollback(self, admin: AdminContext, batch_id: str, reason: str) -> dict[str, Any]:
         self._require_admin(admin)
         if not reason.strip():
             raise LocalImportValidationError("回滚必须填写原因")
@@ -708,8 +711,8 @@ class LocalImportService:
             }
             session.add(
                 AuditEventRecord(
-                    actor_user_id=parse_database_id(
-                        admin.user_id,
+                    actor_admin_id=parse_database_id(
+                        admin.admin_id,
                         field="管理员 ID",
                     ),
                     target_user_id=batch.target_user_id,
@@ -751,7 +754,7 @@ class LocalImportService:
 
     def _execute_item(
         self,
-        admin: UserContext,
+        admin: AdminContext,
         context: WorkspaceContext,
         batch_id: int,
         manifest: ImportManifest,
@@ -902,7 +905,7 @@ class LocalImportService:
 
     def _execute_media(
         self,
-        admin: UserContext,
+        admin: AdminContext,
         context: WorkspaceContext,
         batch_id: int,
         manifest: ImportManifest,
@@ -944,7 +947,7 @@ class LocalImportService:
 
     def _finalize_series_documents(
         self,
-        admin: UserContext,
+        admin: AdminContext,
         context: WorkspaceContext,
         batch_id: int,
         manifest: ImportManifest,
@@ -1023,7 +1026,7 @@ class LocalImportService:
             return payload.removeprefix("media:")
         return None
 
-    def _mark_item_failed(self, admin: UserContext, batch_id: int, key: tuple[str, str], exc: Exception) -> None:
+    def _mark_item_failed(self, admin: AdminContext, batch_id: int, key: tuple[str, str], exc: Exception) -> None:
         with self.database.transaction(admin) as session:
             item = session.scalar(
                 select(ImportBatchItemRecord).where(
@@ -1038,7 +1041,7 @@ class LocalImportService:
 
     def _reconcile(
         self,
-        admin: UserContext,
+        admin: AdminContext,
         context: WorkspaceContext,
         batch_id: int,
         manifest: ImportManifest,

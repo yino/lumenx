@@ -10,10 +10,11 @@ from datetime import UTC, datetime, timedelta
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from ..contracts import UserContext
+from ..contracts import AdminContext
 from ..database import Database, set_transaction_invitation_hash
 from ..db_models import AuditEventRecord, RegistrationInvitationRecord
 from ..identifiers import parse_database_id
+from .admin import AdminAuthorizationError
 from .security import normalize_phone
 
 
@@ -49,9 +50,9 @@ class InvitationService:
         self.invitation_secret = invitation_secret
 
     @staticmethod
-    def _require_admin(identity: UserContext) -> None:
-        if not identity.is_platform_admin:
-            raise PermissionError("仅平台管理员可以管理注册邀请")
+    def _require_admin(identity: AdminContext) -> None:
+        if not isinstance(identity, AdminContext) or not identity.admin_id.strip():
+            raise AdminAuthorizationError("仅平台管理员可以执行此操作")
 
     @staticmethod
     def _reason(value: str) -> str:
@@ -63,7 +64,7 @@ class InvitationService:
     @staticmethod
     def _audit(
         session: Session,
-        identity: UserContext,
+        identity: AdminContext,
         record: RegistrationInvitationRecord,
         *,
         action: str,
@@ -74,7 +75,7 @@ class InvitationService:
     ) -> None:
         session.add(
             AuditEventRecord(
-                actor_user_id=parse_database_id(identity.user_id, field="管理员 ID"),
+                actor_admin_id=parse_database_id(identity.admin_id, field="管理员 ID"),
                 action=action,
                 target_type="registration_invitation",
                 target_id=str(record.id),
@@ -87,7 +88,7 @@ class InvitationService:
 
     def issue(
         self,
-        identity: UserContext,
+        identity: AdminContext,
         *,
         phone: str,
         expires_at: datetime,
@@ -109,7 +110,7 @@ class InvitationService:
             invitation_hash=hash_invitation_secret(
                 plaintext_code, self.invitation_secret
             ),
-            created_by_admin_id=parse_database_id(identity.user_id, field="管理员 ID"),
+            created_by_admin_id=parse_database_id(identity.admin_id, field="管理员 ID"),
             issue_reason=normalized_reason,
             status="active",
             expires_at=expires_at,
@@ -134,7 +135,7 @@ class InvitationService:
             )
         return IssuedInvitation(record=record, plaintext_code=plaintext_code)
 
-    def list(self, identity: UserContext, *, now: datetime | None = None) -> list[RegistrationInvitationRecord]:
+    def list(self, identity: AdminContext, *, now: datetime | None = None) -> list[RegistrationInvitationRecord]:
         self._require_admin(identity)
         checked_at = _utc(now or datetime.now(UTC))
         with self.database.transaction(identity) as session:
@@ -154,7 +155,7 @@ class InvitationService:
 
     def revoke(
         self,
-        identity: UserContext,
+        identity: AdminContext,
         invitation_id: int,
         *,
         reason: str,

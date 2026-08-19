@@ -708,7 +708,8 @@ function CastCard({ item, onOpenWorkbench }: { item: CastItem; onOpenWorkbench?:
         if (!currentProject || !character) return;
         try {
             const updated = await api.bindVoice(currentProject.id, character.id, newVoiceId, newVoiceName);
-            // Backend returns the updated script - sync to store
+            // Cloud returns the updated character asset; desktop may return the script.
+            // The store normalizes both response contracts without changing project identity.
             updateProject(currentProject.id, updated);
         } catch (e) {
             console.error("Failed to bind voice:", e);

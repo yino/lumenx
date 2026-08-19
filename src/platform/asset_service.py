@@ -408,6 +408,18 @@ class CloudAssetService:
         if not isinstance(document, (Character, Scene, Prop)):
             raise DocumentPayloadValidationError("该资产不支持图片媒体")
         reference = f"media:{media_id}"
+        containers = CloudAssetService._variant_containers(
+            document,
+            "reference_sheet" if isinstance(document, Character) else None,
+        )
+        container = next((item for item in containers if item is not None), None)
+        variants, selected_field = CloudAssetService._container_variants(container)
+        if selected_field is not None:
+            variant = next((item for item in variants if item.url == reference), None)
+            if variant is None:
+                variant = ImageVariant(id=_new_domain_id("other"), url=reference)
+                variants.append(variant)
+            setattr(container, selected_field, variant.id)
         document.image_url = reference
         if isinstance(document, Character):
             document.avatar_url = reference

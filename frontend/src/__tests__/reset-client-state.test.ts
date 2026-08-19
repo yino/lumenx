@@ -53,4 +53,34 @@ describe("客户端内存状态清理", () => {
       favoriteTemplateIds: [],
     });
   });
+
+  it("资产更新只合并到对应角色且不会覆盖项目 ID", () => {
+    const project = {
+      id: "project-8",
+      title: "第八集",
+      characters: [{ id: "character-8", name: "叶天成" }],
+      scenes: [],
+      props: [],
+    } as never;
+    useProjectStore.setState({
+      projects: [project],
+      currentProject: project,
+    });
+
+    useProjectStore.getState().updateProject("project-8", {
+      id: "character-8",
+      asset_record_id: "88",
+      voice_id: "longcheng_v2",
+      voice_name: "龙诚 (睿智青年)",
+    } as never);
+
+    const state = useProjectStore.getState();
+    expect(state.currentProject?.id).toBe("project-8");
+    expect(state.projects[0]?.id).toBe("project-8");
+    expect(state.currentProject?.characters[0]).toMatchObject({
+      id: "character-8",
+      voice_id: "longcheng_v2",
+      voice_name: "龙诚 (睿智青年)",
+    });
+  });
 });

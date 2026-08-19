@@ -18,7 +18,11 @@ from .ai_task_state import (
 )
 from .contracts import ModelRouteSnapshot, TaskDispatcher, WorkspaceContext
 from .db_models import AssetRecord, MediaObjectRecord, ProjectRecord, SeriesRecord
-from .metering import MeteringValidationError, maximum_metering_tokens
+from .metering import (
+    MeteringValidationError,
+    evaluate_speech_metering_tokens,
+    maximum_metering_tokens,
+)
 from .identifiers import parse_database_id
 from .model_routing import CapabilityRoutePlan, thaw_snapshot_value
 from .ticket_reservation import ReservedTask, TicketReservationService
@@ -77,6 +81,27 @@ def _route_payload(route: ModelRouteSnapshot) -> dict[str, Any]:
         "fallback_policy": thaw_snapshot_value(route.fallback_policy),
         "secret_ref": route.secret_ref,
     }
+
+
+def _speech_character_count(content: Any) -> int | None:
+    if isinstance(content, str):
+        return len(content.strip()) or None
+    if not isinstance(content, Mapping):
+        return None
+    items = content.get("items")
+    if isinstance(items, list):
+        texts = [
+            str(item.get("text") or "").strip()
+            for item in items
+            if isinstance(item, Mapping)
+        ]
+        if len(texts) != len(items) or any(not text for text in texts):
+            return None
+        return sum(len(text) for text in texts) or None
+    text = content.get("text")
+    if isinstance(text, str) and text.strip():
+        return len(text.strip())
+    return None
 
 
 class GatewayResourceAuthorizer:
@@ -285,9 +310,23 @@ class AIGateway:
                     request.parameters,
                 )
                 task_config = self._task_config(plan)
-                maximum_tokens = maximum_metering_tokens(
-                    task_config["metering_formula"],
-                    parameters=task_config["parameters"],
+                formula = task_config["metering_formula"]
+                character_count = (
+                    _speech_character_count(request.content)
+                    if formula.get("kind") == "speech"
+                    and formula.get("unit") == "characters"
+                    else None
+                )
+                maximum_tokens = (
+                    evaluate_speech_metering_tokens(
+                        formula,
+                        {"characters": character_count},
+                    )
+                    if character_count is not None
+                    else maximum_metering_tokens(
+                        formula,
+                        parameters=task_config["parameters"],
+                    )
                 )
             except (LookupError, ValueError, MeteringValidationError) as exc:
                 raise AIGatewayConfigurationError(str(exc)) from exc

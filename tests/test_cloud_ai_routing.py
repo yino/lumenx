@@ -8,14 +8,17 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+from src.apps.comic_gen.models import StoryboardFrame
 from src.platform.ai_gateway import SubmittedAITask
 from src.platform.ai_gateway_api import install_cloud_ai_gateway_api
 from src.platform.asset_api import install_cloud_asset_api
+from src.platform.asset_service import CloudAssetService
 from src.platform.content_api import install_cloud_content_api
+from src.platform.content_repositories import PostgresProjectRepository
 from src.platform.playground_api import install_cloud_playground_api
 from src.platform.storyboard_api import install_cloud_storyboard_api
 from tests.test_content_api import FakeSessions, _headers
-from tests.test_content_repositories import RepositoryDatabase, _create_scope
+from tests.test_content_repositories import RepositoryDatabase, _create_scope, _script
 from tests.test_content_service import FakeScriptProcessor
 
 
@@ -47,7 +50,6 @@ def cloud_ai_routes():
     principal = SimpleNamespace(
         user_id=int(context.identity.user_id),
         session_id=int(context.identity.session_id),
-        is_platform_admin=False,
     )
     sessions = FakeSessions(principal)
     auth = SimpleNamespace(database=database, sessions=sessions)
@@ -112,6 +114,57 @@ def test_project_creation_and_reparse_submit_script_tasks(cloud_ai_routes) -> No
     assert reparsed.status_code == 200
     assert reparsed.json()["ai_task"]["capability"] == "script.analysis"
     assert submitter.calls[-1][1]["content"]["operation"] == "project.reparse"
+
+
+def test_dialogue_audio_batch_builds_server_owned_speech_items(cloud_ai_routes) -> None:
+    database, context, _sessions, submitter, client = cloud_ai_routes
+    project = PostgresProjectRepository(database).add(
+        context,
+        _script(
+            frames=[
+                StoryboardFrame(
+                    id="frame-dialogue-1",
+                    scene_id="scene-1",
+                    dialogue="你终于来了。",
+                    speaker="张成",
+                )
+            ]
+        ),
+    )
+    character = CloudAssetService(database).create_project_asset(
+        context,
+        project.document.id,
+        "character",
+        name="张成",
+        description="疲惫的青年",
+        voice_id="longcheng_v2",
+    )
+
+    response = client.post(
+        f"/projects/{project.document.id}/dialogue_audio/batch",
+        headers=_ai_headers(context.workspace_id, "dialogue-batch-1"),
+    )
+
+    assert response.status_code == 202, response.text
+    assert response.json()["capability"] == "speech.tts"
+    submitted = submitter.calls[-1][1]
+    assert submitted["project_id"] == project.document.id
+    assert submitted["content"]["operation"] == "audio.dialogue.batch"
+    assert submitted["content"]["items"] == [
+        {
+            "frame_id": "frame-dialogue-1",
+            "text": "你终于来了。",
+            "voice_id": "longcheng_v2",
+            "speed": 1.0,
+            "pitch": 1.0,
+            "volume": 50,
+            "instructions": None,
+            "dialogue_text_hash": submitted["content"]["items"][0][
+                "dialogue_text_hash"
+            ],
+        }
+    ]
+    assert character.domain_id == character.document.id
 
 
 def test_asset_storyboard_video_voice_audio_and_playground_use_gateway(
@@ -213,6 +266,48 @@ def test_asset_storyboard_video_voice_audio_and_playground_use_gateway(
     assert speech_call["resource_ids"] == {"storyboard_frame": [frame_id]}
 
 
+def test_r2v_video_task_uses_reference_video_capability(cloud_ai_routes) -> None:
+    _database, context, _sessions, submitter, client = cloud_ai_routes
+
+    response = client.post(
+        "/projects/11/video_tasks",
+        json={
+            "prompt": "角色沿长廊向镜头走来",
+            "generation_mode": "r2v",
+            "media_ids": ["13", "14"],
+            "parameters": {"duration": 5, "resolution": "720p"},
+        },
+        headers=_ai_headers(context.workspace_id, "video-r2v-1"),
+    )
+
+    assert response.status_code == 202, response.text
+    assert response.json()["capability"] == "video.r2v"
+    assert submitter.calls[-1][1]["capability"] == "video.r2v"
+    assert submitter.calls[-1][1]["media_ids"] == ["13", "14"]
+
+
+def test_video_prompt_polish_associates_body_script_id(cloud_ai_routes) -> None:
+    _database, context, _sessions, submitter, client = cloud_ai_routes
+
+    response = client.post(
+        "/video/polish_r2v_prompt",
+        json={
+            "draft_prompt": "[character1:张成]望向酒店窗口",
+            "slots": [{"description": "张成：疲惫的普通男性"}],
+            "script_id": "5",
+            "media_ids": ["13"],
+        },
+        headers=_ai_headers(context.workspace_id, "r2v-polish-1"),
+    )
+
+    assert response.status_code == 202, response.text
+    submitted = submitter.calls[-1][1]
+    assert submitted["project_id"] == "5"
+    assert submitted["capability"] == "prompt.polish"
+    assert submitted["media_ids"] == ["13"]
+    assert submitted["content"]["operation"] == "video.r2v_prompt.polish"
+
+
 def test_gateway_routes_require_idempotency_and_reject_client_model_control(
     cloud_ai_routes,
 ) -> None:
@@ -264,3 +359,112 @@ def test_unified_ai_endpoint_passes_only_authenticated_workspace_context(
     assert submitter.calls[-1][0].workspace_id == context.workspace_id
     assert submitter.calls[-1][0].identity.user_id == context.identity.user_id
     assert sessions.calls[-1] == ("session-token", "csrf-token")
+
+
+def test_next_episode_hook_uses_server_prompt_and_persistent_text_task(
+    cloud_ai_routes,
+) -> None:
+    _database, context, _sessions, submitter, client = cloud_ai_routes
+    script_text = "不应进入结尾上下文的前文" + ("雨夜追逐，门后传来脚步声。" * 120)
+    project = client.post(
+        "/projects?skip_analysis=true",
+        json={"title": "云端钩子", "text": script_text},
+        headers=_headers(context.workspace_id),
+    ).json()
+
+    response = client.post(
+        f"/projects/{project['id']}/next_hook",
+        json={"content": "浏览器伪造的提示词", "model_id": "client-model"},
+        headers=_ai_headers(context.workspace_id, "next-hook-1"),
+    )
+
+    assert response.status_code == 202
+    assert response.json()["capability"] == "prompt.polish"
+    assert response.json()["version"] == project["version"]
+    assert len(submitter.calls) == 1
+    submitted = submitter.calls[0][1]
+    assert submitted["project_id"] == project["id"]
+    assert submitted["capability"] == "prompt.polish"
+    assert submitted["idempotency_key"] == "next-hook-1"
+    assert isinstance(submitted["content"], str)
+    assert "浏览器伪造的提示词" not in submitted["content"]
+    assert "client-model" not in submitted["content"]
+    assert submitted["content"].endswith(script_text[-1500:])
+    assert "不应进入结尾上下文的前文" not in submitted["content"]
+
+    empty_project = client.post(
+        "/projects?skip_analysis=true",
+        json={"title": "空剧本", "text": ""},
+        headers=_headers(context.workspace_id),
+    ).json()
+    empty_response = client.post(
+        f"/projects/{empty_project['id']}/next_hook",
+        headers=_ai_headers(context.workspace_id, "next-hook-empty"),
+    )
+    assert empty_response.status_code == 400
+    assert empty_response.json() == {
+        "code": "PROJECT_TEXT_REQUIRED",
+        "message": "请先填写本集剧本文本",
+    }
+    assert len(submitter.calls) == 1
+
+
+def test_previous_episode_summary_uses_stored_previous_text_and_text_task(
+    cloud_ai_routes,
+) -> None:
+    _database, context, _sessions, submitter, client = cloud_ai_routes
+    series = client.post(
+        "/series",
+        json={"title": "第一季"},
+        headers=_headers(context.workspace_id),
+    ).json()
+    previous = client.post(
+        "/projects?skip_analysis=true",
+        json={
+            "title": "第一集",
+            "text": "上一集的真实剧本文本",
+            "series_id": series["id"],
+        },
+        headers=_headers(context.workspace_id),
+    ).json()
+    current = client.post(
+        "/projects?skip_analysis=true",
+        json={"title": "第二集", "text": "本集正文", "series_id": series["id"]},
+        headers=_headers(context.workspace_id),
+    ).json()
+
+    response = client.post(
+        f"/projects/{current['id']}/previous_episode/summary",
+        json={"content": "浏览器伪造摘要原文"},
+        headers=_ai_headers(context.workspace_id, "previous-summary-1"),
+    )
+
+    assert response.status_code == 202
+    assert response.json()["capability"] == "prompt.polish"
+    assert response.json()["version"] == current["version"]
+    assert response.json()["previous_episode_id"] == previous["id"]
+    assert response.json()["previous_episode_title"] == "第一集"
+    assert response.json()["previous_episode_version"] == previous["version"]
+    assert len(submitter.calls) == 1
+    submitted = submitter.calls[0][1]
+    assert submitted["project_id"] == current["id"]
+    assert submitted["capability"] == "prompt.polish"
+    assert submitted["idempotency_key"] == "previous-summary-1"
+    assert submitted["content"].endswith("上一集的真实剧本文本")
+    assert "浏览器伪造摘要原文" not in submitted["content"]
+
+    standalone = client.post(
+        "/projects?skip_analysis=true",
+        json={"title": "独立项目", "text": "正文"},
+        headers=_headers(context.workspace_id),
+    ).json()
+    unavailable = client.post(
+        f"/projects/{standalone['id']}/previous_episode/summary",
+        headers=_ai_headers(context.workspace_id, "previous-summary-none"),
+    )
+    assert unavailable.status_code == 400
+    assert unavailable.json() == {
+        "code": "PREVIOUS_EPISODE_UNAVAILABLE",
+        "message": "当前项目没有可回顾的上一集",
+    }
+    assert len(submitter.calls) == 1

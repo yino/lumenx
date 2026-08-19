@@ -4,10 +4,11 @@ from fastapi import APIRouter, Depends, FastAPI, Query, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
+from .admin_access import create_require_platform_admin
 from .auth.api import AuthApplication, MessageResponse
 from .auth.protection import UNSAFE_METHODS
 from .auth.sessions import SessionAuthenticationError, SessionPrincipal
-from .contracts import UserContext
+from .contracts import AdminContext, UserContext
 from .workspaces import WorkspaceConflictError, WorkspaceNotFoundError, WorkspaceService
 
 
@@ -61,8 +62,12 @@ def install_workspace_api(app: FastAPI, auth: AuthApplication) -> WorkspaceServi
         return UserContext(
             user_id=str(principal.user_id),
             session_id=str(principal.session_id),
-            is_platform_admin=principal.is_platform_admin,
         )
+
+    require_admin = create_require_platform_admin(
+        auth.admin_sessions,
+        denied_message="仅平台管理员可以执行工作区清理",
+    )
 
     @router.post("/workspaces", response_model=WorkspaceResponse, status_code=201)
     def create_workspace(
@@ -120,14 +125,9 @@ def install_workspace_api(app: FastAPI, auth: AuthApplication) -> WorkspaceServi
 
     @router.post("/admin/workspaces/cleanup", response_model=WorkspaceCleanupResponse)
     def cleanup_workspaces(
-        principal: SessionPrincipal = Depends(require_principal),
+        admin: AdminContext = Depends(require_admin),
     ) -> WorkspaceCleanupResponse:
-        if not principal.is_platform_admin:
-            return JSONResponse(
-                status_code=403,
-                content={"code": "ADMIN_REQUIRED", "message": "仅平台管理员可以执行此操作"},
-            )
-        result = service.cleanup_expired(identity(principal))
+        result = service.cleanup_expired(admin)
         return WorkspaceCleanupResponse(deleted=result.deleted, skipped=result.skipped)
 
     app.include_router(router)

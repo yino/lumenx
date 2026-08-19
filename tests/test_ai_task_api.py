@@ -79,7 +79,6 @@ def ai_task_api():
         session_id=int(context.identity.session_id),
         phone_canonical="+8613800138000",
         phone_verified=False,
-        is_platform_admin=False,
     )
     sessions = FakeSessions(principal)
     app = FastAPI()
@@ -138,6 +137,51 @@ def test_task_list_detail_and_status_are_scoped_safe_and_paginated(ai_task_api) 
     assert sessions.calls[-1] == ("session-token", None)
 
 
+def test_text_task_status_exposes_only_bounded_safe_result_content(ai_task_api) -> None:
+    database, context, _sessions, client, reservation, _attempt = ai_task_api
+    state = AITaskStateService(database)
+    state.transition_task(
+        context,
+        task_id=reservation.task_id,
+        expected_statuses={"queued"},
+        target_status="running",
+    )
+    state.transition_task(
+        context,
+        task_id=reservation.task_id,
+        expected_statuses={"running"},
+        target_status="provider_succeeded",
+        result={"content": "供应商原始文本", "provider_secret": "不得返回"},
+    )
+    state.transition_task(
+        context,
+        task_id=reservation.task_id,
+        expected_statuses={"provider_succeeded"},
+        target_status="succeeded",
+        result={"content": "下一集从雨夜追逐开始。", "internal": "不得返回"},
+    )
+
+    status = client.get(
+        f"/ai/tasks/{reservation.task_id}/status",
+        headers=_headers(context.workspace_id),
+    )
+    detail = client.get(
+        f"/ai/tasks/{reservation.task_id}",
+        headers=_headers(context.workspace_id),
+    )
+    page = client.get(
+        "/ai/tasks",
+        headers=_headers(context.workspace_id),
+    )
+
+    assert status.status_code == 200
+    assert status.json()["result_content"] == "下一集从雨夜追逐开始。"
+    assert detail.json()["result_content"] == "下一集从雨夜追逐开始。"
+    assert "internal" not in status.text
+    assert "provider_secret" not in status.text
+    assert "result_content" not in page.json()["items"][0]
+
+
 def test_task_detail_hides_foreign_user_and_workspace(ai_task_api) -> None:
     database, context, sessions, client, reservation, _attempt = ai_task_api
     other_context = _create_scope(database)
@@ -151,7 +195,6 @@ def test_task_detail_hides_foreign_user_and_workspace(ai_task_api) -> None:
         session_id=int(other_context.identity.session_id),
         phone_canonical="+8613900139000",
         phone_verified=False,
-        is_platform_admin=False,
     )
     wrong_user = client.get(
         f"/ai/tasks/{reservation.task_id}",

@@ -6,10 +6,12 @@ import uuid
 from types import SimpleNamespace
 
 import pytest
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
+from fastapi.responses import JSONResponse
 from fastapi.testclient import TestClient
 
-from src.platform.auth.sessions import SessionPrincipal
+from src.platform.auth.admin_identity import AdminSessionPrincipal
+from src.platform.auth.sessions import SessionAuthenticationError
 from src.platform.observability import MetricsRegistry, StructuredEventLogger
 from src.platform.observability_api import install_observability_api
 
@@ -24,21 +26,17 @@ class RecordingHandler(logging.Handler):
 
 
 class FakeSessions:
-    def __init__(self, *, is_platform_admin: bool) -> None:
-        self.is_platform_admin = is_platform_admin
-
-    def resolve(self, token: str) -> SessionPrincipal:
+    def resolve(self, token: str) -> AdminSessionPrincipal:
         assert token == "session-token"
-        return SessionPrincipal(
-            user_id=1,
+        return AdminSessionPrincipal(
+            admin_id=1,
             session_id=11,
-            phone_canonical="+8613800138000",
-            phone_verified=False,
-            is_platform_admin=self.is_platform_admin,
+            username="admin",
+            must_change_password=False,
         )
 
 
-def _metrics_client(*, is_platform_admin: bool) -> tuple[TestClient, MetricsRegistry]:
+def _metrics_client(*, admin_authenticated: bool) -> tuple[TestClient, MetricsRegistry]:
     registry = MetricsRegistry()
     registry.increment(
         "auth_results_total",
@@ -47,11 +45,18 @@ def _metrics_client(*, is_platform_admin: bool) -> tuple[TestClient, MetricsRegi
     app = FastAPI()
     install_observability_api(
         app,
-        SimpleNamespace(sessions=FakeSessions(is_platform_admin=is_platform_admin)),
+        SimpleNamespace(admin_sessions=FakeSessions()),
         registry=registry,
     )
+    @app.exception_handler(SessionAuthenticationError)
+    def unauthenticated(_request: Request, exc: SessionAuthenticationError):
+        return JSONResponse(status_code=401, content={"code": exc.code, "message": str(exc)})
+
     client = TestClient(app)
-    client.cookies.set("lumenx_session", "session-token")
+    client.cookies.set(
+        "lumenx_admin_session" if admin_authenticated else "lumenx_session",
+        "session-token",
+    )
     return client, registry
 
 
@@ -113,8 +118,32 @@ def test_structured_events_allow_ids_but_reject_raw_content_and_secrets() -> Non
         event_logger.emit("unsafe.secret", api_key="sk-not-allowed-123456")
 
 
+@pytest.mark.parametrize(
+    "field",
+    [
+        "phone",
+        "phone_canonical",
+        "script",
+        "prompt",
+        "reset_credential",
+        "object_key",
+        "provider_diagnostics",
+        "offline_reference",
+        "idempotency_key",
+    ],
+)
+def test_structured_events_reject_admin_private_fields_at_any_depth(field: str) -> None:
+    event_logger = StructuredEventLogger(logging.getLogger("test-admin-redaction"))
+
+    with pytest.raises(ValueError, match="原始用户或供应商内容"):
+        event_logger.emit(
+            "admin.unsafe",
+            metadata={"nested": {field: "不得写入日志"}},
+        )
+
+
 def test_observability_metrics_are_platform_admin_only() -> None:
-    admin_client, _registry = _metrics_client(is_platform_admin=True)
+    admin_client, _registry = _metrics_client(admin_authenticated=True)
     response = admin_client.get("/admin/observability/metrics")
     assert response.status_code == 200
     assert response.json()["counters"] == [
@@ -126,7 +155,8 @@ def test_observability_metrics_are_platform_admin_only() -> None:
     ]
     admin_client.close()
 
-    user_client, _registry = _metrics_client(is_platform_admin=False)
-    with pytest.raises(Exception, match="仅平台管理员"):
-        user_client.get("/admin/observability/metrics")
+    user_client, _registry = _metrics_client(admin_authenticated=False)
+    denied = user_client.get("/admin/observability/metrics")
+    assert denied.status_code == 401
+    assert "counters" not in denied.text
     user_client.close()

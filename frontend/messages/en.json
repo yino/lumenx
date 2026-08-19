@@ -26,6 +26,7 @@
   },
   "reconcile": {
     "title": "Reconcile entities with the series",
+    "open": "Reconcile",
     "subtitle": "{total} extracted · {merge} matched / {create} new",
     "loading": "Loading suggestions…",
     "noEntities": "No newly extracted entities.",

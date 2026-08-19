@@ -37,6 +37,7 @@ class UserLedgerHistoryItem:
     workspace_id: str | None
     project_id: str | None
     task_id: str | None
+    order_number: str | None
     metering_tokens: int | None
     amount_microtickets: int
     display_delta_microtickets: int
@@ -79,6 +80,8 @@ LEDGER_OPERATION_ZH = {
     "release": "释放预扣",
     "adjustment": "人工调整",
     "compensation": "异常补偿",
+    "manual_recharge": "人工充值",
+    "manual_recharge_refund": "充值退款",
 }
 
 USAGE_STATUS_ZH = {
@@ -293,6 +296,14 @@ class TicketHistoryService:
                             str(record.project_id) if record.project_id is not None else None
                         ),
                         task_id=str(record.task_id) if record.task_id is not None else None,
+                        order_number=(
+                            str(record.correlation.get("order_number"))
+                            if record.entry_type
+                            in {"manual_recharge", "manual_recharge_refund"}
+                            and isinstance(record.correlation, dict)
+                            and record.correlation.get("order_number")
+                            else None
+                        ),
                         metering_tokens=(usage.metering_tokens if usage is not None else None),
                         amount_microtickets=record.amount_microtickets,
                         display_delta_microtickets=self._display_delta(record),
@@ -300,7 +311,12 @@ class TicketHistoryService:
                         held_after=record.held_after,
                         status=status,
                         status_zh=status_zh,
-                        reason=record.reason,
+                        reason=(
+                            None
+                            if record.entry_type
+                            in {"manual_recharge", "manual_recharge_refund"}
+                            else record.reason
+                        ),
                         created_at=record.created_at,
                     )
                 )

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Literal
 
 from fastapi import APIRouter, Depends, FastAPI, Query, Request
 from fastapi.responses import JSONResponse
@@ -30,7 +30,11 @@ from .content_repositories import (
     OptimisticVersionConflictError,
     ScopedDocumentNotFoundError,
 )
-from .content_service import CloudContentService
+from .content_service import (
+    CloudContentService,
+    NextEpisodeHookTextRequiredError,
+    PreviousEpisodeSummaryUnavailableError,
+)
 from .contracts import UserContext, VersionedDocument, WorkspaceContext
 from .identifiers import parse_database_id
 
@@ -54,8 +58,36 @@ class UpdateProjectTextRequest(CloudContentRequest):
     text: str = ""
 
 
+class UpdateNextEpisodeHookRequest(CloudContentRequest):
+    hook: str | None = Field(max_length=4000)
+
+
+class UpdatePreviousEpisodeSummaryRequest(CloudContentRequest):
+    ai_summary: str | None = Field(max_length=8000)
+    source_previous_version: int | None = Field(default=None, ge=1)
+
+
 class ReparseProjectRequest(CloudContentRequest):
     text: str = Field(min_length=1)
+
+
+class ApplyEntityExtractionRequest(CloudContentRequest):
+    text: str = Field(min_length=1)
+    characters: list[dict[str, Any]] = Field(default_factory=list)
+    scenes: list[dict[str, Any]] = Field(default_factory=list)
+    props: list[dict[str, Any]] = Field(default_factory=list)
+
+
+class ReconcileActionRequest(CloudContentRequest):
+    local_id: str = Field(min_length=1)
+    action: Literal["merge_into_series", "create_new_in_series", "skip"]
+    target_series_id: str | None = None
+
+
+class ApplyReconcileRequest(CloudContentRequest):
+    characters: list[ReconcileActionRequest] = Field(default_factory=list)
+    scenes: list[ReconcileActionRequest] = Field(default_factory=list)
+    props: list[ReconcileActionRequest] = Field(default_factory=list)
 
 
 class CreateSeriesRequest(CloudContentRequest):
@@ -181,7 +213,6 @@ def install_cloud_content_api(
             identity=UserContext(
                 user_id=str(principal.user_id),
                 session_id=str(principal.session_id),
-                is_platform_admin=principal.is_platform_admin,
             ),
             workspace_id=canonical_workspace_id,
         )
@@ -237,6 +268,121 @@ def install_cloud_content_api(
     ) -> dict[str, Any]:
         return _content_response(service.get_project(context, project_id))
 
+    @router.get("/projects/{project_id}/next_hook")
+    def get_next_episode_hook(
+        project_id: str,
+        context: WorkspaceContext = Depends(require_context),
+    ) -> dict[str, Any]:
+        return service.get_next_episode_hook(context, project_id)
+
+    @router.get("/projects/{project_id}/previous_episode")
+    def get_previous_episode_summary(
+        project_id: str,
+        context: WorkspaceContext = Depends(require_context),
+    ) -> dict[str, Any]:
+        return service.get_previous_episode_summary(context, project_id)
+
+    @router.put("/projects/{project_id}/next_hook")
+    def update_next_episode_hook(
+        project_id: str,
+        payload: UpdateNextEpisodeHookRequest,
+        request: Request,
+        context: WorkspaceContext = Depends(require_context),
+    ) -> dict[str, Any]:
+        stored = service.update_next_episode_hook(
+            context,
+            project_id,
+            payload.hook,
+            _parse_expected_version(request),
+        )
+        return {
+            "hook": stored.document.next_hook_cache,
+            "stale": False,
+            "version": stored.version,
+        }
+
+    @router.put("/projects/{project_id}/last_episode_summary")
+    def update_previous_episode_summary(
+        project_id: str,
+        payload: UpdatePreviousEpisodeSummaryRequest,
+        request: Request,
+        context: WorkspaceContext = Depends(require_context),
+    ) -> dict[str, Any]:
+        service.update_previous_episode_summary(
+            context,
+            project_id,
+            payload.ai_summary,
+            _parse_expected_version(request),
+            payload.source_previous_version,
+        )
+        state = service.get_previous_episode_summary(context, project_id)
+        return {
+            "ai_summary": state["ai_summary"],
+            "ai_summary_stale": state["ai_summary_stale"],
+            "previous_episode_id": state["previous_episode_id"],
+            "previous_episode_title": state["previous_episode_title"],
+            "version": state["version"],
+        }
+
+    if ai_submitter is not None:
+
+        @router.post("/projects/{project_id}/next_hook", status_code=202)
+        def generate_next_episode_hook(
+            project_id: str,
+            request: Request,
+            context: WorkspaceContext = Depends(require_context),
+        ) -> dict[str, Any]:
+            idempotency_key = require_idempotency_key(request, {})
+            prompt, project_version = service.build_next_episode_hook_prompt(
+                context,
+                project_id,
+            )
+            response = submit_ai_task(
+                ai_submitter,
+                context,
+                capability="prompt.polish",
+                idempotency_key=idempotency_key,
+                project_id=project_id,
+                content=prompt,
+            )
+            response["version"] = project_version
+            return response
+
+        @router.post(
+            "/projects/{project_id}/previous_episode/summary",
+            status_code=202,
+        )
+        def generate_previous_episode_summary(
+            project_id: str,
+            request: Request,
+            context: WorkspaceContext = Depends(require_context),
+        ) -> dict[str, Any]:
+            idempotency_key = require_idempotency_key(request, {})
+            (
+                prompt,
+                project_version,
+                previous_episode_id,
+                previous_episode_title,
+                previous_episode_version,
+            ) = service.build_previous_episode_summary_prompt(context, project_id)
+            response = submit_ai_task(
+                ai_submitter,
+                context,
+                capability="prompt.polish",
+                idempotency_key=idempotency_key,
+                project_id=project_id,
+                content=prompt,
+            )
+            response.update(
+                {
+                    "version": project_version,
+                    "previous_episode_id": previous_episode_id,
+                    "previous_episode_title": previous_episode_title,
+                    "previous_episode_version": previous_episode_version,
+                }
+            )
+            return response
+
     @router.put("/projects/{project_id}/text")
     def update_project_text(
         project_id: str,
@@ -289,6 +435,54 @@ def install_cloud_content_api(
             },
         )
         return response
+
+    @router.put("/projects/{project_id}/extraction")
+    def apply_entity_extraction(
+        project_id: str,
+        payload: ApplyEntityExtractionRequest,
+        request: Request,
+        context: WorkspaceContext = Depends(require_context),
+    ) -> dict[str, Any]:
+        return _content_response(
+            service.apply_entity_extraction(
+                context,
+                project_id,
+                payload.text,
+                {
+                    "characters": payload.characters,
+                    "scenes": payload.scenes,
+                    "props": payload.props,
+                },
+                _parse_expected_version(request),
+            )
+        )
+
+    @router.get("/projects/{project_id}/reconcile/suggestions")
+    def get_reconcile_suggestions(
+        project_id: str,
+        context: WorkspaceContext = Depends(require_context),
+    ) -> dict[str, list[dict[str, Any]]]:
+        return service.get_reconcile_suggestions(context, project_id)
+
+    @router.post("/projects/{project_id}/reconcile/apply")
+    def apply_reconcile(
+        project_id: str,
+        payload: ApplyReconcileRequest,
+        request: Request,
+        context: WorkspaceContext = Depends(require_context),
+    ) -> dict[str, Any]:
+        decisions = {
+            field_name: [item.model_dump() for item in getattr(payload, field_name)]
+            for field_name in ("characters", "scenes", "props")
+        }
+        return _content_response(
+            service.apply_reconcile(
+                context,
+                project_id,
+                decisions,
+                _parse_expected_version(request),
+            )
+        )
 
     @router.post("/projects/{project_id}/toggle_starred")
     def toggle_project_starred(
@@ -586,13 +780,6 @@ def install_cloud_content_api(
             methods=["POST"],
             name="cloud_ai_project.extract_preview",
         )
-        router.add_api_route(
-            "/projects/{project_id}/previous_episode/summary",
-            submit_script_operation,
-            methods=["POST"],
-            name="cloud_ai_project.previous_episode.summary",
-        )
-
     app.include_router(router)
 
     @app.exception_handler(ScopedDocumentNotFoundError)
@@ -628,6 +815,26 @@ def install_cloud_content_api(
         return JSONResponse(
             status_code=422,
             content={"code": "CONTENT_INVALID", "message": str(exc)},
+        )
+
+    @app.exception_handler(NextEpisodeHookTextRequiredError)
+    def handle_next_hook_text_required(
+        _request: Request,
+        exc: NextEpisodeHookTextRequiredError,
+    ):
+        return JSONResponse(
+            status_code=400,
+            content={"code": "PROJECT_TEXT_REQUIRED", "message": str(exc)},
+        )
+
+    @app.exception_handler(PreviousEpisodeSummaryUnavailableError)
+    def handle_previous_episode_unavailable(
+        _request: Request,
+        exc: PreviousEpisodeSummaryUnavailableError,
+    ):
+        return JSONResponse(
+            status_code=400,
+            content={"code": "PREVIOUS_EPISODE_UNAVAILABLE", "message": str(exc)},
         )
 
     app.state.cloud_content_service = service

@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from dataclasses import replace
 from types import SimpleNamespace
 from unittest.mock import Mock
 
@@ -13,6 +12,7 @@ from src.platform.ai_gateway_api import FeatureGatedAITaskSubmitter
 from src.platform.auth.api import create_auth_router
 from src.platform.configuration_schemas import PlatformFeatureFlags
 from src.platform.configuration_service import ConfigurationService
+from src.platform.contracts import AdminContext
 from src.platform.feature_flags import CloudFeatureDisabledError, CloudFeatureGate
 from src.platform.db_models import (
     AuditEventRecord,
@@ -32,7 +32,7 @@ def feature_database():
     PlatformConfigRecord.__table__.create(database.engine)
     AuditEventRecord.__table__.create(database.engine)
     context = _create_scope(database)
-    yield database, replace(context.identity, is_platform_admin=True)
+    yield database, AdminContext(admin_id="9001", session_id="9101", username="admin")
     database.engine.dispose()
 
 

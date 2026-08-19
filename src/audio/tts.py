@@ -228,8 +228,25 @@ class TTSProcessor:
         )
         logger.info(f"Text: {text[:100]}{'...' if len(text) > 100 else ''}")
 
-        synthesizer = SpeechSynthesizer(**synth_kwargs)
-        audio_data = synthesizer.call(text)
+        synthesizer = None
+        for attempt in range(2):
+            synthesizer = SpeechSynthesizer(**synth_kwargs)
+            try:
+                audio_data = synthesizer.call(text)
+                break
+            except TimeoutError:
+                try:
+                    synthesizer.close()
+                except Exception:
+                    pass
+                if attempt == 1:
+                    raise
+                logger.warning(
+                    "CosyVoice websocket startup timed out; retrying once"
+                )
+                time.sleep(1.0)
+
+        assert synthesizer is not None
 
         request_id = synthesizer.get_last_request_id()
         first_package_delay = synthesizer.get_first_package_delay()

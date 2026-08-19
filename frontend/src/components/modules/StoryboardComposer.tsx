@@ -61,7 +61,15 @@ export default function StoryboardComposer() {
 
         setIsAnalyzing(true);
         try {
-            const updatedProject = await api.analyzeToStoryboard(currentProject.id, text);
+            const updatedProject = await api.analyzeToStoryboard(
+                currentProject.id,
+                text,
+                {
+                    characters: currentProject.characters,
+                    scenes: currentProject.scenes,
+                    props: currentProject.props,
+                },
+            );
             const frameCount = updatedProject.frames?.length || 0;
             if (frameCount > 0) {
                 updateProject(currentProject.id, updatedProject);

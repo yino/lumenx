@@ -145,6 +145,7 @@ class TicketWalletService:
         *,
         reason: str,
         actor_user_id: str | int | None = None,
+        actor_admin_id: str | int | None = None,
         correlation: Mapping[str, object] | None = None,
     ) -> TicketWalletSnapshot:
         canonical_user_id = cls._required_id(user_id, "用户标识")
@@ -154,6 +155,9 @@ class TicketWalletService:
         )
         normalized_reason = cls._reason(reason)
         normalized_actor_user_id = cls._id(actor_user_id, "操作用户标识")
+        normalized_actor_admin_id = cls._id(actor_admin_id, "操作管理员标识")
+        if normalized_actor_user_id is not None and normalized_actor_admin_id is not None:
+            raise TicketWalletConflictError("流水不能同时记录用户和管理员操作主体")
         normalized_correlation = cls._correlation(correlation)
         wallet = TicketWalletRecord(
             user_id=canonical_user_id,
@@ -166,6 +170,7 @@ class TicketWalletService:
         ledger = TicketLedgerRecord(
             user_id=canonical_user_id,
             actor_user_id=normalized_actor_user_id,
+            actor_admin_id=normalized_actor_admin_id,
             entry_type="grant",
             amount_microtickets=amount,
             available_delta=amount,
@@ -196,6 +201,7 @@ class TicketWalletService:
         task_id: str | int | None = None,
         hold_id: str | int | None = None,
         actor_user_id: str | int | None = None,
+        actor_admin_id: str | int | None = None,
         correlation: Mapping[str, object] | None = None,
     ) -> TicketWalletSnapshot:
         amount = validate_microtickets(amount_microtickets)
@@ -205,6 +211,9 @@ class TicketWalletService:
         normalized_task_id = cls._id(task_id, "任务标识")
         normalized_hold_id = cls._id(hold_id, "占用标识")
         normalized_actor_user_id = cls._id(actor_user_id, "操作用户标识")
+        normalized_actor_admin_id = cls._id(actor_admin_id, "操作管理员标识")
+        if normalized_actor_user_id is not None and normalized_actor_admin_id is not None:
+            raise TicketWalletConflictError("流水不能同时记录用户和管理员操作主体")
         normalized_correlation = cls._correlation(correlation)
         cls._assert_invariants(wallet)
         try:
@@ -243,6 +252,7 @@ class TicketWalletService:
                 task_id=normalized_task_id,
                 hold_id=normalized_hold_id,
                 actor_user_id=normalized_actor_user_id,
+                actor_admin_id=normalized_actor_admin_id,
                 entry_type=entry_type,
                 amount_microtickets=amount,
                 available_delta=available_delta,
@@ -265,6 +275,7 @@ class TicketWalletService:
         entry_type: CreditEntryType,
         reason: str,
         actor_user_id: str | int | None = None,
+        actor_admin_id: str | int | None = None,
         correlation: Mapping[str, object] | None = None,
     ) -> TicketWalletSnapshot:
         if entry_type not in {"grant", "adjustment", "compensation"}:
@@ -283,6 +294,7 @@ class TicketWalletService:
             held_delta=0,
             reason=reason,
             actor_user_id=actor_user_id,
+            actor_admin_id=actor_admin_id,
             correlation=correlation,
         )
         wallet.lifetime_granted_microtickets = next_lifetime_granted
@@ -296,7 +308,8 @@ class TicketWalletService:
         amount_microtickets: int,
         *,
         reason: str,
-        actor_user_id: str | int,
+        actor_user_id: str | int | None = None,
+        actor_admin_id: str | int | None = None,
         correlation: Mapping[str, object] | None = None,
     ) -> TicketWalletSnapshot:
         amount = validate_microtickets(amount_microtickets)
@@ -309,6 +322,7 @@ class TicketWalletService:
             held_delta=0,
             reason=reason,
             actor_user_id=actor_user_id,
+            actor_admin_id=actor_admin_id,
             correlation=correlation,
         )
 

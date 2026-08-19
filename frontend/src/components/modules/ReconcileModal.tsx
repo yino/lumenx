@@ -25,7 +25,7 @@ interface ReconcileModalProps {
     onClose: () => void;
     /** Called after successful apply. Frontend uses this to dispatch a
      *  navigateStep("cast") event if the user clicks "去 Cast 查看 →". */
-    onApplied?: () => void;
+    onApplied?: () => void | Promise<void>;
 }
 
 type Kind = "character" | "scene" | "prop";
@@ -115,7 +115,7 @@ export default function ReconcileModal({ isOpen, scriptId, onClose, onApplied }:
         setError(null);
         try {
             await api.applyReconcile(scriptId, buildPayload());
-            onApplied?.();
+            await onApplied?.();
             onClose();
             if (navigateToCast) {
                 document.dispatchEvent(new CustomEvent("lumenx:navigateStep", { detail: "cast" }));

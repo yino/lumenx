@@ -15,6 +15,7 @@
 - [x] 2.6 Add a bounded rollout compatibility route for old cloud root requests, metrics for compatibility usage, and a removal switch that cannot affect desktop routes.
 - [x] 2.7 Update frontend API tests, Nginx route tests, cloud error-protocol tests, and desktop adapter tests for the new edge namespace.
 - [x] 2.8 Add security headers and no-store HTML behavior needed to prevent stale frontend bundles from outliving the API compatibility window.
+- [x] 2.9 Move the script side-panel's previous-episode summary and next-episode hook helpers to scoped PostgreSQL reads/writes and persistent metered `prompt.polish` execution, including safe text-result polling and optimistic persistence tests.
 
 ## 3. Runtime policy authority and propagation
 
@@ -34,7 +35,7 @@
 
 ## 4. Controlled beta registration
 
-- [x] 4.1 Replace the registration boolean with the validated modes `disabled`, `invite_only`, and reserved `verified_open`, rejecting verified-open activation until a verification provider is operational.
+- [x] 4.1 Replace the registration boolean with the validated modes `disabled`, `invite_only`, explicitly unverified `open`, and reserved `verified_open`, rejecting verified-open activation until a verification provider is operational.
 - [x] 4.2 Add an Alembic migration for `registration_invitations` with canonical phone, invitation hash, creator, expiry, status, consumption, timestamps, indexes, constraints, and RLS.
 - [x] 4.3 Add transaction-local pre-auth invitation lookup context and RLS policies that expose only a matching invitation during registration while preserving platform-admin access.
 - [x] 4.4 Implement cryptographically random invitation issuance, keyed hashing, one-time plaintext projection, expiry, revocation, and audit-safe lifecycle services.
@@ -43,9 +44,10 @@
 - [x] 4.7 Extend registration input with an invitation code in invite-only mode and atomically validate phone match, lock/consume the invitation, and create user, wallet, grant, workspace, and session.
 - [x] 4.8 Preserve the first-admin bootstrap path as an explicit audited operational exception without creating a general invitation bypass.
 - [x] 4.9 Add invitation-specific rate limits, nondisclosing Chinese errors, hashed diagnostics, and audit events for mismatch, expiry, replay, revocation, and consumption.
-- [x] 4.10 Update the Chinese login/registration screen to hide registration when disabled and require/explain the invitation code and unverified phone state in invite-only mode.
+- [x] 4.10 Update the Chinese login/registration screen to hide registration when disabled, require/explain invitations in invite-only mode, and support phone/password signup without verification claims in open mode.
 - [x] 4.11 Add unit, PostgreSQL concurrency, API, CSRF, frontend, and RLS tests for invitation success, mismatch, rollback, replay, expiry, revocation, and unauthorized administration.
 - [x] 4.12 Migrate legacy `registration_enabled=false` to disabled and `true` to invite-only, with an upgrade test proving no unrestricted unverified mode is created.
+- [x] 4.13 Add a separate idempotent local Compose registration-policy bootstrap that defaults to `open`, while production defaults to `disabled` and administrator bootstrap remains isolated from user-domain creation.
 
 ## 5. Deployed-stack release verification
 
@@ -67,6 +69,7 @@
 - [x] 5.16 Add a root Makefile with Chinese help for local startup, builds, tests, checks, migrations, Docker operations, existing desktop packaging scripts, and a non-paid side-effect-bounded release check.
 - [x] 5.17 Add a host-path-independent local Compose override that uses Git-ignored environment values, distinct database roles, loopback-only exposure, Docker-managed volumes, and explicit production Compose selection.
 - [x] 5.18 Publish local PostgreSQL on loopback port 15433, centralize Dockerfiles under `docker/` without changing build contexts, and add Compose regression coverage and connection documentation.
+- [x] 5.19 Add a local-only, audited AI configuration bootstrap that enables the server-side text routes needed by the local browser workflow without changing production fail-closed defaults.
 
 ## 6. Migration, operations, and final gate
 

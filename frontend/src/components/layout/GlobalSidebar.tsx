@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { LayoutGrid, Layers, LogOut, Settings, ShieldCheck, WalletCards, Wand2 } from "lucide-react";
+import { LayoutGrid, Layers, LogOut, Settings, WalletCards, Wand2 } from "lucide-react";
 import { useTranslations } from "next-intl";
 import clsx from "clsx";
 import { IS_CLOUD_DEPLOYMENT } from "@/lib/deployment";
@@ -11,7 +11,7 @@ import { useAuthStore } from "@/store/authStore";
 import { toast } from "@/store/toastStore";
 import WorkspaceSwitcher from "@/components/workspace/WorkspaceSwitcher";
 
-export type GlobalTab = "workspace" | "library" | "playground" | "wallet" | "admin" | "settings";
+export type GlobalTab = "workspace" | "library" | "playground" | "wallet" | "settings";
 
 interface GlobalSidebarProps {
   activeTab: GlobalTab;
@@ -134,14 +134,6 @@ export default function GlobalSidebar({ activeTab, onTabChange }: GlobalSidebarP
             onClick={() => handleNav(item.id, item.hash)}
           />
         ))}
-        {IS_CLOUD_DEPLOYMENT && user?.is_platform_admin && (
-          <NavButton
-            active={activeTab === "admin"}
-            label="平台管理"
-            icon={ShieldCheck}
-            onClick={() => handleNav("admin", "#/admin/users")}
-          />
-        )}
       </nav>
 
       {/* Settings pinned bottom + version */}
@@ -155,7 +147,7 @@ export default function GlobalSidebar({ activeTab, onTabChange }: GlobalSidebarP
               title="账号安全"
             >
               <span className="block truncate font-mono text-xs text-foreground">
-                {user.phone.replace(/(\+86\d{3})\d{4}(\d{4})/, "$1****$2")}
+                {user.username || user.phone?.replace(/(\+86\d{3})\d{4}(\d{4})/, "$1****$2") || user.account_label}
               </span>
               <span className="mt-0.5 block text-[0.625rem] text-text-muted">{user.phone_verification_status}</span>
             </button>

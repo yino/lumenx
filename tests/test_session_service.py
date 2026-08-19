@@ -60,7 +60,6 @@ def test_resolve_refreshes_idle_expiry_and_returns_principal() -> None:
         phone_canonical="+8613800138000",
         password_hash="hash",
         status="active",
-        is_platform_admin=False,
     )
     session = Mock()
     session.scalar.return_value = issued.record
@@ -116,7 +115,6 @@ def test_persisted_csrf_hash_is_checked_during_resolution() -> None:
         phone_canonical="+8613800138000",
         password_hash="hash",
         status="active",
-        is_platform_admin=False,
     )
     service = SessionService(SessionDatabase(session), "s" * 32)
 

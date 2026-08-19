@@ -5,7 +5,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from typing import Any, Literal, Mapping, Protocol
 
-from sqlalchemy import select
+from sqlalchemy import and_, or_, select
 
 from .ai_task_state import AITaskStateMachine, AITaskStateService
 from .ai_worker import (
@@ -21,6 +21,7 @@ from .database import Database
 from .db_models import AITaskAttemptRecord, AITaskRecord
 from .model_routing import RequestScopedModelClient
 from .identifiers import parse_database_id
+from .ticket_settlement import TicketSettlementService
 
 
 class ProviderRecoveryInvoker(Protocol):
@@ -29,6 +30,15 @@ class ProviderRecoveryInvoker(Protocol):
         client: RequestScopedModelClient,
         task: "ProviderRecoveryLease",
     ) -> "ProviderRecoveryOutcome": ...
+
+
+class UnsupportedProviderRecoveryInvoker:
+    def resume(
+        self,
+        client: RequestScopedModelClient,
+        task: "ProviderRecoveryLease",
+    ) -> "ProviderRecoveryOutcome":
+        raise RuntimeError("当前供应商不支持异步任务恢复")
 
 
 @dataclass(frozen=True, slots=True)
@@ -50,6 +60,9 @@ class RecoveryClaim:
     task_id: str
     status: str
     lease: ProviderRecoveryLease | None = None
+    context: WorkspaceContext | None = None
+    attempt_id: str | None = None
+    provider_billable: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -73,12 +86,16 @@ class AIRecoveryRepository:
         *,
         worker_identity: UserContext = WORKER_IDENTITY,
         stale_after_seconds: int = 300,
+        running_stale_after_seconds: int = 900,
     ) -> None:
         if stale_after_seconds < 0:
             raise ValueError("恢复租约过期时间不能为负数")
+        if running_stale_after_seconds < stale_after_seconds:
+            raise ValueError("运行中任务的恢复等待时间不能短于普通恢复等待时间")
         self.database = database
         self.worker_identity = worker_identity
         self.stale_after = timedelta(seconds=stale_after_seconds)
+        self.running_stale_after = timedelta(seconds=running_stale_after_seconds)
 
     @staticmethod
     def _task_id(value: str) -> int:
@@ -90,6 +107,9 @@ class AIRecoveryRepository:
     def list_candidate_ids(self, *, limit: int = 100) -> tuple[str, ...]:
         if not isinstance(limit, int) or isinstance(limit, bool) or limit <= 0:
             raise ValueError("恢复任务数量必须为正整数")
+        now = datetime.now(timezone.utc)
+        stale_before = now - self.stale_after
+        running_stale_before = now - self.running_stale_after
         with self.database.transaction(self.worker_identity) as session:
             identifiers = session.scalars(
                 select(AITaskRecord.id)
@@ -100,6 +120,16 @@ class AIRecoveryRepository:
                 .where(
                     AITaskRecord.status == "running",
                     AITaskAttemptRecord.status.in_({"running", "polling", "ambiguous"}),
+                    or_(
+                        and_(
+                            AITaskAttemptRecord.status == "running",
+                            AITaskRecord.updated_at <= running_stale_before,
+                        ),
+                        and_(
+                            AITaskAttemptRecord.status.in_({"polling", "ambiguous"}),
+                            AITaskRecord.updated_at <= stale_before,
+                        ),
+                    ),
                 )
                 .group_by(AITaskRecord.id, AITaskRecord.updated_at)
                 .order_by(AITaskRecord.updated_at, AITaskRecord.id)
@@ -133,6 +163,11 @@ class AIRecoveryRepository:
             if attempt is None:
                 return RecoveryClaim(task_id=str(task.id), status="missing_attempt")
 
+            context = WorkspaceContext(
+                identity=UserContext(user_id=str(task.user_id)),
+                workspace_id=str(task.workspace_id),
+            )
+
             if not attempt.provider_task_id:
                 if attempt.status != "ambiguous":
                     AITaskStateMachine.ensure_attempt_transition(
@@ -147,7 +182,13 @@ class AIRecoveryRepository:
                     "stage": "recovery",
                     "reason": "provider_task_id_missing",
                 }
-                return RecoveryClaim(task_id=str(task.id), status="ambiguous")
+                return RecoveryClaim(
+                    task_id=str(task.id),
+                    status="ambiguous",
+                    context=context,
+                    attempt_id=str(attempt.id),
+                    provider_billable=task.provider_billable,
+                )
 
             now = datetime.now(timezone.utc)
             if (
@@ -168,10 +209,6 @@ class AIRecoveryRepository:
 
             config_snapshot = copy.deepcopy(dict(attempt.config_snapshot))
             route = model_route_from_snapshot(config_snapshot)
-            context = WorkspaceContext(
-                identity=UserContext(user_id=str(task.user_id)),
-                workspace_id=str(task.workspace_id),
-            )
             return RecoveryClaim(
                 task_id=str(task.id),
                 status="polling",
@@ -201,18 +238,65 @@ class AIWorkerRecoveryService:
         model_clients: WorkerModelClientFactory,
         provider_recovery: ProviderRecoveryInvoker,
         output_finalizer: WorkerOutputFinalizer | None = None,
+        settlement: TicketSettlementService | None = None,
     ) -> None:
         self.recovery = recovery
         self.task_state = task_state
         self.model_clients = model_clients
         self.provider_recovery = provider_recovery
         self.output_finalizer = output_finalizer
+        self.settlement = settlement
+
+    def _support_review(
+        self,
+        *,
+        context: WorkspaceContext,
+        task_id: str,
+        attempt_id: str,
+        reason: str,
+        error: Exception | None = None,
+    ) -> RecoveryExecutionResult:
+        if self.settlement is None:
+            return RecoveryExecutionResult(
+                task_id=task_id,
+                attempt_id=attempt_id,
+                status="ambiguous",
+                recovered=False,
+            )
+        self.settlement.release_unmetered_billable_failure(
+            context,
+            task_id=task_id,
+            attempt_id=attempt_id,
+            support_review_reason=reason,
+            safe_error_code="AI_TASK_RECOVERY_REVIEW_REQUIRED",
+            safe_error_message="AI 任务无法自动恢复，预扣算力券已全部退回",
+            attempt_diagnostic={
+                "billing_state": "acknowledged",
+                "error_type": type(error).__name__ if error is not None else None,
+                "stage": "recovery",
+                "reason": reason,
+            },
+        )
+        return RecoveryExecutionResult(
+            task_id=task_id,
+            attempt_id=attempt_id,
+            status="support_review",
+            recovered=True,
+        )
 
     def _ambiguous(
         self,
         lease: ProviderRecoveryLease,
         error: Exception,
     ) -> RecoveryExecutionResult:
+        if self.settlement is not None:
+            return self._support_review(
+                context=lease.task.context,
+                task_id=lease.task.task_id,
+                attempt_id=lease.task.attempt_id,
+                reason="供应商任务无法自动恢复",
+                error=error,
+            )
         attempt = self.task_state.transition_attempt(
             lease.task.context,
             task_id=lease.task.task_id,
@@ -236,6 +320,19 @@ class AIWorkerRecoveryService:
         claim = self.recovery.claim(task_id)
         lease = claim.lease
         if lease is None:
+            if (
+                claim.status == "ambiguous"
+                and claim.context is not None
+                and claim.attempt_id is not None
+                and claim.provider_billable
+                and self.settlement is not None
+            ):
+                return self._support_review(
+                    context=claim.context,
+                    task_id=claim.task_id,
+                    attempt_id=claim.attempt_id,
+                    reason="供应商未提供可恢复的任务标识",
+                )
             return RecoveryExecutionResult(
                 task_id=claim.task_id,
                 status=claim.status,

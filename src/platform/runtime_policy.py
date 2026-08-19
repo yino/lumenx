@@ -11,7 +11,7 @@ from .configuration_service import (
     ConfigurationNotFoundError,
     ConfigurationService,
 )
-from .contracts import UserContext
+from .contracts import SystemContext
 from .database import Database
 
 
@@ -91,11 +91,7 @@ class RuntimePolicySnapshot:
 
 
 class RuntimePolicyResolver:
-    _IDENTITY = UserContext(
-        user_id="00000000-0000-0000-0000-000000000000",
-        session_id="runtime-policy-resolver",
-        is_platform_admin=True,
-    )
+    _IDENTITY = SystemContext(service_name="runtime-policy-resolver")
 
     def __init__(
         self,

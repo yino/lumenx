@@ -27,12 +27,11 @@ vi.mock("@/lib/api", () => ({
 import AuthGate from "../AuthGate";
 
 const user = {
-  id: "user-1",
+  id: "1",
   phone: "+8613800138000",
   phone_verified: false,
   phone_verification_status: "未验证",
-  is_platform_admin: false,
-  default_workspace_id: "workspace-1",
+  default_workspace_id: "1",
 };
 
 describe("AuthGate", () => {
@@ -89,7 +88,7 @@ describe("AuthGate", () => {
     expect(screen.queryByText("受保护的创作台")).not.toBeInTheDocument();
   });
 
-  it("使用 +86 规范手机号登录并进入创作台", async () => {
+  it("使用手机号标识登录并进入创作台", async () => {
     mockCurrentUser.mockRejectedValue({ code: "AUTH_REQUIRED", message: "请先登录" });
     mockLogin.mockResolvedValue({ user });
 
@@ -99,7 +98,7 @@ describe("AuthGate", () => {
       </AuthGate>,
     );
 
-    fireEvent.change(await screen.findByLabelText("手机号"), {
+    fireEvent.change(await screen.findByLabelText("手机号或用户名"), {
       target: { value: "13800138000" },
     });
     fireEvent.change(screen.getByLabelText("密码"), {
@@ -108,7 +107,7 @@ describe("AuthGate", () => {
     fireEvent.click(screen.getByRole("button", { name: "登录" }));
 
     await waitFor(() => {
-      expect(mockLogin).toHaveBeenCalledWith("+8613800138000", "storypass1");
+      expect(mockLogin).toHaveBeenCalledWith("13800138000", "storypass1");
     });
     expect(await screen.findByText("受保护的创作台")).toBeInTheDocument();
   });

@@ -214,7 +214,7 @@ describe("云端 API 客户端", () => {
       };
     };
 
-    const mediaId = "07f802fc-69d9-4cc8-b62e-0f039b770aac";
+    const mediaId = "107";
     const result = await playgroundApi.generate({
       mode: "i2i",
       model_id: "browser-model",
@@ -262,7 +262,7 @@ describe("云端 API 客户端", () => {
   it("其他云端 AI 路由自动携带幂等键并把媒体引用转换为媒体 ID", async () => {
     const { apiClient } = await import("@/lib/api");
     const captured: CapturedRequest[] = [];
-    const mediaId = "07f802fc-69d9-4cc8-b62e-0f039b770aac";
+    const mediaId = "107";
 
     await apiClient.post(
       "/projects/project-1/video_tasks",
@@ -281,6 +281,107 @@ describe("云端 API 客户端", () => {
       duration: 5,
       media_ids: [mediaId],
     });
+  });
+
+  it("视频任务只提交媒体 ID，不泄露兼容层 URL 字段", async () => {
+    const { api, apiClient } = await import("@/lib/api");
+    const captured: CapturedRequest[] = [];
+    const mediaId = "107";
+    apiClient.defaults.adapter = captureAdapter(captured);
+
+    await api.createVideoTask(
+      "project-1",
+      `media:${mediaId}`,
+      "镜头推进",
+      3,
+      undefined,
+      "720p",
+      true,
+      "",
+      true,
+      "",
+      1,
+      "happyhorse-i2v",
+      "frame-1",
+      "multi",
+      "i2v",
+      [],
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      [],
+      "16:9",
+      "t2i_i2v",
+    );
+
+    expect(captured[0].data).toMatchObject({
+      prompt: "镜头推进",
+      duration: 3,
+      resolution: "720p",
+      frame_id: "frame-1",
+      generation_mode: "i2v",
+      media_ids: [mediaId],
+      parameters: {
+        duration: 3,
+        resolution: "720p",
+        ratio: "16:9",
+        output_count: 1,
+      },
+    });
+    expect(captured[0].data).not.toHaveProperty("image_url");
+    expect(captured[0].data).not.toHaveProperty("audio_url");
+    expect(captured[0].data).not.toHaveProperty("reference_video_urls");
+    expect(captured[0].data).not.toHaveProperty("reference_image_urls");
+  });
+
+  it("并发分镜写入遇到版本冲突后刷新版本并自动重试", async () => {
+    const { api, apiClient, setActiveWorkspaceId } = await import("@/lib/api");
+    const patchVersions: Array<string | undefined> = [];
+    let patchAttempts = 0;
+    setActiveWorkspaceId("workspace-1");
+    apiClient.defaults.adapter = async (config): Promise<AxiosResponse> => {
+      const method = String(config.method).toLowerCase();
+      if (method === "patch") {
+        patchAttempts += 1;
+        patchVersions.push(config.headers.get("If-Match") as string | undefined);
+        if (patchAttempts === 1) {
+          const response: AxiosResponse = {
+            config,
+            data: { code: "CONTENT_VERSION_CONFLICT", message: "内容版本已变化" },
+            headers: new AxiosHeaders(),
+            status: 409,
+            statusText: "Conflict",
+          };
+          throw new AxiosError("Request failed", "ERR_BAD_REQUEST", config, undefined, response);
+        }
+        return {
+          config,
+          data: { id: "frame-1", version: 5, t2i_image_urls: ["media:107"] },
+          headers: new AxiosHeaders(),
+          status: 200,
+          statusText: "OK",
+        };
+      }
+      return {
+        config,
+        data: { id: "project-1", version: patchAttempts === 0 ? 3 : 4 },
+        headers: new AxiosHeaders(),
+        status: 200,
+        statusText: "OK",
+      };
+    };
+
+    await apiClient.get("/projects/project-1");
+    const frame = await api.updateFrameWorkbench("project-1", "frame-1", {
+      t2i_image_urls: ["media:107"],
+      t2i_selected_index: 0,
+    });
+
+    expect(patchAttempts).toBe(2);
+    expect(patchVersions).toEqual(["3", "4"]);
+    expect(frame).toMatchObject({ id: "frame-1", version: 5 });
   });
 
   it("内容与资产写入自动使用当前工作区缓存的乐观版本", async () => {
@@ -329,7 +430,7 @@ describe("云端 API 客户端", () => {
   it("云端任务轮询使用持久任务端点并把媒体 ID 投影为媒体引用", async () => {
     const { api, apiClient, setActiveWorkspaceId } = await import("@/lib/api");
     const requestedUrls: string[] = [];
-    const mediaId = "07f802fc-69d9-4cc8-b62e-0f039b770aac";
+    const mediaId = "107";
     setActiveWorkspaceId("workspace-1");
     apiClient.defaults.adapter = async (config): Promise<AxiosResponse> => {
       requestedUrls.push(String(config.url));
@@ -375,6 +476,301 @@ describe("云端 API 客户端", () => {
     });
   });
 
+  it("R2V 提示词润色等待持久任务并解析双语 JSON", async () => {
+    const { api, apiClient, setActiveWorkspaceId } = await import("@/lib/api");
+    const captured: CapturedRequest[] = [];
+    setActiveWorkspaceId("workspace-1");
+    apiClient.defaults.adapter = async (config): Promise<AxiosResponse> => {
+      const data = typeof config.data === "string" ? JSON.parse(config.data) : config.data;
+      captured.push({
+        url: config.url,
+        workspaceId: config.headers.get("X-Workspace-ID") as string | undefined,
+        idempotencyKey: config.headers.get("Idempotency-Key") as string | undefined,
+        data,
+      });
+      const isStatus = String(config.url).includes("/ai/tasks/task-polish-1/status");
+      return {
+        config,
+        data: isStatus
+          ? {
+              id: "task-polish-1",
+              workspace_id: "workspace-1",
+              project_id: "5",
+              capability: "prompt.polish",
+              status: "succeeded",
+              status_zh: "已完成",
+              quoted_microtickets: "40960000",
+              quoted_tickets: "40.96",
+              cancellation_requested: false,
+              support_review: false,
+              safe_error: null,
+              media_ids: [],
+              result_content: "```json\n{\"prompt_cn\":\"缓慢推近张成\",\"prompt_en\":\"Slowly push in on Zhang Cheng\"}\n```",
+            }
+          : {
+              task_id: "task-polish-1",
+              status: "queued",
+              capability: "prompt.polish",
+            },
+        headers: new AxiosHeaders(),
+        status: isStatus ? 200 : 202,
+        statusText: isStatus ? "OK" : "Accepted",
+      };
+    };
+
+    const result = await api.polishR2VPrompt(
+      "[character1:张成]望向酒店窗口",
+      [{ description: "张成：疲惫的普通男性" }],
+      "",
+      "5",
+      "",
+      ["media:246"],
+    );
+
+    expect(result).toEqual({
+      prompt_cn: "缓慢推近张成",
+      prompt_en: "Slowly push in on Zhang Cheng",
+    });
+    expect(captured).toHaveLength(2);
+    expect(captured[0]).toMatchObject({
+      workspaceId: "workspace-1",
+      data: {
+        draft_prompt: "[character1:张成]望向酒店窗口",
+        slots: [{ description: "张成：疲惫的普通男性" }],
+        feedback: "",
+        script_id: "5",
+        prev_cn: "",
+        media_ids: ["246"],
+      },
+    });
+    expect(captured[0].idempotencyKey).toMatch(/^ai:/);
+    expect(captured[1].url).toContain("/ai/tasks/task-polish-1/status");
+  });
+
+  it("批量对白生成等待持久语音任务并返回最终统计", async () => {
+    const { api, apiClient, setActiveWorkspaceId } = await import("@/lib/api");
+    const captured: CapturedRequest[] = [];
+    setActiveWorkspaceId("workspace-1");
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          task_id: "task-dialogue-1",
+          status: "queued",
+          capability: "speech.tts",
+        }),
+        {
+          status: 202,
+          headers: { "content-type": "application/json" },
+        },
+      ),
+    );
+    apiClient.defaults.adapter = async (config): Promise<AxiosResponse> => {
+      captured.push({
+        url: config.url,
+        workspaceId: config.headers.get("X-Workspace-ID") as string | undefined,
+        data: config.data,
+      });
+      return {
+        config,
+        data: {
+          id: "task-dialogue-1",
+          workspace_id: "workspace-1",
+          project_id: "5",
+          capability: "speech.tts",
+          status: "succeeded",
+          status_zh: "已完成",
+          quoted_microtickets: "8000",
+          quoted_tickets: "0.008",
+          cancellation_requested: false,
+          support_review: false,
+          safe_error: null,
+          media_ids: ["301", "302"],
+          result_content: {
+            operation: "audio.dialogue.batch",
+            _batch_stats: {
+              generated: 2,
+              skipped: 1,
+              failed: 0,
+              no_voice: 0,
+              total: 3,
+            },
+          },
+        },
+        headers: new AxiosHeaders(),
+        status: 200,
+        statusText: "OK",
+      };
+    };
+
+    const result = await api.generateDialogueAudioBatch("5");
+
+    expect(result._batch_stats).toEqual({
+      generated: 2,
+      skipped: 1,
+      failed: 0,
+      no_voice: 0,
+      total: 3,
+    });
+    expect(globalThis.fetch).toHaveBeenCalledWith(
+      expect.stringContaining("/api/v1/projects/5/dialogue_audio/batch"),
+      expect.objectContaining({ method: "POST" }),
+    );
+    expect(captured).toHaveLength(3);
+    expect(captured.every((request) => request.workspaceId === "workspace-1")).toBe(true);
+    expect(captured[0].url).toContain("/ai/tasks/task-dialogue-1/status");
+    expect(captured.slice(1).map((request) => request.url)).toEqual([
+      expect.stringContaining("/media/301/access"),
+      expect.stringContaining("/media/302/access"),
+    ]);
+  });
+
+  it("下一集钩子通过持久文本任务生成并按项目版本回写", async () => {
+    const { api, apiClient, setActiveWorkspaceId } = await import("@/lib/api");
+    const captured: CapturedRequest[] = [];
+    setActiveWorkspaceId("workspace-1");
+    apiClient.defaults.adapter = async (config): Promise<AxiosResponse> => {
+      const data = typeof config.data === "string" ? JSON.parse(config.data) : config.data;
+      captured.push({
+        url: config.url,
+        csrf: config.headers.get("X-CSRF-Token") as string | undefined,
+        workspaceId: config.headers.get("X-Workspace-ID") as string | undefined,
+        ifMatch: config.headers.get("If-Match") as string | undefined,
+        idempotencyKey: config.headers.get("Idempotency-Key") as string | undefined,
+        data,
+      });
+      const url = String(config.url);
+      const method = String(config.method).toLowerCase();
+      const responseData = url.includes("/ai/tasks/task-hook-1/status")
+        ? {
+            id: "task-hook-1",
+            workspace_id: "workspace-1",
+            project_id: "project-1",
+            capability: "prompt.polish",
+            status: "succeeded",
+            status_zh: "已完成",
+            quoted_microtickets: "120000",
+            quoted_tickets: "0.12",
+            cancellation_requested: false,
+            support_review: false,
+            safe_error: null,
+            media_ids: [],
+            result_content: "下一集从雨夜追逐开始。",
+          }
+        : method === "post"
+          ? { task_id: "task-hook-1", status: "queued", version: 7 }
+          : { hook: "下一集从雨夜追逐开始。", stale: false, version: 8 };
+      return {
+        config,
+        data: responseData,
+        headers: new AxiosHeaders(),
+        status: method === "post" ? 202 : 200,
+        statusText: "OK",
+      };
+    };
+
+    const result = await api.generateNextEpisodeHook("project-1");
+
+    expect(result).toEqual({
+      hook: "下一集从雨夜追逐开始。",
+      stale: false,
+      version: 8,
+    });
+    expect(captured.map((request) => new URL(String(request.url)).pathname)).toEqual([
+      "/api/v1/projects/project-1/next_hook",
+      "/api/v1/ai/tasks/task-hook-1/status",
+      "/api/v1/projects/project-1/next_hook",
+    ]);
+    expect(captured[0]).toMatchObject({
+      csrf: "csrf-test",
+      workspaceId: "workspace-1",
+      data: undefined,
+    });
+    expect(captured[0].idempotencyKey).toMatch(/^next-hook:/);
+    expect(captured[2]).toMatchObject({
+      csrf: "csrf-test",
+      workspaceId: "workspace-1",
+      ifMatch: "7",
+      data: { hook: "下一集从雨夜追逐开始。" },
+    });
+  });
+
+  it("上一集摘要使用持久文本任务并按当前集版本回写", async () => {
+    const { api, apiClient, setActiveWorkspaceId } = await import("@/lib/api");
+    const captured: CapturedRequest[] = [];
+    setActiveWorkspaceId("workspace-1");
+    apiClient.defaults.adapter = async (config): Promise<AxiosResponse> => {
+      const data = typeof config.data === "string" ? JSON.parse(config.data) : config.data;
+      captured.push({
+        url: config.url,
+        csrf: config.headers.get("X-CSRF-Token") as string | undefined,
+        workspaceId: config.headers.get("X-Workspace-ID") as string | undefined,
+        ifMatch: config.headers.get("If-Match") as string | undefined,
+        idempotencyKey: config.headers.get("Idempotency-Key") as string | undefined,
+        data,
+      });
+      const url = String(config.url);
+      const method = String(config.method).toLowerCase();
+      const responseData = url.includes("/ai/tasks/task-summary-1/status")
+        ? {
+            id: "task-summary-1",
+            workspace_id: "workspace-1",
+            project_id: "project-2",
+            capability: "prompt.polish",
+            status: "succeeded",
+            status_zh: "已完成",
+            quoted_microtickets: "150000",
+            quoted_tickets: "0.15",
+            cancellation_requested: false,
+            support_review: false,
+            safe_error: null,
+            media_ids: [],
+            result_content: "上一集主角发现门后隐藏着关键证据。",
+          }
+        : method === "post"
+          ? {
+              task_id: "task-summary-1",
+              status: "queued",
+              version: 5,
+              previous_episode_version: 3,
+            }
+          : {
+              ai_summary: "上一集主角发现门后隐藏着关键证据。",
+              ai_summary_stale: false,
+              previous_episode_id: "project-1",
+              previous_episode_title: "第一集",
+              version: 6,
+            };
+      return {
+        config,
+        data: responseData,
+        headers: new AxiosHeaders(),
+        status: method === "post" ? 202 : 200,
+        statusText: "OK",
+      };
+    };
+
+    const result = await api.generatePreviousEpisodeSummary("project-2");
+
+    expect(result).toMatchObject({
+      ai_summary: "上一集主角发现门后隐藏着关键证据。",
+      previous_episode_id: "project-1",
+      version: 6,
+    });
+    expect(captured.map((request) => new URL(String(request.url)).pathname)).toEqual([
+      "/api/v1/projects/project-2/previous_episode/summary",
+      "/api/v1/ai/tasks/task-summary-1/status",
+      "/api/v1/projects/project-2/last_episode_summary",
+    ]);
+    expect(captured[0].idempotencyKey).toMatch(/^previous-summary:/);
+    expect(captured[2]).toMatchObject({
+      ifMatch: "5",
+      data: {
+        ai_summary: "上一集主角发现门后隐藏着关键证据。",
+        source_previous_version: 3,
+      },
+    });
+  });
+
   it("平台管理查询与安全动作使用受保护的服务端端点", async () => {
     const { adminPlatformApi, apiClient } = await import("@/lib/api");
     const captured: CapturedRequest[] = [];
@@ -389,7 +785,7 @@ describe("云端 API 客户端", () => {
         config,
         data: String(config.url).endsWith("/reset-credentials")
           ? { credential: "one-time", expires_at: "2026-08-13T10:00:00Z" }
-          : String(config.url).includes("/auth/admin/")
+          : String(config.url).includes("/admin/users/")
             ? { message: "操作成功" }
             : { items: [], total: 0, offset: 0, limit: 30 },
         headers: new AxiosHeaders(),
@@ -419,9 +815,9 @@ describe("云端 API 客户端", () => {
       "/api/v1/admin/usage",
       "/api/v1/admin/audit-events",
       "/api/v1/admin/import-batches",
-      "/api/v1/auth/admin/users/user-1/suspend",
-      "/api/v1/auth/admin/users/user-1/revoke-sessions",
-      "/api/v1/auth/admin/users/user-1/reset-credentials",
+      "/api/v1/admin/users/user-1/suspend",
+      "/api/v1/admin/users/user-1/revoke-sessions",
+      "/api/v1/admin/users/user-1/reset-credentials",
     ]);
     const mutationRequests = [captured[1], ...captured.slice(6)];
     expect(mutationRequests.every((request) => request.csrf === "csrf-test")).toBe(true);
@@ -439,7 +835,7 @@ describe("云端 API 客户端", () => {
 
   it("媒体授权失败统一投影为不泄露归属的中文错误", async () => {
     const { apiClient, getSafeApiError, resolveMediaUrl, setActiveWorkspaceId } = await import("@/lib/api");
-    const mediaId = "07f802fc-69d9-4cc8-b62e-0f039b770aac";
+    const mediaId = "107";
     setActiveWorkspaceId("workspace-media-denied");
     apiClient.defaults.adapter = async (config): Promise<AxiosResponse> => {
       const response: AxiosResponse = {

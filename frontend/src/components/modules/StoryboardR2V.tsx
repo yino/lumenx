@@ -6,7 +6,7 @@ import { Plus, Loader2, Sparkles, PanelBottomOpen, PanelBottomClose } from "luci
 import StepPageHeader, { StepPill } from "@/components/shared/StepPageHeader";
 import { useTranslations } from "next-intl";
 import { useProjectStore } from "@/store/projectStore";
-import { api, crudApi, type VideoTask, type RefineSSEEvent } from "@/lib/api";
+import { api, crudApi, parseMediaReference, type VideoTask, type RefineSSEEvent } from "@/lib/api";
 import { getAssetUrl } from "@/lib/utils";
 import { selectedVariantUrl } from "@/lib/characterImage";
 import { debugLog } from "@/lib/debugLog";
@@ -505,10 +505,13 @@ export default function StoryboardR2V() {
         }
         setGenerating(true);
         setBannerState("phase1");
-        setShots([]);
         try {
             // Phase 1: generate coarse frames
-            const updated = await api.analyzeToStoryboard(projectId, scriptText);
+            const updated = await api.analyzeToStoryboard(projectId, scriptText, {
+                characters: currentProject.characters,
+                scenes: currentProject.scenes,
+                props: currentProject.props,
+            });
             const newFrameCount = Array.isArray(updated?.frames) ? updated.frames.length : 0;
             updateProject(projectId, updated);
             if (Array.isArray(updated?.frames)) {
@@ -1288,6 +1291,27 @@ export default function StoryboardR2V() {
                     try {
                         const status = await api.getVideoTaskStatus(projectId, shot.videoTaskId);
                         if (status.status === "completed" && status.video_url) {
+                            if (IS_CLOUD_DEPLOYMENT) {
+                                const mediaId = status.media_ids?.[0]
+                                    || parseMediaReference(status.video_url);
+                                if (!mediaId) throw new Error("视频任务未返回可持久化的媒体 ID");
+                                const updated = await api.attachGeneratedVideo(
+                                    projectId,
+                                    shot.id,
+                                    {
+                                        task_id: shot.videoTaskId,
+                                        media_id: mediaId,
+                                        prompt: buildAssembledPrompt(shot),
+                                        image_url: getActiveT2IImageUrl(shot) || shot.imageUrl || "",
+                                        duration: videoConfig.duration,
+                                        resolution: videoConfig.resolution,
+                                        model: status.actual_model?.model_id || "server-selected",
+                                        generation_mode: shot.tabMode === "direct_r2v" ? "r2v" : "i2v",
+                                        workbench_tab: shot.tabMode,
+                                    },
+                                );
+                                updateProject(projectId, updated);
+                            }
                             setShots(prev => prev.map(s =>
                                 s.id === shot.id ? { ...s, videoStatus: "completed", videoUrl: status.video_url } : s
                             ));
@@ -1298,7 +1322,7 @@ export default function StoryboardR2V() {
                             // Sync shot.videoUrl from backend response too: if a sibling
                             // task in the same batch completed first (so backend picked
                             // that one as active) the hero stays in sync.
-                            if (projectId) {
+                            if (projectId && !IS_CLOUD_DEPLOYMENT) {
                                 api.autoSelectLatestVideo(projectId, shot.id)
                                     .then(updated => {
                                         updateProject(projectId, { frames: updated.frames });
@@ -1327,7 +1351,9 @@ export default function StoryboardR2V() {
                     try {
                         const status = await api.getTaskStatus(shot.t2iTaskId);
                         if (status.status === "completed") {
-                            const imageUrl = status.image_url || status.video_url || status.result_url;
+                            const imageUrl = IS_CLOUD_DEPLOYMENT && status.media_ids?.[0]
+                                ? `media:${status.media_ids[0]}`
+                                : status.image_url || status.video_url || status.result_url;
                             if (imageUrl) {
                                 setShots(prev => prev.map(s => {
                                     if (s.id !== shot.id) return s;

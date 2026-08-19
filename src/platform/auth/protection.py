@@ -11,10 +11,19 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 
 from ..observability import events, metrics
+from .admin_identity import ADMIN_CSRF_COOKIE_NAME, ADMIN_SESSION_COOKIE_NAME
 from .sessions import CSRF_COOKIE_NAME, SESSION_COOKIE_NAME
 
 
 UNSAFE_METHODS = frozenset({"POST", "PUT", "PATCH", "DELETE"})
+ADMIN_API_PREFIXES = ("/admin", "/api/v1/admin")
+ADMIN_LOGIN_PATHS = frozenset(
+    {f"{prefix}/auth/login" for prefix in ADMIN_API_PREFIXES}
+)
+
+
+def _is_admin_api_path(path: str) -> bool:
+    return any(path == prefix or path.startswith(f"{prefix}/") for prefix in ADMIN_API_PREFIXES)
 
 
 class CookieSecurityMiddleware(BaseHTTPMiddleware):
@@ -27,7 +36,17 @@ class CookieSecurityMiddleware(BaseHTTPMiddleware):
         request: Request,
         call_next: RequestResponseEndpoint,
     ) -> Response:
-        if request.method not in UNSAFE_METHODS or SESSION_COOKIE_NAME not in request.cookies:
+        if request.method not in UNSAFE_METHODS or request.url.path in ADMIN_LOGIN_PATHS:
+            return await call_next(request)
+
+        if _is_admin_api_path(request.url.path):
+            session_cookie_name = ADMIN_SESSION_COOKIE_NAME
+            csrf_cookie_name = ADMIN_CSRF_COOKIE_NAME
+        else:
+            session_cookie_name = SESSION_COOKIE_NAME
+            csrf_cookie_name = CSRF_COOKIE_NAME
+
+        if session_cookie_name not in request.cookies:
             return await call_next(request)
 
         origin = request.headers.get("origin", "").rstrip("/")
@@ -37,7 +56,7 @@ class CookieSecurityMiddleware(BaseHTTPMiddleware):
                 content={"code": "ORIGIN_DENIED", "message": "请求来源不受信任"},
             )
 
-        csrf_cookie = request.cookies.get(CSRF_COOKIE_NAME, "")
+        csrf_cookie = request.cookies.get(csrf_cookie_name, "")
         csrf_header = request.headers.get("x-csrf-token", "")
         if not csrf_cookie or not csrf_header or not hmac.compare_digest(csrf_cookie, csrf_header):
             return JSONResponse(

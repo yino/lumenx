@@ -5,7 +5,8 @@ from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import delete, exists, select
 
-from .contracts import UserContext
+from .admin_access import require_platform_admin_context
+from .contracts import AdminContext, UserContext
 from .database import Database
 from .db_models import (
     AITaskRecord,
@@ -170,12 +171,11 @@ class WorkspaceService:
 
     def cleanup_expired(
         self,
-        admin: UserContext,
+        admin: AdminContext,
         *,
         now: datetime | None = None,
     ) -> WorkspaceCleanupResult:
-        if not admin.is_platform_admin:
-            raise PermissionError("仅平台管理员可以执行工作区清理")
+        require_platform_admin_context(admin)
         checked_at = now or datetime.now(UTC)
         deleted_count = 0
         skipped_count = 0

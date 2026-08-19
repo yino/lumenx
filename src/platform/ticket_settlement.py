@@ -694,6 +694,140 @@ class TicketSettlementService:
                 wallet=wallet_snapshot,
             )
 
+    @observe_settlement("unmetered_billable_failure")
+    def release_unmetered_billable_failure(
+        self,
+        context: WorkspaceContext,
+        *,
+        task_id: str,
+        support_review_reason: str,
+        safe_error_code: str,
+        safe_error_message: str,
+        attempt_id: str | None = None,
+        attempt_diagnostic: Mapping[str, Any] | None = None,
+        raw_provider_usage: Mapping[str, Any] | None = None,
+    ) -> FailureSettlement:
+        """Close an acknowledged but unmeterable task without charging the user."""
+        user_id = self._id(context.identity.user_id, "用户标识")
+        workspace_id = self._id(context.workspace_id, "工作区标识")
+        canonical_task_id = self._id(task_id, "任务标识")
+        canonical_attempt_id = self._optional_id(attempt_id, "尝试标识")
+        normalized_reason = self._reason(support_review_reason)
+        normalized_diagnostic = (
+            _json_object(attempt_diagnostic, "任务尝试诊断")
+            if attempt_diagnostic is not None
+            else None
+        )
+        normalized_raw_usage = (
+            _json_object(raw_provider_usage, "供应商用量")
+            if raw_provider_usage is not None
+            else {}
+        )
+        normalized_raw_usage["unmetered"] = True
+
+        with self.database.transaction(context.identity) as session:
+            task = self._require_task_for_update(
+                session,
+                user_id=user_id,
+                workspace_id=workspace_id,
+                task_id=canonical_task_id,
+            )
+            attempt = self._require_attempt_for_update(
+                session,
+                task,
+                canonical_attempt_id,
+            )
+            hold = self._require_hold_for_update(session, task, attempt)
+            existing_usage = self._failure_usage(
+                session,
+                task,
+                attempt,
+                "billable_failure",
+            )
+            if task.status == "support_review":
+                if existing_usage is None:
+                    raise TicketSettlementConflictError("待复核任务缺少失败用量记录")
+                return self._failure_result_from_existing(
+                    session,
+                    task,
+                    hold,
+                    existing_usage,
+                    "billable_failure",
+                )
+            if existing_usage is not None:
+                raise TicketSettlementConflictError("任务状态与失败用量记录不一致")
+            if task.status != "running":
+                raise TicketSettlementConflictError("AI 任务当前状态不能按计量异常收口")
+            if not task.provider_billable:
+                raise TicketSettlementConflictError("供应商尚未确认计费")
+            if hold.status != "held":
+                raise TicketSettlementConflictError("算力券预扣已经结束")
+
+            usage_event = UsageEventRecord(
+                user_id=user_id,
+                workspace_id=workspace_id,
+                project_id=task.project_id,
+                task_id=task.id,
+                attempt_id=attempt.id if attempt is not None else None,
+                capability=task.capability,
+                outcome="billable_failure",
+                raw_provider_usage=normalized_raw_usage,
+                metering_formula=self._metering_formula_for_history(task, attempt),
+                metering_tokens=0,
+                tokens_per_ticket=task.tokens_per_ticket,
+                charged_microtickets=0,
+            )
+            session.add(usage_event)
+            session.flush()
+            released_microtickets = hold.remaining_microtickets
+            wallet = TicketWalletService.require_wallet_for_update(session, user_id)
+            wallet_snapshot = TicketWalletService.release_in_session(
+                session,
+                wallet,
+                released_microtickets,
+                reason="供应商结果无法安全计量，释放全部预扣",
+                workspace_id=workspace_id,
+                project_id=task.project_id,
+                task_id=task.id,
+                hold_id=hold.id,
+                correlation={
+                    "outcome": "billable_failure",
+                    "usage_event_id": str(usage_event.id),
+                },
+            )
+
+            now = datetime.now(timezone.utc)
+            hold.remaining_microtickets = 0
+            hold.status = "released"
+            hold.released_at = now
+            AITaskStateMachine.ensure_task_transition(task.status, "support_review")
+            task.status = "support_review"
+            task.provider_billable = True
+            task.support_review_reason = normalized_reason
+            task.safe_error_code = safe_error_code
+            task.safe_error_message = safe_error_message
+            task.result = None
+            task.completed_at = now
+            if attempt is not None:
+                AITaskStateMachine.ensure_attempt_transition(attempt.status, "failed")
+                attempt.status = "failed"
+                attempt.raw_usage = normalized_raw_usage
+                if normalized_diagnostic is not None:
+                    attempt.diagnostic = normalized_diagnostic
+                attempt.completed_at = now
+            session.flush()
+            return FailureSettlement(
+                task_id=str(task.id),
+                attempt_id=str(attempt.id) if attempt is not None else None,
+                usage_event_id=str(usage_event.id),
+                outcome="billable_failure",
+                metering_tokens=0,
+                charged_microtickets=0,
+                released_microtickets=released_microtickets,
+                wallet=wallet_snapshot,
+                support_review=True,
+            )
+
     @observe_settlement("billable_failure")
     def settle_billable_failure(
         self,

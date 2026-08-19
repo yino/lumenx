@@ -20,6 +20,13 @@ SESSION_COOKIE_NAME = "lumenx_session"
 CSRF_COOKIE_NAME = "lumenx_csrf"
 
 
+def as_utc(value: datetime) -> datetime:
+    """Normalize database timestamps; SQLite drops timezone metadata in tests."""
+    if value.tzinfo is None:
+        return value.replace(tzinfo=UTC)
+    return value.astimezone(UTC)
+
+
 class SessionAuthenticationError(ValueError):
     def __init__(self, code: str, message: str) -> None:
         super().__init__(message)
@@ -50,7 +57,7 @@ class SessionPrincipal:
     session_id: int
     phone_canonical: str
     phone_verified: bool
-    is_platform_admin: bool
+    username: str | None = None
 
 
 def hash_session_secret(value: str, session_secret: str) -> str:
@@ -213,7 +220,9 @@ class SessionService:
                 elif user.status != "active":
                     record.revoked_at = checked_at
                     failure = SessionAuthenticationError("ACCOUNT_SUSPENDED", "账号已停用")
-                elif checked_at >= record.idle_expires_at or checked_at >= record.absolute_expires_at:
+                elif checked_at >= as_utc(record.idle_expires_at) or checked_at >= as_utc(
+                    record.absolute_expires_at
+                ):
                     record.revoked_at = checked_at
                     failure = SessionAuthenticationError(
                         "SESSION_EXPIRED", "登录已过期，请重新登录"
@@ -230,14 +239,14 @@ class SessionService:
                     idle_seconds = record.idle_timeout_seconds or self.policy.idle_seconds
                     record.idle_expires_at = min(
                         checked_at + timedelta(seconds=idle_seconds),
-                        record.absolute_expires_at,
+                        as_utc(record.absolute_expires_at),
                     )
                     principal = SessionPrincipal(
                         user_id=user.id,
                         session_id=record.id,
                         phone_canonical=user.phone_canonical,
                         phone_verified=user.phone_verified_at is not None,
-                        is_platform_admin=user.is_platform_admin,
+                        username=user.username,
                     )
 
         if failure is not None:
@@ -272,7 +281,7 @@ class SessionService:
     ) -> int:
         identity_user_id = parse_database_id(identity.user_id, field="用户 ID")
         user_id = target_user_id or identity_user_id
-        if user_id != identity_user_id and not identity.is_platform_admin:
+        if user_id != identity_user_id:
             raise PermissionError("无权撤销其他用户的会话")
         revoked_at = now or datetime.now(UTC)
         with self.database.transaction(identity) as session:

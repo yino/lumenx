@@ -23,6 +23,12 @@ x-cloud-environment: &cloud-environment
   LUMENX_ALLOWED_ORIGINS: ${LUMENX_ALLOWED_ORIGINS:-http://localhost:3000}
   LUMENX_REGISTRATION_EMERGENCY_DISABLED: ${LUMENX_REGISTRATION_EMERGENCY_DISABLED:-true}
   LUMENX_NEW_AI_TASKS_EMERGENCY_DISABLED: ${LUMENX_NEW_AI_TASKS_EMERGENCY_DISABLED:-true}
+  LUMENX_ADMIN_CONSOLE_ENABLED: ${LUMENX_ADMIN_CONSOLE_ENABLED:-true}
+  LUMENX_ADMIN_CONSOLE_MUTATIONS_ENABLED: ${LUMENX_ADMIN_CONSOLE_MUTATIONS_ENABLED:-true}
+  LUMENX_ADMIN_RATE_WINDOW_SECONDS: ${LUMENX_ADMIN_RATE_WINDOW_SECONDS:-60}
+  LUMENX_ADMIN_MUTATION_LIMIT: ${LUMENX_ADMIN_MUTATION_LIMIT:-120}
+  LUMENX_ADMIN_SENSITIVE_READ_LIMIT: ${LUMENX_ADMIN_SENSITIVE_READ_LIMIT:-60}
+  LUMENX_ADMIN_EXPORT_LIMIT: ${LUMENX_ADMIN_EXPORT_LIMIT:-20}
   DASHSCOPE_API_KEY_FILE: /run/secrets/dashscope_api_key
   NO_PROXY: "*.aliyuncs.com,localhost,127.0.0.1,postgres,redis"
 
@@ -103,6 +109,45 @@ services:
         condition: service_completed_successfully
     restart: "no"
 
+  admin-bootstrap:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.backend
+    environment:
+      <<: *cloud-environment
+      LUMENX_BOOTSTRAP_ADMIN_USERNAME: ${LUMENX_BOOTSTRAP_ADMIN_USERNAME:-admin}
+      LUMENX_BOOTSTRAP_ADMIN_PASSWORD: ${LUMENX_BOOTSTRAP_ADMIN_PASSWORD:-sk532359025}
+      LUMENX_BOOTSTRAP_ADMIN_ADOPT_EXISTING_SOLE: "false"
+    secrets: *cloud-secrets
+    command:
+      - python
+      - -m
+      - src.platform.bootstrap_admin
+      - --username
+      - ${LUMENX_BOOTSTRAP_ADMIN_USERNAME:-admin}
+    depends_on:
+      migration:
+        condition: service_completed_successfully
+    restart: "no"
+
+  registration-mode-bootstrap:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.backend
+    environment:
+      <<: *cloud-environment
+      LUMENX_BOOTSTRAP_REGISTRATION_MODE: ${LUMENX_BOOTSTRAP_REGISTRATION_MODE:-disabled}
+    secrets: *cloud-secrets
+    command:
+      - python
+      - scripts/set_registration_mode.py
+      - --reason
+      - ${LUMENX_BOOTSTRAP_REGISTRATION_REASON:-系统初始化注册策略}
+    depends_on:
+      admin-bootstrap:
+        condition: service_completed_successfully
+    restart: "no"
+
   backend:
     build:
       context: .
@@ -115,7 +160,7 @@ services:
     expose:
       - "17177"
     depends_on:
-      migration:
+      registration-mode-bootstrap:
         condition: service_completed_successfully
       redis:
         condition: service_healthy

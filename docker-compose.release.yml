@@ -20,6 +20,12 @@ services:
   redis:
     restart: "no"
 
+  admin-bootstrap:
+    environment:
+      LUMENX_BOOTSTRAP_ADMIN_USERNAME: releaseadmin
+      LUMENX_BOOTSTRAP_ADMIN_PASSWORD: ReleaseSmoke!2026-Admin
+      LUMENX_ALLOW_DEFAULT_BOOTSTRAP_ADMIN_PASSWORD: "false"
+
   backend:
     environment: *release-environment
     volumes: !override
@@ -77,6 +83,8 @@ services:
       LUMENX_RELEASE_EVIDENCE_PATH: /artifacts/cloud-release-evidence.md
       LUMENX_RELEASE_REVISION: ${LUMENX_RELEASE_REVISION:-local}
       LUMENX_RELEASE_TEST_SUMMARY: ${LUMENX_RELEASE_TEST_SUMMARY:-部署栈 smoke 已通过}
+      LUMENX_BOOTSTRAP_ADMIN_USERNAME: releaseadmin
+      LUMENX_BOOTSTRAP_ADMIN_PASSWORD: ReleaseSmoke!2026-Admin
     secrets:
       - postgres_app_password
       - session_secret

@@ -13,7 +13,7 @@
 
 真实 canary 使用 `scripts/staging_cloud_canary.py`，分为三个阶段。脚本不会创建或记录手机号、密码和邀请码；管理员及两个 canary 用户凭据只能通过以下运行时环境变量注入：
 
-- `LUMENX_CANARY_ADMIN_PHONE` / `LUMENX_CANARY_ADMIN_PASSWORD`
+- `LUMENX_CANARY_ADMIN_USERNAME` / `LUMENX_CANARY_ADMIN_PASSWORD`
 - `LUMENX_CANARY_USER_PHONE` / `LUMENX_CANARY_USER_PASSWORD`
 - `LUMENX_CANARY_SECONDARY_PHONE` / `LUMENX_CANARY_SECONDARY_PASSWORD`
 
@@ -35,7 +35,7 @@
 
 ```bash
 docker compose run --rm \
-  -e LUMENX_CANARY_ADMIN_PHONE \
+  -e LUMENX_CANARY_ADMIN_USERNAME \
   -e LUMENX_CANARY_ADMIN_PASSWORD \
   backend python -m scripts.staging_cloud_canary preflight \
   --environment lumenx-staging \
@@ -53,7 +53,7 @@ docker compose run --rm \
 
 ```bash
 docker compose run --rm \
-  -e LUMENX_CANARY_ADMIN_PHONE \
+  -e LUMENX_CANARY_ADMIN_USERNAME \
   -e LUMENX_CANARY_ADMIN_PASSWORD \
   -e LUMENX_CANARY_USER_PHONE \
   -e LUMENX_CANARY_USER_PASSWORD \
@@ -82,7 +82,7 @@ execute 通过不代表可以开放。必须把 `LUMENX_NEW_AI_TASKS_EMERGENCY_D
 
 ```bash
 docker compose run --rm \
-  -e LUMENX_CANARY_ADMIN_PHONE \
+  -e LUMENX_CANARY_ADMIN_USERNAME \
   -e LUMENX_CANARY_ADMIN_PASSWORD \
   backend python -m scripts.staging_cloud_canary finalize \
   --environment lumenx-staging \
@@ -110,7 +110,7 @@ docker compose run --rm \
 2. 在隔离 staging 临时打开新 AI 任务，只让专用 canary 用户在线，提交一张最低规格图片。
 3. 记录本地 task ID、attempt ID、供应商 task/request ID、配置版本、预扣金额、实际 token、结算算力券和结果 media ID；不记录 prompt 或原始 payload。
 4. 确认任务按原快照完成，输出进入私有 OSS，预扣关闭，用量事件与不可变流水一一对应。
-5. 运行 `python -m src.platform.ticket_reconciliation --admin-user-id <管理员ID>`，要求问题数为 0。
+5. 运行 `python -m src.platform.ticket_reconciliation --admin-id <管理员ID>`，要求问题数为 0。
 6. 立即重新关闭新 AI 任务；注册保持 `disabled`，直到正式灰度时才切换为 `invite_only`。
 
 ## 失败处理

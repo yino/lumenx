@@ -2,8 +2,9 @@
 
 import { useState, useEffect, useMemo } from "react";
 import { useTranslations } from "next-intl";
-import { Search, Star, ArrowDownUp, ChevronDown, Check, Plus } from "lucide-react";
-import { api } from "@/lib/api";
+import { Search, Star, ArrowDownUp, ChevronDown, Check, Copy, Loader2, Plus } from "lucide-react";
+import { api, systemSceneApi, type SystemScene } from "@/lib/api";
+import { IS_CLOUD_DEPLOYMENT } from "@/lib/deployment";
 import type { Series, Project, Character, Scene, Prop, ImageAsset } from "@/store/projectStore";
 import { toast } from "@/store/toastStore";
 import { characterImageUrl, characterVariants } from "@/lib/characterImage";
@@ -12,6 +13,7 @@ import { rovingKeyDown } from "@/lib/a11y";
 import AssetInspector from "./AssetInspector";
 import NewLibraryAssetDialog from "./NewLibraryAssetDialog";
 import { getAssetUrl } from "@/lib/utils";
+import { useWorkspaceStore } from "@/store/workspaceStore";
 
 type AssetTab = "characters" | "scenes" | "props";
 type TypeFilter = AssetTab | "all";
@@ -43,6 +45,21 @@ interface RenderGroup {
   title: string;
   meta: string;
   items: RenderItem[];
+}
+
+function SystemSceneCover({ scene }: { scene: SystemScene }) {
+  const [url, setUrl] = useState<string | null>(null);
+  useEffect(() => {
+    if (!scene.cover_media_id) { setUrl(null); return; }
+    let active = true;
+    systemSceneApi.mediaAccess(String(scene.cover_media_id))
+      .then((result) => { if (active) setUrl(result.url); })
+      .catch(() => { if (active) setUrl(null); });
+    return () => { active = false; };
+  }, [scene.cover_media_id]);
+  return url
+    ? <img src={url} alt={`${scene.name}封面`} className="h-full w-full object-cover" />
+    : <div className="grid h-full place-items-center text-xs text-text-muted">无封面</div>;
 }
 
 /** 取图：character 走 characterImageUrl（reference_sheet→full_body→legacy）；scene/prop 用 image_asset。 */
@@ -102,6 +119,9 @@ export default function AssetLibraryPage() {
   const [starredOnly, setStarredOnly] = useState(false);
   const [selected, setSelected] = useState<{ sourceId: string; assetId: string; type: AssetTab } | null>(null);
   const [newAssetOpen, setNewAssetOpen] = useState(false);
+  const [systemScenes, setSystemScenes] = useState<SystemScene[]>([]);
+  const [copyingSceneId, setCopyingSceneId] = useState<string | null>(null);
+  const currentWorkspaceId = useWorkspaceStore((state) => state.currentWorkspaceId);
 
   useEffect(() => {
     loadAssets();
@@ -110,10 +130,11 @@ export default function AssetLibraryPage() {
   const loadAssets = async () => {
     setLoading(true);
     try {
-      const [seriesList, projects, globalPool] = await Promise.all([
+      const [seriesList, projects, globalPool, catalogScenes] = await Promise.all([
         api.listSeries(),
         api.getProjects(),
         api.listLibraryAssets(),
+        IS_CLOUD_DEPLOYMENT ? systemSceneApi.list() : Promise.resolve([]),
       ]);
       const result: AssetSource[] = [];
 
@@ -165,11 +186,31 @@ export default function AssetLibraryPage() {
       }
 
       setSources(result);
+      setSystemScenes(catalogScenes);
     } catch (error) {
       console.error("Failed to load asset library:", error);
       toast.error(t("loadFailed"), { body: t("loadFailedBody") });
     } finally {
       setLoading(false);
+    }
+  };
+
+  const copySystemScene = async (scene: SystemScene) => {
+    if (!currentWorkspaceId) {
+      toast.error("请先选择工作区");
+      return;
+    }
+    setCopyingSceneId(scene.id);
+    try {
+      await systemSceneApi.copy(scene.id);
+      await loadAssets();
+      setActiveType("scenes");
+      toast.success(`“${scene.name}”已复制到当前工作区`);
+    } catch (error) {
+      console.error("copy system scene failed", error);
+      toast.error("系统场景复制失败");
+    } finally {
+      setCopyingSceneId(null);
     }
   };
 
@@ -479,6 +520,27 @@ export default function AssetLibraryPage() {
           )}
         </div>
       </div>
+
+      {IS_CLOUD_DEPLOYMENT && (activeType === "all" || activeType === "scenes") && systemScenes.length > 0 && (
+        <section aria-label="系统场景目录" className="border-y border-glass-border px-4 py-4 md:px-7">
+          <div className="mb-3 flex flex-wrap items-end justify-between gap-3">
+            <div><h2 className="text-sm font-semibold text-foreground">系统场景</h2><p className="mt-1 text-xs text-text-muted">选择平台模板并复制到当前工作区，后续修改不会影响你的副本。</p></div>
+            <span className="font-mono text-xs text-text-muted">{systemScenes.length} 个可用模板</span>
+          </div>
+          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+            {systemScenes.map((scene) => (
+              <article key={scene.id} className="overflow-hidden rounded-md border border-glass-border bg-glass">
+                <div className="aspect-video bg-surface-inset"><SystemSceneCover scene={scene} /></div>
+                <div className="p-3">
+                  <div className="flex items-start justify-between gap-2"><div className="min-w-0"><h3 className="truncate text-sm font-medium">{scene.name}</h3><p className="mt-1 text-xs text-text-muted">{scene.category} · V{scene.version}</p></div><button type="button" aria-label={`复制${scene.name}`} title="复制到当前工作区" disabled={copyingSceneId !== null || !currentWorkspaceId} onClick={() => void copySystemScene(scene)} className="grid h-8 w-8 shrink-0 place-items-center rounded-md border border-primary/30 text-primary disabled:opacity-40">{copyingSceneId === scene.id ? <Loader2 size={14} className="animate-spin" /> : <Copy size={14} />}</button></div>
+                  <p className="mt-2 line-clamp-2 min-h-8 text-xs leading-4 text-text-secondary">{scene.description}</p>
+                  {scene.tags.length > 0 && <p className="mt-2 truncate text-[11px] text-text-muted">{scene.tags.join(" · ")}</p>}
+                </div>
+              </article>
+            ))}
+          </div>
+        </section>
+      )}
 
       {/* Body: 网格（按系列分组）+ 右侧 inspector */}
       <div className="flex-1 flex min-h-0 overflow-hidden">

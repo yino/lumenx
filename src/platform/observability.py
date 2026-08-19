@@ -43,6 +43,13 @@ _RAW_CONTENT_FIELDS = {
     "response_payload",
     "script",
     "text",
+    "phone",
+    "phone_canonical",
+    "reset_credential",
+    "object_key",
+    "provider_diagnostics",
+    "offline_reference",
+    "idempotency_key",
 }
 
 

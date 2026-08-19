@@ -7,13 +7,14 @@ from typing import Callable
 
 from sqlalchemy.exc import IntegrityError
 
+from ..audit import append_audit_event
 from ..contracts import UserContext
 from ..database import (
     Database,
     set_transaction_registration_phone,
     set_transaction_user_context,
 )
-from ..db_models import AuditEventRecord, UserRecord, WorkspaceRecord
+from ..db_models import UserRecord, WorkspaceRecord
 from ..configuration_schemas import RegistrationMode
 from ..ticket_wallet import TicketWalletService
 from .invitations import InvitationService
@@ -106,7 +107,6 @@ class RegistrationService:
                     password_hash=password_hash,
                     status="active",
                     phone_verified_at=None,
-                    is_platform_admin=False,
                 )
                 session.add(user)
                 session.flush()
@@ -152,21 +152,20 @@ class RegistrationService:
                         user_id=user_id,
                         consumed_at=registered_at,
                     )
-                    session.add(
-                        AuditEventRecord(
-                            actor_user_id=user_id,
-                            target_user_id=user_id,
-                            action="registration.invitation.consume",
-                            target_type="registration_invitation",
-                            target_id=str(invitation.id),
-                            reason="用户完成邀请注册",
-                            before_summary={"status": "active"},
-                            after_summary={
-                                "status": "consumed",
-                                "config_version_id": policy.config_version_id,
-                            },
-                            correlation_id=str(uuid.uuid4()),
-                        )
+                    append_audit_event(
+                        session,
+                        actor_user_id=user_id,
+                        target_user_id=user_id,
+                        action="registration.invitation.consume",
+                        target_type="registration_invitation",
+                        target_id=str(invitation.id),
+                        reason="用户完成邀请注册",
+                        before_summary={"status": "active"},
+                        after_summary={
+                            "status": "consumed",
+                            "config_version_id": policy.config_version_id,
+                        },
+                        correlation_id=str(uuid.uuid4()),
                     )
         except IntegrityError as exc:
             constraint_name = getattr(getattr(exc, "orig", None), "diag", None)

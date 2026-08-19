@@ -14,9 +14,9 @@ describe("authStore", () => {
     useAuthStore.getState().setAuthenticated({
       id: "user-1",
       phone: "+8613800138000",
+      account_label: "138****8000",
       phone_verified: false,
       phone_verification_status: "未验证",
-      is_platform_admin: false,
       default_workspace_id: "workspace-1",
     });
 

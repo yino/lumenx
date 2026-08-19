@@ -5,7 +5,7 @@ import { useTranslations } from "next-intl";
 import { motion, AnimatePresence } from "framer-motion";
 import { Check, Loader2, Film, AlertTriangle, Layout, Clock, FileText, Download, Music, Sliders, Package } from "lucide-react";
 import { useProjectStore } from "@/store/projectStore";
-import { api, parseMediaReference, resolveMediaUrl, type BgmPreset } from "@/lib/api";
+import { API_URL, api, apiFetch, parseMediaReference, type BgmPreset } from "@/lib/api";
 import { getAssetUrl, extractErrorDetail } from "@/lib/utils";
 import StepPageHeader, { StepPill } from "@/components/shared/StepPageHeader";
 import SidePanelHeader from "@/components/shared/SidePanelHeader";
@@ -54,6 +54,8 @@ export default function VideoAssembly() {
         if (!currentProject) return;
         setIsMerging(true);
         setMergeError(null);  // Clear previous errors
+        // Do not keep showing a previous export while this merge is pending.
+        updateProject(currentProject.id, { merged_video_url: undefined });
 
         try {
             const updatedProject = await api.mergeVideos(currentProject.id);
@@ -83,13 +85,14 @@ export default function VideoAssembly() {
             const rawPath = currentProject.merged_video_url;
             const cleanPath = rawPath.startsWith("/") ? rawPath.slice(1) : rawPath;
             const isDev = process.env.NODE_ENV === "development";
-            const url = parseMediaReference(rawPath)
-                ? await resolveMediaUrl(rawPath)
-                : isDev
-                  ? `/api-proxy/files/${cleanPath}`
-                  : getAssetUrl(rawPath);
-
-            const response = await fetch(url);
+            const mediaId = parseMediaReference(rawPath);
+            const response = mediaId
+                ? await apiFetch(`${API_URL}/media/${mediaId}/download`)
+                : await fetch(
+                    isDev
+                        ? `/api-proxy/files/${cleanPath}`
+                        : getAssetUrl(rawPath),
+                );
             if (!response.ok) throw new Error(`HTTP ${response.status}`);
             const blob = await response.blob();
             const blobUrl = URL.createObjectURL(blob);

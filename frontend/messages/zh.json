@@ -26,6 +26,7 @@
   },
   "reconcile": {
     "title": "实体对齐到系列",
+    "open": "实体对齐",
     "subtitle": "已识别 {total} 个 · {merge} 匹配 / {create} 新增",
     "loading": "加载匹配建议…",
     "noEntities": "暂无新提取的实体。",

@@ -9,6 +9,7 @@ import {
   type AdminInvitation,
 } from "@/lib/api";
 import { toast } from "@/store/toastStore";
+import { AdminReasonDialog } from "./AdminDialogs";
 
 const STATUS_LABEL: Record<AdminInvitation["status"], string> = {
   active: "有效",
@@ -42,6 +43,7 @@ export default function InvitationAdminPage() {
   const [issuedCode, setIssuedCode] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState<string | null>(null);
+  const [revokeTarget, setRevokeTarget] = useState<AdminInvitation | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -86,13 +88,13 @@ export default function InvitationAdminPage() {
     }
   };
 
-  const revoke = async (item: AdminInvitation) => {
-    const revokeReason = window.prompt("请输入撤销原因（将写入审计记录）", "")?.trim();
-    if (!revokeReason) return;
-    setBusy(item.id);
+  const revoke = async (revokeReason: string) => {
+    if (!revokeTarget) return;
+    setBusy(revokeTarget.id);
     try {
-      await adminPlatformApi.revokeInvitation(item.id, revokeReason);
+      await adminPlatformApi.revokeInvitation(revokeTarget.id, revokeReason);
       toast.success("邀请已撤销");
+      setRevokeTarget(null);
       await load();
     } catch (error) {
       toast.error("邀请撤销失败", { body: getSafeApiError(error).message });
@@ -156,11 +158,12 @@ export default function InvitationAdminPage() {
                 <p className="mt-1 text-xs text-text-muted">{item.issue_reason}</p>
               </div>
               <div className="text-xs text-text-muted"><p>创建于 {dateText(item.created_at)}</p><p className="mt-1">有效期至 {dateText(item.expires_at)}</p></div>
-              <button type="button" title="撤销邀请" aria-label="撤销邀请" disabled={item.status !== "active" || busy === item.id} onClick={() => void revoke(item)} className="grid h-9 w-9 place-items-center rounded-md border border-red-400/25 text-red-200 hover:bg-red-400/10 disabled:opacity-35">{busy === item.id ? <Loader2 size={15} className="animate-spin" /> : <ShieldX size={15} />}</button>
+              <button type="button" title="撤销邀请" aria-label="撤销邀请" disabled={item.status !== "active" || busy === item.id} onClick={() => setRevokeTarget(item)} className="grid h-9 w-9 place-items-center rounded-md border border-red-400/25 text-red-200 hover:bg-red-400/10 disabled:opacity-35">{busy === item.id ? <Loader2 size={15} className="animate-spin" /> : <ShieldX size={15} />}</button>
             </article>
           ))}
         </div>
       )}
+      {revokeTarget && <AdminReasonDialog title="撤销注册邀请" description={`手机号 ${revokeTarget.phone} 的邀请码将立即失效，且不能再次使用。`} confirmLabel="确认撤销" danger busy={busy === revokeTarget.id} onClose={() => setRevokeTarget(null)} onConfirm={revoke} />}
     </div>
   );
 }

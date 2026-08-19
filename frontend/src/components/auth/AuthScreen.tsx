@@ -1,7 +1,7 @@
 "use client";
 
 import { FormEvent, useEffect, useId, useMemo, useState } from "react";
-import { Eye, EyeOff, KeyRound, Loader2, LockKeyhole, Smartphone } from "lucide-react";
+import { Eye, EyeOff, KeyRound, Loader2, LockKeyhole, Smartphone, UserRound } from "lucide-react";
 import Image from "next/image";
 
 import {
@@ -51,7 +51,7 @@ export default function AuthScreen({
   onAuthenticated,
 }: AuthScreenProps) {
   const [mode, setMode] = useState<AuthMode>(initialMode);
-  const [phone, setPhone] = useState("");
+  const [identifier, setIdentifier] = useState("");
   const [password, setPassword] = useState("");
   const [confirmation, setConfirmation] = useState("");
   const [invitationCode, setInvitationCode] = useState("");
@@ -64,7 +64,8 @@ export default function AuthScreen({
   const confirmationId = useId();
   const invitationId = useId();
 
-  const normalizedPhone = useMemo(() => phone.replace(/\D/g, "").slice(0, 11), [phone]);
+  const normalizedPhone = useMemo(() => identifier.replace(/\D/g, "").slice(0, 11), [identifier]);
+  const normalizedLoginIdentifier = useMemo(() => identifier.trim().slice(0, 40), [identifier]);
   const canRegister = registrationPolicy?.mode !== "disabled" && registrationPolicy !== null;
   const inviteOnly = registrationPolicy?.mode === "invite_only";
 
@@ -95,8 +96,12 @@ export default function AuthScreen({
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     setError(null);
-    if (normalizedPhone.length !== 11) {
+    if (mode === "register" && normalizedPhone.length !== 11) {
       setError("请输入 11 位中国大陆手机号");
+      return;
+    }
+    if (mode === "login" && !normalizedLoginIdentifier) {
+      setError("请输入手机号或用户名");
       return;
     }
     if (!password) {
@@ -121,11 +126,10 @@ export default function AuthScreen({
 
     setSubmitting(true);
     try {
-      const fullPhone = `+86${normalizedPhone}`;
       const response =
         mode === "login"
-          ? await authApi.login(fullPhone, password)
-          : await authApi.register(fullPhone, password, invitationCode.trim());
+          ? await authApi.login(normalizedLoginIdentifier, password)
+          : await authApi.register(`+86${normalizedPhone}`, password, invitationCode.trim());
       onAuthenticated(response.user);
     } catch (requestError) {
       setError(getSafeAuthError(requestError).message);
@@ -202,26 +206,29 @@ export default function AuthScreen({
           <form className="mt-7 space-y-5" onSubmit={handleSubmit} noValidate>
             <div>
               <label htmlFor={phoneId} className="mb-2 block text-sm font-medium text-foreground">
-                手机号
+                {mode === "login" ? "手机号或用户名" : "手机号"}
               </label>
               <div className="flex h-12 overflow-hidden rounded-lg border border-glass-border bg-input-bg transition-colors focus-within:border-primary">
-                <span className="flex w-16 flex-none items-center justify-center border-r border-glass-border font-mono text-sm text-text-secondary">
+                {mode === "register" && <span className="flex w-16 flex-none items-center justify-center border-r border-glass-border font-mono text-sm text-text-secondary">
                   +86
-                </span>
+                </span>}
                 <div className="relative min-w-0 flex-1">
-                  <Smartphone
+                  {mode === "login" ? <UserRound
                     size={16}
                     className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-text-muted"
-                  />
+                  /> : <Smartphone
+                    size={16}
+                    className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-text-muted"
+                  />}
                   <input
                     id={phoneId}
-                    name="phone"
-                    type="tel"
-                    inputMode="numeric"
-                    autoComplete="tel-national"
-                    value={normalizedPhone}
-                    onChange={(event) => setPhone(event.target.value)}
-                    placeholder="请输入手机号"
+                    name={mode === "login" ? "identifier" : "phone"}
+                    type={mode === "login" ? "text" : "tel"}
+                    inputMode={mode === "login" ? "text" : "numeric"}
+                    autoComplete={mode === "login" ? "username" : "tel-national"}
+                    value={mode === "login" ? identifier : normalizedPhone}
+                    onChange={(event) => setIdentifier(mode === "login" ? event.target.value : event.target.value.replace(/\D/g, "").slice(0, 11))}
+                    placeholder={mode === "login" ? "请输入手机号或用户名" : "请输入手机号"}
                     className="h-full w-full bg-transparent pl-10 pr-3 text-sm text-foreground outline-none placeholder:text-text-muted"
                     disabled={submitting}
                   />
@@ -362,7 +369,7 @@ export default function AuthScreen({
           ))}
         </div>
         <div className="pointer-events-none absolute inset-x-0 top-0 flex items-start justify-between p-7">
-          <div className="rounded-md border border-white/20 bg-black/55 px-3 py-2 font-mono text-xs text-white backdrop-blur-md">
+          <div className="rounded-md border border-foreground/20 bg-black/55 px-3 py-2 font-mono text-xs text-white backdrop-blur-md">
             场次 {mode === "login" ? "续" : "初"} · 开机
           </div>
           <div className="h-2 w-20 rounded-full bg-primary shadow-[var(--glow-primary)]" />

@@ -1,7 +1,7 @@
 ## ADDED Requirements
 
 ### Requirement: Controlled registration modes
-Cloud registration MUST use one active mode: `disabled`, `invite_only`, or reserved `verified_open`. The system MUST NOT support unrestricted unverified phone registration.
+Cloud registration MUST use one active mode: `disabled`, `invite_only`, explicitly unverified `open`, or reserved `verified_open`. `open` MUST accept phone and password without requiring an invitation, MUST leave the phone unverified, and MUST NOT claim phone ownership verification.
 
 #### Scenario: Registration is disabled
 - **WHEN** a visitor submits registration while the active mode is `disabled`
@@ -10,6 +10,10 @@ Cloud registration MUST use one active mode: `disabled`, `invite_only`, or reser
 #### Scenario: Verified open mode is activated without SMS
 - **WHEN** an administrator attempts to activate `verified_open` while no verification provider is operational
 - **THEN** configuration activation is rejected
+
+#### Scenario: Explicit unverified open registration is active
+- **WHEN** a visitor submits a valid unused phone and compliant password while the active mode is `open`
+- **THEN** the server atomically creates the user boundary without an invitation and records the phone as unverified
 
 ### Requirement: Phone-bound invitations
 A platform administrator SHALL be able to issue an expiring, revocable, single-use invitation bound to one canonical phone number, and only a non-reversible hash of the invitation secret SHALL be persisted.
@@ -50,6 +54,10 @@ The cloud frontend SHALL obtain a safe public registration-policy projection and
 #### Scenario: Visitor opens login page in invite mode
 - **WHEN** the public registration policy reports `invite_only`
 - **THEN** the Chinese registration form requires an invitation code and explains that the phone is not yet SMS-verified
+
+#### Scenario: Visitor opens login page in unverified open mode
+- **WHEN** the public registration policy reports `open`
+- **THEN** the Chinese registration form allows phone-and-password signup without an invitation and does not claim that the phone was verified
 
 #### Scenario: Visitor opens login page while disabled
 - **WHEN** the policy reports `disabled`

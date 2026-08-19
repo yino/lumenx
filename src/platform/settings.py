@@ -68,11 +68,17 @@ class DeploymentSettings(BaseSettings):
     auth_registration_limit: int = 5
     auth_login_limit: int = 10
     auth_reset_limit: int = 5
+    admin_rate_window_seconds: int = 60
+    admin_mutation_limit: int = 120
+    admin_sensitive_read_limit: int = 60
+    admin_export_limit: int = 20
     session_idle_seconds: int = 7 * 24 * 60 * 60
     session_absolute_seconds: int = 30 * 24 * 60 * 60
     registration_initial_grant_microtickets: int = 0
     registration_emergency_disabled: bool = False
     new_ai_tasks_emergency_disabled: bool = False
+    admin_console_enabled: bool = True
+    admin_console_mutations_enabled: bool = True
     global_worker_concurrency: int = 8
 
     @property
@@ -165,6 +171,10 @@ class DeploymentSettings(BaseSettings):
             self.auth_registration_limit,
             self.auth_login_limit,
             self.auth_reset_limit,
+            self.admin_rate_window_seconds,
+            self.admin_mutation_limit,
+            self.admin_sensitive_read_limit,
+            self.admin_export_limit,
             self.session_idle_seconds,
             self.session_absolute_seconds,
             self.global_worker_concurrency,

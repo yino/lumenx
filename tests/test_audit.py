@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import uuid
+from unittest.mock import Mock
 
 import pytest
 from fastapi import Request
 from sqlalchemy import select
+from sqlalchemy.dialects import postgresql
 
-from src.platform.audit import AuditService
+from src.platform.audit import AuditService, append_audit_event
 from src.platform.db_models import AuditEventRecord
 from tests.test_content_repositories import RepositoryDatabase, _create_scope
 
@@ -22,6 +24,25 @@ def _request(correlation_id: str = "audit-correlation-1") -> Request:
         }
     )
     return request
+
+
+def test_audit_insert_does_not_request_returning_under_postgres_rls() -> None:
+    session = Mock()
+
+    append_audit_event(
+        session,
+        actor_user_id=1,
+        target_user_id=1,
+        action="auth.login",
+        target_type="session",
+        target_id="7",
+        correlation_id="audit-correlation-1",
+    )
+
+    statement = session.execute.call_args.args[0]
+    sql = str(statement.compile(dialect=postgresql.dialect()))
+    assert "INSERT INTO audit_events" in sql
+    assert "RETURNING" not in sql.upper()
 
 
 def test_audit_service_records_safe_scoped_summary_and_correlation() -> None:

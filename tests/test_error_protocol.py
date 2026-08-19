@@ -5,6 +5,7 @@ from fastapi.testclient import TestClient
 from pydantic import BaseModel, Field
 
 from src.platform.error_protocol import install_cloud_error_protocol
+from src.platform.observability import metrics
 
 
 class Payload(BaseModel):
@@ -32,6 +33,14 @@ def _client() -> TestClient:
     @app.get("/crash")
     def crash() -> None:
         raise RuntimeError("secret provider diagnostics")
+
+    @app.get("/admin/probe")
+    def admin_probe() -> dict[str, bool]:
+        return {"ok": True}
+
+    @app.get("/admin/fail")
+    def admin_fail() -> None:
+        raise HTTPException(status_code=409, detail="管理员请求冲突")
 
     install_cloud_error_protocol(app)
     return TestClient(app, raise_server_exceptions=False)
@@ -81,3 +90,39 @@ def test_error_protocol_replaces_invalid_correlation_header() -> None:
     correlation_id = response.headers["X-Correlation-ID"]
     assert correlation_id != "contains spaces and should be rejected"
     assert response.json()["correlation_id"] == correlation_id
+
+
+def test_error_protocol_records_bounded_admin_latency_and_error_metrics() -> None:
+    metrics.reset()
+    client = _client()
+
+    assert client.get("/admin/probe").status_code == 200
+    assert client.get("/admin/fail").status_code == 409
+
+    snapshot = metrics.snapshot()
+    counters = {
+        (item["name"], tuple(sorted(item["labels"].items()))): item["value"]
+        for item in snapshot["counters"]
+    }
+    assert counters[
+        (
+            "admin_api_requests_total",
+            (("operation", "get"), ("outcome", "succeeded"), ("status", "200")),
+        )
+    ] == 1
+    assert counters[
+        (
+            "admin_api_requests_total",
+            (("operation", "get"), ("outcome", "error"), ("status", "409")),
+        )
+    ] == 1
+    admin_histograms = [
+        item
+        for item in snapshot["histograms"]
+        if item["name"] == "admin_api_request_duration_seconds"
+    ]
+    assert {item["labels"]["outcome"] for item in admin_histograms} == {
+        "succeeded",
+        "error",
+    }
+    assert all(item["count"] == 1 and item["sum"] >= 0 for item in admin_histograms)

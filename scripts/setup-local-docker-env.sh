@@ -63,6 +63,9 @@ oss_bucket=$(first_env_value LUMENX_LOCAL_OSS_BUCKET_NAME LUMENX_OSS_BUCKET_NAME
 oss_access_key_id=$(first_env_value LUMENX_LOCAL_OSS_ACCESS_KEY_ID LUMENX_OSS_ACCESS_KEY_ID ALIBABA_CLOUD_ACCESS_KEY_ID)
 oss_access_key_secret=$(first_env_value LUMENX_LOCAL_OSS_ACCESS_KEY_SECRET LUMENX_OSS_ACCESS_KEY_SECRET ALIBABA_CLOUD_ACCESS_KEY_SECRET)
 dashscope_api_key=$(first_env_value LUMENX_LOCAL_DASHSCOPE_API_KEY DASHSCOPE_API_KEY)
+ark_api_key=$(first_env_value LUMENX_LOCAL_ARK_API_KEY ARK_API_KEY)
+ark_base_url=$(first_env_value LUMENX_LOCAL_ARK_BASE_URL ARK_BASE_URL)
+ark_seedance_model=$(first_env_value LUMENX_LOCAL_ARK_SEEDANCE_MODEL ARK_SEEDANCE_MODEL)
 
 if [ -z "${oss_access_key_id}" ]; then
     oss_access_key_id=$(read_secret_file secrets/oss_access_key_id.txt)
@@ -77,11 +80,16 @@ fi
 append_if_missing LUMENX_LOCAL_POSTGRES_PASSWORD "$(random_value)"
 append_if_missing LUMENX_LOCAL_POSTGRES_APP_PASSWORD "$(random_value)"
 append_if_missing LUMENX_LOCAL_SESSION_SECRET "$(random_value)"
+append_if_missing LUMENX_BOOTSTRAP_ADMIN_USERNAME "admin"
+append_if_missing LUMENX_BOOTSTRAP_ADMIN_PASSWORD "sk532359025"
 append_if_missing LUMENX_LOCAL_OSS_ENDPOINT "${oss_endpoint:-oss-cn-beijing.aliyuncs.com}"
 append_if_missing LUMENX_LOCAL_OSS_BUCKET_NAME "${oss_bucket:-lumenx-private}"
 append_if_missing LUMENX_LOCAL_OSS_ACCESS_KEY_ID "${oss_access_key_id}"
 append_if_missing LUMENX_LOCAL_OSS_ACCESS_KEY_SECRET "${oss_access_key_secret}"
 append_if_missing LUMENX_LOCAL_DASHSCOPE_API_KEY "${dashscope_api_key}"
+append_if_missing LUMENX_LOCAL_ARK_API_KEY "${ark_api_key}"
+append_if_missing LUMENX_LOCAL_ARK_BASE_URL "${ark_base_url:-https://ark.cn-beijing.volces.com/api/plan/v3}"
+append_if_missing LUMENX_LOCAL_ARK_SEEDANCE_MODEL "${ark_seedance_model:-doubao-seedance-2.0}"
 
 chmod 600 "${env_file}"
 printf '本地 Docker 环境已就绪：%s（未输出任何凭据）。\n' "${env_file}"

@@ -30,9 +30,9 @@ export default function AuthGate({ children }: AuthGateProps) {
       setAuthenticated({
         id: "desktop",
         phone: "",
+        account_label: "本地用户",
         phone_verified: false,
         phone_verification_status: "本地模式",
-        is_platform_admin: true,
         default_workspace_id: "desktop",
       });
       return;

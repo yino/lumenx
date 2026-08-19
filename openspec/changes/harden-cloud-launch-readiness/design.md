@@ -77,11 +77,11 @@ Alternative considered: a shared in-process singleton. Rejected because it does 
 
 ### 5. Registration is an explicit mode, not a boolean
 
-The active platform policy defines `disabled`, `invite_only`, or reserved `verified_open`. Activation rejects `verified_open` until a verification provider declares send/verify capability available. There is no `open_unverified` mode.
+The active platform policy defines `disabled`, `invite_only`, explicitly unverified `open`, or reserved `verified_open`. Activation rejects `verified_open` until a verification provider declares send/verify capability available. `open` is a deliberate product decision: it accepts a phone and password without an invitation, leaves `phone_verified_at` null, and MUST be presented as unverified registration rather than proof of phone ownership.
 
 In `invite_only`, a platform administrator creates an expiring, single-use invitation bound to one canonical phone. Only a hash of the random invitation secret is stored. Registration normalizes the submitted phone, validates the invitation, creates the user/workspace/wallet/session, and consumes the invitation in one database transaction. A failed registration does not consume it. Bootstrap of the first platform administrator remains an explicit operational exception.
 
-Existing boolean feature flags migrate fail-closed: `false` becomes `disabled`; `true` becomes `invite_only`. Operators must create invitations before registering beta users. Invitation creation, revocation, expiry, consumption, and failed mismatch attempts are audited without storing the plaintext code.
+Existing boolean feature flags migrate fail-closed: `false` becomes `disabled`; `true` becomes `invite_only`. Migration never selects `open`; an administrator or the local-only Compose registration bootstrap must choose it explicitly. Invitation creation, revocation, expiry, consumption, failed mismatch attempts, and registration-mode changes are audited without storing plaintext credentials.
 
 ### 6. Release evidence comes from the deployed topology
 
@@ -107,6 +107,8 @@ The default target is Chinese help. Local development does not implicitly start 
 
 Default Docker Compose discovery merges a repository local override that injects local-only credentials from the Git-ignored `.env`, resets file-backed production secrets, binds the public edge only to loopback, and replaces host `output` and `imports` bind mounts with Docker-managed named volumes. A setup command generates distinct random PostgreSQL administrator/application passwords and a session HMAC secret, then maps existing OSS and provider credentials without printing them. Application services retain the non-superuser database role so local startup does not bypass RLS.
 
+The local override is an explicit development exception: it opens unverified registration and disables the deployment AI emergency gate only for the loopback Compose stack. A one-shot `ai-tasks-bootstrap` service then creates a new audited PostgreSQL configuration version with the minimum `script.analysis` and `prompt.polish` DashScope routes, enables new AI tasks, and activates it before the backend starts. The script requires local-only environment markers and is absent from production Compose, whose deployment gate and fail-closed database policy remain unchanged. It is idempotent and preserves existing configuration routes.
+
 Production and release commands select `docker-compose.yml` explicitly and therefore continue to use file-backed or deployment-managed secrets. The local override does not weaken production credential handling, enable registration or AI gates, or introduce a host filesystem dependency merely because the repository lives outside Docker Desktop's default shared directories.
 
 The local override publishes PostgreSQL as `127.0.0.1:15433:5432` for host-side database tools; the production Compose service remains private and has no `ports` declaration. Backend, frontend, and PostgreSQL utility Dockerfiles live below `docker/`, while every Compose build keeps the repository root as its context so existing source and configuration `COPY` paths remain stable.
@@ -130,21 +132,21 @@ Act immediately: prove real provider/OSS settlement, keep registration invite-on
 - [An active-ID database lookup adds traffic] -> Use one indexed scalar query per new operation and cache immutable payloads by version ID; measure latency before adding a distributed cache.
 - [Invitation support adds another credential] -> Store only a keyed hash, show plaintext once, set short expiry, rate-limit attempts, and audit lifecycle events.
 - [Revoking oldest sessions may surprise users] -> Return the enforced limit in session-management responses and show revoked/active devices in the Chinese account UI.
-- [Fail-closed migration can block previously open registration] -> Document the behavior, pre-create beta invitations, and verify the mode before traffic cutover.
+- [Unverified open registration permits phone claiming] -> Require an explicit versioned configuration decision, keep the phone unverified, retain rate limits, and migrate legacy flags to `invite_only` rather than `open`.
 - [Test adapters diverge from OSS/provider behavior] -> Keep adapter contract tests against production interfaces and run a separate staging canary with real private OSS and one low-cost provider task.
 
 ## Migration Plan
 
-1. Add invitation storage and configuration schema migration. Translate legacy registration flags to `disabled` or `invite_only`; do not enable registration.
+1. Add invitation storage and configuration schema migration. Translate legacy registration flags to `disabled` or `invite_only`; never select `open` during migration.
 2. Implement version-aware policy resolution and wire business-policy consumers while feature gates remain closed.
 3. Add `/api/v1` frontend base and generic Nginx proxy. Deploy the edge compatibility window before switching cached frontend assets.
 4. Remove the backend public port from the default production topology, configure trusted proxy handling, and verify rate-limit fingerprints from two client addresses.
 5. Run the deployed-stack suite, real OSS staging canary, migration check, wallet reconciliation, and task/hold reconciliation.
-6. Create phone-bound invitations for beta users, activate `invite_only`, and keep AI new-task creation limited to canary users until settlement is verified.
+6. Create phone-bound invitations and activate `invite_only` for controlled beta, or activate `open` only after recording explicit acceptance of unverified-phone risk; keep AI new-task creation limited to canary users until settlement is verified.
 7. Remove temporary unversioned edge proxies after access logs show no supported clients using them.
 
 Rollback keeps both registration and new AI work fail-closed, restores the previous static bundle and compatibility proxy, drains or reconciles persisted tasks, and never downgrades or deletes invitation, ledger, usage, task, configuration, or audit history. A faulty active configuration is replaced by a newly activated version rather than edited in place.
 
 ## Open Questions
 
-No blocking product question remains for a controlled beta. Public self-service registration remains blocked until SMS verification and the corresponding account-recovery policy are proposed separately.
+No blocking product question remains for a controlled beta. The accepted first release may use `open` without SMS verification; phone ownership verification and phone-based account recovery remain deferred and must not be implied by the current UI or API.

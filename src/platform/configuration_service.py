@@ -22,7 +22,7 @@ from .configuration_schemas import (
     SpeechTokenFormula,
     VideoTokenFormula,
 )
-from .contracts import UserContext
+from .contracts import AdminContext, SystemContext
 from .credentials import reject_plaintext_secrets
 from .database import Database
 from .db_models import (
@@ -53,7 +53,8 @@ class StoredConfiguration:
     status: str
     schema_version: int
     draft: ConfigurationDraft
-    created_by_user_id: str
+    created_by_admin_id: str | None
+    legacy_created_by_user_id: str | None
     created_at: datetime
     activated_at: datetime | None
     superseded_at: datetime | None
@@ -63,11 +64,7 @@ class ConfigurationService:
     SCHEMA_VERSION = 1
     _ACTIVATION_LOCK_ID = 1280785238
 
-    _RUNTIME_IDENTITY = UserContext(
-        user_id="0",
-        session_id="runtime-configuration-reader",
-        is_platform_admin=True,
-    )
+    _RUNTIME_IDENTITY = SystemContext(service_name="runtime-configuration-reader")
 
     def __init__(
         self,
@@ -81,8 +78,8 @@ class ConfigurationService:
         self._version_cache: dict[str, StoredConfiguration] = {}
 
     @staticmethod
-    def _require_admin(identity: UserContext) -> None:
-        if not identity.is_platform_admin:
+    def _require_admin(identity: AdminContext) -> None:
+        if not isinstance(identity, AdminContext):
             raise PermissionError("仅平台管理员可以管理平台配置")
 
     @staticmethod
@@ -206,7 +203,16 @@ class ConfigurationService:
             status=record.status,
             schema_version=record.schema_version,
             draft=draft,
-            created_by_user_id=str(record.created_by_user_id),
+            created_by_admin_id=(
+                str(record.created_by_admin_id)
+                if record.created_by_admin_id is not None
+                else None
+            ),
+            legacy_created_by_user_id=(
+                str(record.created_by_user_id)
+                if record.created_by_user_id is not None
+                else None
+            ),
             created_at=record.created_at,
             activated_at=record.activated_at,
             superseded_at=record.superseded_at,
@@ -233,7 +239,7 @@ class ConfigurationService:
     @staticmethod
     def _add_audit(
         session: Session,
-        identity: UserContext,
+        identity: AdminContext,
         *,
         action: str,
         target_id: str,
@@ -246,7 +252,7 @@ class ConfigurationService:
         reject_plaintext_secrets(after, path="审计变更后摘要")
         session.add(
             AuditEventRecord(
-                actor_user_id=parse_database_id(identity.user_id, field="用户 ID"),
+                actor_admin_id=parse_database_id(identity.admin_id, field="管理员 ID"),
                 action=action,
                 target_type="configuration_version",
                 target_id=target_id,
@@ -259,7 +265,7 @@ class ConfigurationService:
 
     def create_version(
         self,
-        identity: UserContext,
+        identity: AdminContext,
         draft: ConfigurationDraft,
         *,
         correlation_id: str | None = None,
@@ -277,9 +283,9 @@ class ConfigurationService:
                     version_number=next_number,
                     status="draft",
                     schema_version=self.SCHEMA_VERSION,
-                    created_by_user_id=parse_database_id(
-                        identity.user_id,
-                        field="用户 ID",
+                    created_by_admin_id=parse_database_id(
+                        identity.admin_id,
+                        field="管理员 ID",
                     ),
                     reason=draft.reason,
                 )
@@ -379,7 +385,7 @@ class ConfigurationService:
 
     def get_version(
         self,
-        identity: UserContext,
+        identity: AdminContext,
         version_id: str,
     ) -> StoredConfiguration:
         self._require_admin(identity)
@@ -393,7 +399,7 @@ class ConfigurationService:
                 raise ConfigurationNotFoundError("配置版本不存在")
             return self._load(session, record)
 
-    def list_versions(self, identity: UserContext) -> list[StoredConfiguration]:
+    def list_versions(self, identity: AdminContext) -> list[StoredConfiguration]:
         self._require_admin(identity)
         with self.database.transaction(identity) as session:
             records = list(
@@ -407,7 +413,7 @@ class ConfigurationService:
 
     def validate_version(
         self,
-        identity: UserContext,
+        identity: AdminContext,
         version_id: str,
     ) -> StoredConfiguration:
         configuration = self.get_version(identity, version_id)
@@ -418,7 +424,7 @@ class ConfigurationService:
 
     def activate_version(
         self,
-        identity: UserContext,
+        identity: AdminContext,
         version_id: str,
         *,
         reason: str,
@@ -478,7 +484,7 @@ class ConfigurationService:
 
     def disable_version(
         self,
-        identity: UserContext,
+        identity: AdminContext,
         version_id: str,
         *,
         reason: str,
@@ -518,7 +524,10 @@ class ConfigurationService:
             )
         return disabled
 
-    def _get_active(self, identity: UserContext) -> StoredConfiguration:
+    def _get_active(
+        self,
+        identity: AdminContext | SystemContext,
+    ) -> StoredConfiguration:
         with self.database.transaction(identity) as session:
             active_id = session.scalar(
                 select(ConfigVersionRecord.id).where(
@@ -540,18 +549,21 @@ class ConfigurationService:
             self._version_cache[loaded.id] = loaded
             return copy.deepcopy(loaded)
 
-    def get_active(self, identity: UserContext) -> StoredConfiguration:
+    def get_active(self, identity: AdminContext) -> StoredConfiguration:
         self._require_admin(identity)
         return self._get_active(identity)
 
-    def get_active_for_runtime(self, identity: UserContext) -> StoredConfiguration:
+    def get_active_for_runtime(
+        self,
+        identity: SystemContext,
+    ) -> StoredConfiguration:
         """Load active server routing without granting configuration administration."""
         del identity
         return self._get_active(self._RUNTIME_IDENTITY)
 
     def rollback_to_new_version(
         self,
-        identity: UserContext,
+        identity: AdminContext,
         source_version_id: str,
         *,
         reason: str,

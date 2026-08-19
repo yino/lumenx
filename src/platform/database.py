@@ -7,7 +7,7 @@ from typing import Any
 from sqlalchemy import Engine, create_engine, event, text
 from sqlalchemy.orm import Session, sessionmaker
 
-from .contracts import UserContext
+from .contracts import AdminContext, SystemContext, UserContext
 from .identifiers import parse_database_id
 
 
@@ -28,8 +28,7 @@ def set_transaction_user_context(session: Session, identity: UserContext) -> Non
             """
             SELECT
                 set_config('app.current_user_id', :user_id, true),
-                set_config('app.current_session_id', :session_id, true),
-                set_config('app.is_platform_admin', :is_platform_admin, true)
+                set_config('app.current_session_id', :session_id, true)
             """
         ),
         {
@@ -37,8 +36,44 @@ def set_transaction_user_context(session: Session, identity: UserContext) -> Non
                 parse_database_id(identity.user_id, field="用户 ID", allow_zero=True)
             ),
             "session_id": identity.session_id or "",
-            "is_platform_admin": "true" if identity.is_platform_admin else "false",
         },
+    )
+
+
+def set_transaction_admin_context(session: Session, identity: AdminContext) -> None:
+    if not identity.admin_id.strip():
+        raise ValueError("数据库事务必须包含有效管理员标识")
+    if _uses_non_postgres_database(session):
+        return
+    session.execute(
+        text(
+            """
+            SELECT
+                set_config('app.current_admin_id', :admin_id, true),
+                set_config('app.current_admin_session_id', :session_id, true)
+            """
+        ),
+        {
+            "admin_id": str(parse_database_id(identity.admin_id, field="管理员 ID")),
+            "session_id": identity.session_id or "",
+        },
+    )
+
+
+def set_transaction_system_context(session: Session, identity: SystemContext) -> None:
+    if not identity.service_name.strip():
+        raise ValueError("数据库事务必须包含有效系统服务名称")
+    if _uses_non_postgres_database(session):
+        return
+    session.execute(
+        text(
+            """
+            SELECT
+                set_config('app.current_admin_id', '0', true),
+                set_config('app.current_system_actor', :service_name, true)
+            """
+        ),
+        {"service_name": identity.service_name.strip()},
     )
 
 
@@ -48,6 +83,24 @@ def set_transaction_login_phone(session: Session, phone_canonical: str) -> None:
     session.execute(
         text("SELECT set_config('app.login_phone_canonical', :phone, true)"),
         {"phone": phone_canonical},
+    )
+
+
+def set_transaction_login_username(session: Session, username: str) -> None:
+    if _uses_non_postgres_database(session):
+        return
+    session.execute(
+        text("SELECT set_config('app.login_username', :username, true)"),
+        {"username": username},
+    )
+
+
+def set_transaction_admin_login_username(session: Session, username: str) -> None:
+    if _uses_non_postgres_database(session):
+        return
+    session.execute(
+        text("SELECT set_config('app.admin_login_username', :username, true)"),
+        {"username": username},
     )
 
 
@@ -65,6 +118,15 @@ def set_transaction_session_token_hash(session: Session, token_hash: str) -> Non
         return
     session.execute(
         text("SELECT set_config('app.session_token_hash', :token_hash, true)"),
+        {"token_hash": token_hash},
+    )
+
+
+def set_transaction_admin_session_token_hash(session: Session, token_hash: str) -> None:
+    if _uses_non_postgres_database(session):
+        return
+    session.execute(
+        text("SELECT set_config('app.admin_session_token_hash', :token_hash, true)"),
         {"token_hash": token_hash},
     )
 
@@ -126,12 +188,19 @@ class Database:
         )
 
     @contextmanager
-    def transaction(self, identity: UserContext | None = None) -> Iterator[Session]:
+    def transaction(
+        self,
+        identity: UserContext | AdminContext | SystemContext | None = None,
+    ) -> Iterator[Session]:
         session = self.session_factory()
         try:
             with session.begin():
-                if identity is not None:
+                if isinstance(identity, UserContext):
                     set_transaction_user_context(session, identity)
+                elif isinstance(identity, AdminContext):
+                    set_transaction_admin_context(session, identity)
+                elif isinstance(identity, SystemContext):
+                    set_transaction_system_context(session, identity)
                 yield session
         finally:
             session.close()

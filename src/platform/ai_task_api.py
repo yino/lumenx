@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
@@ -43,6 +45,10 @@ TASK_STATUS_ZH = {
     "cancelled": "已取消",
     "support_review": "计费待复核",
 }
+RESULT_CONTENT_CAPABILITIES = frozenset(
+    {"script.analysis", "prompt.polish", "speech.tts"}
+)
+MAX_PROJECTED_TEXT_RESULT_BYTES = 2 * 1024 * 1024
 
 
 class AITaskAPIContextError(RuntimeError):
@@ -98,8 +104,28 @@ def _result_media_ids(result: dict[str, Any] | None) -> list[str]:
     return media_ids
 
 
-def _task_projection(task: AITaskStateSnapshot) -> dict[str, Any]:
-    return {
+def _result_content(task: AITaskStateSnapshot) -> str | dict[str, Any] | None:
+    if task.capability not in RESULT_CONTENT_CAPABILITIES or not task.result:
+        return None
+    content = task.result.get("content")
+    if not isinstance(content, (str, Mapping)):
+        return None
+    projected = dict(content) if isinstance(content, Mapping) else content
+    try:
+        encoded = json.dumps(projected, ensure_ascii=False, allow_nan=False)
+    except (TypeError, ValueError):
+        return None
+    if len(encoded.encode("utf-8")) > MAX_PROJECTED_TEXT_RESULT_BYTES:
+        return None
+    return projected
+
+
+def _task_projection(
+    task: AITaskStateSnapshot,
+    *,
+    include_result_content: bool = False,
+) -> dict[str, Any]:
+    response = {
         "id": task.id,
         "workspace_id": task.workspace_id,
         "project_id": task.project_id,
@@ -124,6 +150,9 @@ def _task_projection(task: AITaskStateSnapshot) -> dict[str, Any]:
         "started_at": _iso(task.started_at),
         "completed_at": _iso(task.completed_at),
     }
+    if include_result_content:
+        response["result_content"] = _result_content(task)
+    return response
 
 
 def _page_projection(page: PaginatedAITasks) -> dict[str, Any]:
@@ -136,7 +165,7 @@ def _page_projection(page: PaginatedAITasks) -> dict[str, Any]:
 
 
 def _detail_projection(aggregate: AITaskAggregate) -> dict[str, Any]:
-    response = _task_projection(aggregate.task)
+    response = _task_projection(aggregate.task, include_result_content=True)
     response.update(
         {
             "actual_model": _model_projection(aggregate.task, aggregate),
@@ -270,7 +299,6 @@ def install_cloud_ai_task_api(
             identity=UserContext(
                 user_id=str(principal.user_id),
                 session_id=str(principal.session_id),
-                is_platform_admin=principal.is_platform_admin,
             ),
             workspace_id=workspace_id,
         )
@@ -291,7 +319,10 @@ def install_cloud_ai_task_api(
         task_id: str,
         context: WorkspaceContext = Depends(require_context),
     ) -> dict[str, Any]:
-        return _task_projection(service.get(context, task_id).task)
+        return _task_projection(
+            service.get(context, task_id).task,
+            include_result_content=True,
+        )
 
     @router.get("/{task_id}")
     def get_task_detail(

@@ -283,6 +283,33 @@ export interface Project {
     starred?: boolean;
 }
 
+function mergeProjectUpdate(project: Project, data: Partial<Project>): Project {
+    const candidate = data as Record<string, unknown>;
+    if (
+        typeof candidate.asset_record_id === "string" &&
+        typeof candidate.id === "string"
+    ) {
+        const assetId = candidate.id;
+        let matched = false;
+        const mergeAsset = <T extends { id: string }>(assets: T[]): T[] =>
+            assets.map((asset) => {
+                if (asset.id !== assetId) return asset;
+                matched = true;
+                return { ...asset, ...candidate, id: asset.id } as T;
+            });
+        const merged = {
+            ...project,
+            characters: mergeAsset(project.characters),
+            scenes: mergeAsset(project.scenes),
+            props: mergeAsset(project.props),
+        };
+        return matched ? merged : project;
+    }
+
+    const { id: _ignoredId, ...patch } = data;
+    return { ...project, ...patch, id: project.id };
+}
+
 interface ProjectStore {
     projects: Project[];
     currentProject: Project | null;
@@ -419,11 +446,15 @@ export const useProjectStore = create<ProjectStore>()(
             pendingExtraction: null,
             pendingExtractionScript: null,
             confirmExtraction: async () => {
-                const { currentProject, pendingExtractionScript } = get();
-                if (!currentProject?.id || !pendingExtractionScript) return;
+                const { currentProject, pendingExtraction, pendingExtractionScript } = get();
+                if (!currentProject?.id || !pendingExtraction || !pendingExtractionScript) return;
                 set({ isAnalyzing: true });
                 try {
-                    const project = await api.reparseProject(currentProject.id, pendingExtractionScript);
+                    const project = await api.applyExtraction(
+                        currentProject.id,
+                        pendingExtractionScript,
+                        pendingExtraction,
+                    );
                     set((state) => ({
                         projects: state.projects.map((p) =>
                             p.id === project.id ? { ...project, updatedAt: new Date().toISOString() } : p
@@ -552,11 +583,19 @@ export const useProjectStore = create<ProjectStore>()(
             updateProject: (id: string, data: Partial<Project>) => {
                 set((state) => ({
                     projects: state.projects.map((p) =>
-                        p.id === id ? { ...p, ...data, updatedAt: new Date().toISOString() } : p
+                        p.id === id
+                            ? {
+                                ...mergeProjectUpdate(p, data),
+                                updatedAt: new Date().toISOString(),
+                            }
+                            : p
                     ),
                     currentProject:
                         state.currentProject?.id === id
-                            ? { ...state.currentProject, ...data, updatedAt: new Date().toISOString() }
+                            ? {
+                                ...mergeProjectUpdate(state.currentProject, data),
+                                updatedAt: new Date().toISOString(),
+                            }
                             : state.currentProject,
                 }));
             },

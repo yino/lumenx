@@ -53,10 +53,11 @@ const getCookieValue = (name: string): string | null => {
 };
 
 export const SESSION_EXPIRED_EVENT = "lumenx:session-expired";
+export const ADMIN_SESSION_EXPIRED_EVENT = "lumenx:admin-session-expired";
 
 let activeWorkspaceId: string | null = null;
 const MEDIA_REFERENCE_PREFIX = "media:";
-const MEDIA_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const MEDIA_ID_PATTERN = /^\d+$/;
 
 interface CachedMediaAccess {
     url: string;
@@ -137,6 +138,10 @@ export interface SafeAPIError {
 const API_ERROR_MESSAGES: Record<string, string> = {
     ACCESS_DENIED: "当前操作没有权限",
     ACCOUNT_SUSPENDED: "账号已停用，请联系平台管理员",
+    ADMIN_ACCOUNT_SUSPENDED: "管理员账号已停用",
+    ADMIN_AUTH_REQUIRED: "管理员登录状态已失效，请重新登录",
+    ADMIN_CSRF_INVALID: "管理员安全校验失败，请刷新后重试",
+    ADMIN_SESSION_EXPIRED: "管理员登录已过期，请重新登录",
     ADMIN_REQUIRED: "当前账号没有此操作权限",
     AI_NEW_TASKS_DISABLED: "AI 新任务已暂停，已有任务仍可查询和处理",
     AI_TASK_NOT_FOUND: "AI 任务不存在或无权访问",
@@ -490,6 +495,15 @@ function emitSessionExpired(error: SafeAPIError): void {
     window.dispatchEvent(new CustomEvent(SESSION_EXPIRED_EVENT, { detail: error }));
 }
 
+function emitAdminSessionExpired(error: SafeAPIError): void {
+    if (typeof window === "undefined") return;
+    window.dispatchEvent(new CustomEvent(ADMIN_SESSION_EXPIRED_EVENT, { detail: error }));
+}
+
+function isAdminApiRequest(value: unknown): boolean {
+    return typeof value === "string" && /\/admin(?:\/|$)/.test(value);
+}
+
 export function getSafeApiError(error: unknown): SafeAPIError {
     if (axiosFactory.isAxiosError(error)) {
         const correlationId = error.response?.headers?.["x-correlation-id"];
@@ -519,14 +533,17 @@ export const apiClient = axiosFactory.create({
 apiClient.interceptors.request.use((config: InternalAxiosRequestConfig) => {
     config.withCredentials = true;
     const method = (config.method || "get").toLowerCase();
-    const csrfToken = getCookieValue("lumenx_csrf");
+    const adminRequest = isAdminApiRequest(config.url);
+    const csrfToken = getCookieValue(
+        adminRequest ? "lumenx_admin_csrf" : "lumenx_csrf",
+    );
     if (MUTATION_METHODS.has(method) && csrfToken) {
         config.headers.set("X-CSRF-Token", csrfToken);
     }
     if (IS_CLOUD_DEPLOYMENT) {
         config.headers.delete("Authorization");
         config.headers.delete("X-API-Key");
-        if (activeWorkspaceId) {
+        if (!adminRequest && activeWorkspaceId) {
             config.headers.set("X-Workspace-ID", activeWorkspaceId);
         } else {
             config.headers.delete("X-Workspace-ID");
@@ -577,7 +594,8 @@ apiClient.interceptors.response.use(
             });
         }
         if (safeError.status === 401 || safeError.code === "ACCOUNT_SUSPENDED") {
-            emitSessionExpired(safeError);
+            if (isAdminApiRequest(error.config?.url)) emitAdminSessionExpired(safeError);
+            else emitSessionExpired(safeError);
         }
         return Promise.reject(error);
     },
@@ -601,14 +619,17 @@ export async function apiFetch(
 ): Promise<Response> {
     const method = (init.method || "GET").toLowerCase();
     const headers = new Headers(init.headers);
-    const csrfToken = getCookieValue("lumenx_csrf");
+    const adminRequest = isAdminApiRequest(String(input));
+    const csrfToken = getCookieValue(
+        adminRequest ? "lumenx_admin_csrf" : "lumenx_csrf",
+    );
     if (MUTATION_METHODS.has(method) && csrfToken) {
         headers.set("X-CSRF-Token", csrfToken);
     }
     if (IS_CLOUD_DEPLOYMENT) {
         headers.delete("Authorization");
         headers.delete("X-API-Key");
-        if (activeWorkspaceId) headers.set("X-Workspace-ID", activeWorkspaceId);
+        if (!adminRequest && activeWorkspaceId) headers.set("X-Workspace-ID", activeWorkspaceId);
         else headers.delete("X-Workspace-ID");
     }
 
@@ -688,7 +709,8 @@ export async function apiFetch(
         response.headers.get("x-correlation-id") || undefined,
     );
     if (safeError.status === 401 || safeError.code === "ACCOUNT_SUSPENDED") {
-        emitSessionExpired(safeError);
+        if (adminRequest) emitAdminSessionExpired(safeError);
+        else emitSessionExpired(safeError);
     }
     throw new APIRequestError(
         safeError.message,
@@ -708,11 +730,22 @@ const authenticatedMutationConfig = () => {
 
 export interface AuthUser {
     id: string;
-    phone: string;
+    phone?: string | null;
+    username?: string | null;
+    account_label: string;
     phone_verified: boolean;
     phone_verification_status: string;
-    is_platform_admin: boolean;
     default_workspace_id: string;
+}
+
+export interface AdminAuthUser {
+    id: string;
+    username: string;
+    must_change_password: boolean;
+}
+
+export interface AdminAuthResponse {
+    admin: AdminAuthUser;
 }
 
 export interface AuthResponse {
@@ -764,11 +797,11 @@ export const authApi = {
                 timeout: 10_000,
             })
             .then((response) => response.data),
-    login: (phone: string, password: string) =>
+    login: (identifier: string, password: string) =>
         apiClient
             .post<AuthResponse>(
                 `${API_URL}/auth/login`,
-                { phone, password },
+                { identifier, password },
                 { withCredentials: true, timeout: 15_000 },
             )
             .then((response) => response.data),
@@ -802,6 +835,32 @@ export const authApi = {
     revokeAllSessions: () =>
         apiClient
             .post<{ message: string }>(`${API_URL}/auth/sessions/revoke-all`)
+            .then((response) => response.data),
+};
+
+export const adminAuthApi = {
+    currentAdmin: () =>
+        apiClient
+            .get<AdminAuthResponse>(`${API_URL}/admin/auth/me`, { timeout: 10_000 })
+            .then((response) => response.data),
+    login: (username: string, password: string) =>
+        apiClient
+            .post<AdminAuthResponse>(
+                `${API_URL}/admin/auth/login`,
+                { identifier: username, password },
+                { timeout: 15_000 },
+            )
+            .then((response) => response.data),
+    logout: () =>
+        apiClient
+            .post<{ message: string }>(`${API_URL}/admin/auth/logout`)
+            .then((response) => response.data),
+    changePassword: (currentPassword: string, newPassword: string) =>
+        apiClient
+            .post<{ message: string }>(`${API_URL}/admin/auth/password`, {
+                current_password: currentPassword,
+                new_password: newPassword,
+            })
             .then((response) => response.data),
 };
 
@@ -1127,7 +1186,8 @@ export interface AdminTicketLedgerItem {
     available_after: string;
     held_after: string;
     reason?: string | null;
-    actor_user_id?: string | null;
+    actor_admin_id?: string | null;
+    legacy_actor_user_id?: string | null;
     correlation: Record<string, unknown>;
     created_at: string;
 }
@@ -1167,13 +1227,17 @@ export type AdminUserStatus = "active" | "suspended";
 
 export interface AdminUserItem {
     id: string;
-    phone: string;
+    username?: string | null;
+    account_label: string;
+    phone?: string | null;
     status: AdminUserStatus;
     status_zh: string;
     phone_verified: boolean;
-    is_platform_admin: boolean;
     available_tickets: string;
     held_tickets: string;
+    wallet_exception: boolean;
+    workspace_count: number;
+    task_summary: { total: number; exceptions: number };
     created_at: string;
     updated_at: string;
 }
@@ -1230,6 +1294,7 @@ export interface AdminUsageItem {
 export interface AdminAuditEventItem {
     id: string;
     actor_user_id?: string | null;
+    actor_admin_id?: string | null;
     target_user_id?: string | null;
     workspace_id?: string | null;
     action: string;
@@ -1242,7 +1307,8 @@ export interface AdminAuditEventItem {
 
 export interface AdminImportBatchItem {
     id: string;
-    actor_admin_user_id: string;
+    actor_admin_id?: string | null;
+    legacy_actor_user_id?: string | null;
     target_user_id: string;
     target_workspace_id: string;
     source_fingerprint: string;
@@ -1317,17 +1383,183 @@ export interface AdminUsagePage extends AdminPage<AdminUsageItem> {
     total_charged_tickets: string;
 }
 
+export interface AdminExceptionItem {
+    key: string;
+    kind: string;
+    severity: "info" | "warning" | "high";
+    user_id?: string | null;
+    workspace_id?: string | null;
+    resource_type: string;
+    resource_id?: string | null;
+    summary: string;
+    updated_at?: string | null;
+}
+
+export interface AdminDashboard {
+    generated_at: string;
+    window: { start_at: string; end_at: string };
+    users: { total: number; new: number };
+    orders: { paid_count: number; net_cash_fen: string; net_ticket_microtickets: string };
+    usage: { events: number; metering_tokens: string; charged_microtickets: string };
+    tasks: { total: number; by_status: Record<string, number>; support_review: number; failed: number };
+    exceptions: { total: number; items: AdminExceptionItem[] };
+}
+
+export interface AdminUserOverview {
+    account: {
+        id: string;
+        username?: string | null;
+        phone_masked?: string | null;
+        status: AdminUserStatus;
+        phone_verified: boolean;
+        created_at: string;
+        updated_at: string;
+    };
+    wallet: {
+        available_microtickets: string;
+        available_tickets: string;
+        held_microtickets: string;
+        held_tickets: string;
+        lifetime_recharged_microtickets: string;
+        lifetime_refunded_microtickets: string;
+    };
+    counts: Record<string, number>;
+    exceptions: { tasks: number; orders: number; total: number };
+    recent_activity: {
+        tasks: Array<Record<string, string | null>>;
+        orders: Array<Record<string, string | null>>;
+    };
+}
+
+export type AdminInspectionResource =
+    | "workspaces" | "projects" | "series" | "assets" | "media"
+    | "tasks" | "attempts" | "usage" | "ledger" | "orders"
+    | "sessions" | "audit";
+
+export type ManualRechargeStatus =
+    | "pending" | "completed" | "cancelled" | "partially_refunded" | "refunded";
+
+export interface ManualRechargeOrder {
+    id: string;
+    order_number: string;
+    user_id: string;
+    cash_amount_fen: string;
+    cash_amount_yuan: string;
+    ticket_amount_microtickets: string;
+    ticket_amount: string;
+    currency: "CNY";
+    status: ManualRechargeStatus;
+    status_zh: string;
+    exchange_snapshot: Record<string, unknown>;
+    offline_reference?: string | null;
+    create_reason: string;
+    cancel_reason?: string | null;
+    refunded_cash_fen: string;
+    refunded_microtickets: string;
+    remaining_refundable_cash_fen: string;
+    remaining_refundable_microtickets: string;
+    version: number;
+    created_by_admin_id?: string | null;
+    completed_by_admin_id?: string | null;
+    cancelled_by_admin_id?: string | null;
+    last_refunded_by_admin_id?: string | null;
+    created_at: string;
+    updated_at: string;
+    completed_at?: string | null;
+    cancelled_at?: string | null;
+    refunded_at?: string | null;
+    manual_confirmation: true;
+}
+
+export interface ManualRechargePage extends AdminPage<ManualRechargeOrder> {
+    total_cash_fen: string;
+    total_ticket_microtickets: string;
+}
+
+export interface ManualRechargeDetail {
+    order: ManualRechargeOrder;
+    wallet: {
+        available_microtickets: string;
+        available_tickets: string;
+        held_microtickets: string;
+        held_tickets: string;
+    };
+    events: ManualRechargeEvent[];
+    ledger: ManualRechargeLedgerEntry[];
+}
+
+export interface ManualRechargeEvent {
+    id: string;
+    event_type: "created" | "completed" | "cancelled" | "refunded";
+    event_type_zh: string;
+    actor_admin_id?: string | null;
+    cash_amount_fen: string;
+    ticket_amount_microtickets: string;
+    ledger_entry_id?: string | null;
+    version_before: number;
+    version_after: number;
+    reason: string;
+    snapshot: Record<string, unknown>;
+    created_at: string;
+}
+
+export interface ManualRechargeLedgerEntry {
+    id: string;
+    entry_type: string;
+    amount_microtickets: string;
+    available_delta: string;
+    available_after: string;
+    held_after: string;
+    actor_admin_id?: string | null;
+    reason?: string | null;
+    created_at: string;
+}
+
+export interface ManualRechargeReconciliation {
+    report_id: string;
+    order_id: string;
+    status: "consistent" | "mismatch";
+    status_zh: string;
+    severity: string;
+    details: Record<string, unknown>;
+}
+
+export interface SystemScenePayload {
+    name: string;
+    description: string;
+    category: string;
+    tags: string[];
+    prompt: string;
+    negative_prompt: string;
+    style: string;
+    aspect_ratio: "16:9" | "9:16" | "1:1" | "4:3" | "3:4";
+    visibility: "enabled" | "disabled";
+    sort_order: number;
+    schema_version: number;
+    cover_media_id?: number | null;
+}
+
+export interface SystemScene extends SystemScenePayload {
+    id: string;
+    version: number;
+    lifecycle: "active" | "archived";
+    usage_count?: number | null;
+    created_at: string;
+    updated_at: string;
+    archived_at?: string | null;
+}
+
 export const adminPlatformApi = {
     listInvitations: () =>
         apiClient
-            .get<AdminInvitation[]>(`${API_URL}/auth/admin/invitations`, {
+            .get<AdminInvitation[]>(`${API_URL}/admin/invitations`, {
                 withCredentials: true,
             })
             .then((response) => response.data),
     createInvitation: (phone: string, expiresAt: string, reason: string) =>
         apiClient
             .post<AdminInvitation>(
-                `${API_URL}/auth/admin/invitations`,
+                `${API_URL}/admin/invitations`,
                 { phone, expires_at: expiresAt, reason },
                 authenticatedMutationConfig(),
             )
@@ -1335,12 +1567,12 @@ export const adminPlatformApi = {
     revokeInvitation: (invitationId: string, reason: string) =>
         apiClient
             .post<AdminInvitation>(
-                `${API_URL}/auth/admin/invitations/${invitationId}/revoke`,
+                `${API_URL}/admin/invitations/${invitationId}/revoke`,
                 { reason },
                 authenticatedMutationConfig(),
             )
             .then((response) => response.data),
-    listUsers: (params: { status?: AdminUserStatus; query?: string; offset?: number; limit?: number } = {}) =>
+    listUsers: (params: { status?: AdminUserStatus; query?: string; user_id?: string; wallet_exception?: boolean; start_at?: string; end_at?: string; offset?: number; limit?: number } = {}) =>
         apiClient
             .get<AdminPage<AdminUserItem>>(`${API_URL}/admin/users`, {
                 params,
@@ -1355,21 +1587,21 @@ export const adminPlatformApi = {
                 authenticatedMutationConfig(),
             )
             .then((response) => response.data),
-    listTasks: (params: { status?: string; user_id?: string; offset?: number; limit?: number } = {}) =>
+    listTasks: (params: { status?: string; user_id?: string; workspace_id?: string; start_at?: string; end_at?: string; offset?: number; limit?: number } = {}) =>
         apiClient
             .get<AdminPage<AdminTaskItem>>(`${API_URL}/admin/tasks`, {
                 params,
                 withCredentials: true,
             })
             .then((response) => response.data),
-    listUsage: (params: { outcome?: string; user_id?: string; offset?: number; limit?: number } = {}) =>
+    listUsage: (params: { outcome?: string; user_id?: string; workspace_id?: string; start_at?: string; end_at?: string; offset?: number; limit?: number } = {}) =>
         apiClient
             .get<AdminUsagePage>(`${API_URL}/admin/usage`, {
                 params,
                 withCredentials: true,
             })
             .then((response) => response.data),
-    listAuditEvents: (params: { action?: string; offset?: number; limit?: number } = {}) =>
+    listAuditEvents: (params: { action?: string; actor_user_id?: string; actor_admin_id?: string; target_user_id?: string; workspace_id?: string; target_type?: string; target_id?: string; purpose?: string; correlation_id?: string; start_at?: string; end_at?: string; offset?: number; limit?: number } = {}) =>
         apiClient
             .get<AdminPage<AdminAuditEventItem>>(`${API_URL}/admin/audit-events`, {
                 params,
@@ -1422,7 +1654,7 @@ export const adminPlatformApi = {
     updateUserStatus: (userId: string, status: AdminUserStatus, reason: string) =>
         apiClient
             .post<{ message: string }>(
-                `${API_URL}/auth/admin/users/${userId}/${status === "active" ? "reactivate" : "suspend"}`,
+                `${API_URL}/admin/users/${userId}/${status === "active" ? "reactivate" : "suspend"}`,
                 { reason },
                 authenticatedMutationConfig(),
             )
@@ -1430,7 +1662,7 @@ export const adminPlatformApi = {
     revokeUserSessions: (userId: string, reason: string) =>
         apiClient
             .post<{ message: string }>(
-                `${API_URL}/auth/admin/users/${userId}/revoke-sessions`,
+                `${API_URL}/admin/users/${userId}/revoke-sessions`,
                 { reason },
                 authenticatedMutationConfig(),
             )
@@ -1438,11 +1670,139 @@ export const adminPlatformApi = {
     issueResetCredential: (userId: string, reason: string) =>
         apiClient
             .post<{ credential: string; expires_at: string }>(
-                `${API_URL}/auth/admin/users/${userId}/reset-credentials`,
+                `${API_URL}/admin/users/${userId}/reset-credentials`,
                 { reason },
                 authenticatedMutationConfig(),
             )
             .then((response) => response.data),
+    dashboard: (params: { start_at?: string; end_at?: string } = {}) =>
+        apiClient.get<AdminDashboard>(`${API_URL}/admin/dashboard`, { params }).then((response) => response.data),
+    exceptions: (limit = 50) =>
+        apiClient.get<{ items: AdminExceptionItem[]; total: number; generated_at: string }>(
+            `${API_URL}/admin/exceptions`, { params: { limit } },
+        ).then((response) => response.data),
+    userOverview: (userId: string) =>
+        apiClient.get<AdminUserOverview>(`${API_URL}/admin/users/${userId}/overview`).then((response) => response.data),
+    userResources: (
+        userId: string,
+        resource: AdminInspectionResource,
+        params: { workspace_id?: string; status?: string; asset_type?: string; offset?: number; limit?: number } = {},
+    ) => apiClient.get<AdminPage<Record<string, unknown>>>(
+        `${API_URL}/admin/users/${userId}/resources/${resource}`, { params },
+    ).then((response) => response.data),
+    taskDetail: (userId: string, workspaceId: string, taskId: string) =>
+        apiClient.get<Record<string, unknown>>(`${API_URL}/admin/users/${userId}/tasks/${taskId}`, {
+            params: { workspace_id: workspaceId },
+        }).then((response) => response.data),
+    viewScript: (userId: string, projectId: string, workspaceId: string, purpose: string) =>
+        apiClient.post<{ project_id: string; title: string; text: string; truncated: boolean }>(
+            `${API_URL}/admin/users/${userId}/scripts/${projectId}/view`,
+            { workspace_id: Number(workspaceId), purpose },
+        ).then((response) => response.data),
+    viewTaskPrompt: (userId: string, taskId: string, workspaceId: string, purpose: string) =>
+        apiClient.post<Record<string, unknown>>(
+            `${API_URL}/admin/users/${userId}/tasks/${taskId}/prompt`,
+            { workspace_id: Number(workspaceId), purpose },
+        ).then((response) => response.data),
+    previewMedia: (userId: string, mediaId: string, workspaceId: string, purpose: string) =>
+        apiClient.post<{ media_id: string; url: string; expires_at: string; disposition: "inline" }>(
+            `${API_URL}/admin/users/${userId}/media/${mediaId}/preview`,
+            { workspace_id: Number(workspaceId), purpose },
+        ).then((response) => response.data),
+    exportCsv: (
+        resource: "users" | "orders" | "usage" | "tasks",
+        params: { start_at: string; end_at: string; purpose: string; user_id?: string; status?: string },
+    ) => apiClient.post<Blob>(`${API_URL}/admin/exports/${resource}.csv`, null, {
+        params,
+        responseType: "blob",
+    }).then((response) => response.data),
+};
+
+export const adminRechargeApi = {
+    list: (params: { order_number?: string; user_id?: string; status?: ManualRechargeStatus; actor_admin_id?: string; offline_reference?: string; start_at?: string; end_at?: string; offset?: number; limit?: number } = {}) =>
+        apiClient.get<ManualRechargePage>(`${API_URL}/admin/recharge-orders`, { params }).then((response) => response.data),
+    get: (orderId: string) =>
+        apiClient.get<ManualRechargeDetail>(`${API_URL}/admin/recharge-orders/${orderId}`).then((response) => response.data),
+    create: (payload: { user_id: number; cash_amount_fen: number; ticket_amount_microtickets: number; offline_reference?: string; reason: string }, idempotencyKey = createIdempotencyKey("recharge-create")) =>
+        apiClient.post<ManualRechargeOrder>(`${API_URL}/admin/recharge-orders`, payload, {
+            headers: { "Idempotency-Key": idempotencyKey },
+        }).then((response) => response.data),
+    complete: (orderId: string, expectedVersion: number, reason: string, idempotencyKey = createIdempotencyKey("recharge-complete")) =>
+        apiClient.post<ManualRechargeOrder>(`${API_URL}/admin/recharge-orders/${orderId}/complete`, {
+            expected_version: expectedVersion, reason,
+        }, { headers: { "Idempotency-Key": idempotencyKey } }).then((response) => response.data),
+    cancel: (orderId: string, expectedVersion: number, reason: string, idempotencyKey = createIdempotencyKey("recharge-cancel")) =>
+        apiClient.post<ManualRechargeOrder>(`${API_URL}/admin/recharge-orders/${orderId}/cancel`, {
+            expected_version: expectedVersion, reason,
+        }, { headers: { "Idempotency-Key": idempotencyKey } }).then((response) => response.data),
+    refund: (orderId: string, payload: { expected_version: number; cash_amount_fen: number; ticket_amount_microtickets: number; reason: string }, idempotencyKey = createIdempotencyKey("recharge-refund")) =>
+        apiClient.post<ManualRechargeOrder>(`${API_URL}/admin/recharge-orders/${orderId}/refund`, payload, {
+            headers: { "Idempotency-Key": idempotencyKey },
+        }).then((response) => response.data),
+    reconcile: (orderId: string, reason: string) =>
+        apiClient.post<ManualRechargeReconciliation>(`${API_URL}/admin/recharge-orders/${orderId}/reconcile`, { reason }).then((response) => response.data),
+};
+
+export const systemSceneAdminApi = {
+    list: (params: { scene_id?: string; query?: string; category?: string; tag?: string; visibility?: "enabled" | "disabled"; lifecycle?: "active" | "archived"; schema_version?: string; start_at?: string; end_at?: string; offset?: number; limit?: number } = {}) =>
+        apiClient.get<AdminPage<SystemScene>>(`${API_URL}/admin/system-scenes`, { params }).then((response) => response.data),
+    get: (sceneId: string) =>
+        apiClient.get<SystemScene>(`${API_URL}/admin/system-scenes/${sceneId}`).then((response) => response.data),
+    create: (scene: SystemScenePayload, reason: string) =>
+        apiClient.post<SystemScene>(`${API_URL}/admin/system-scenes`, { scene, reason }).then((response) => response.data),
+    update: (sceneId: string, scene: SystemScenePayload, expectedVersion: number, reason: string, confirmedUsageCount?: number) =>
+        apiClient.put<SystemScene>(`${API_URL}/admin/system-scenes/${sceneId}`, {
+            scene, expected_version: expectedVersion, reason, confirmed_usage_count: confirmedUsageCount,
+        }).then((response) => response.data),
+    visibility: (sceneId: string, visibility: "enabled" | "disabled", expectedVersion: number, reason: string, confirmedUsageCount?: number) =>
+        apiClient.post<SystemScene>(`${API_URL}/admin/system-scenes/${sceneId}/visibility`, {
+            visibility, expected_version: expectedVersion, reason, confirmed_usage_count: confirmedUsageCount,
+        }).then((response) => response.data),
+    archive: (sceneId: string, expectedVersion: number, reason: string, confirmedUsageCount?: number) =>
+        apiClient.post<SystemScene>(`${API_URL}/admin/system-scenes/${sceneId}/archive`, {
+            expected_version: expectedVersion, reason, confirmed_usage_count: confirmedUsageCount,
+        }).then((response) => response.data),
+    reorder: (sceneId: string, sortOrder: number, expectedVersion: number, reason: string) =>
+        apiClient.post<SystemScene>(`${API_URL}/admin/system-scenes/${sceneId}/reorder`, {
+            sort_order: sortOrder, expected_version: expectedVersion, reason,
+        }).then((response) => response.data),
+    uploadMedia: (file: File, reason: string) => {
+        const body = new FormData();
+        body.append("file", file);
+        body.append("reason", reason);
+        return apiClient.post<{ media_id: string; mime_type: string; size_bytes: number; checksum_sha256: string }>(
+            `${API_URL}/admin/system-scenes/media`, body,
+        ).then((response) => response.data);
+    },
+    mediaAccess: (mediaId: string) =>
+        apiClient.get<{ media_id: string; url: string; expires_at: string }>(
+            `${API_URL}/admin/system-scenes/media/${mediaId}/access`,
+        ).then((response) => response.data),
+};
+
+export interface SystemSceneCopyResult {
+    asset_record_id: string;
+    asset_id: string;
+    scope: "workspace" | "project";
+    project_id?: string | null;
+    workspace_id: string;
+    source_system_scene_id: string;
+    source_version: number;
+    version: number;
+}
+
+export const systemSceneApi = {
+    list: () => apiClient.get<{ items: SystemScene[] }>(`${API_URL}/system-scenes`)
+        .then((response) => response.data.items),
+    get: (sceneId: string) => apiClient.get<SystemScene>(`${API_URL}/system-scenes/${sceneId}`)
+        .then((response) => response.data),
+    mediaAccess: (mediaId: string) => apiClient.get<{ media_id: string; url: string; expires_at: string }>(
+        `${API_URL}/system-scenes/media/${mediaId}/access`,
+    ).then((response) => response.data),
+    copy: (sceneId: string, projectId?: string | null) => apiClient.post<SystemSceneCopyResult>(
+        `${API_URL}/system-scenes/${sceneId}/copy`,
+        { project_id: projectId ? Number(projectId) : null },
+    ).then((response) => response.data),
 };
 
 export interface UserTicketWallet {
@@ -1676,6 +2036,7 @@ export interface AITaskStatusResponse {
     completed_at?: string | null;
     actual_model?: { display_name: string; model_id: string };
     tokens_per_ticket?: string;
+    result_content?: string | Record<string, unknown> | null;
 }
 
 export interface AITaskDetailResponse extends AITaskStatusResponse {
@@ -1821,6 +2182,175 @@ export const aiTaskApi = {
     },
 };
 
+const TEXT_AI_POLL_INTERVAL_MS = 1_000;
+const TEXT_AI_POLL_TIMEOUT_MS = 600_000;
+
+async function waitForTextAITaskResult(taskId: string): Promise<string> {
+    const deadline = Date.now() + TEXT_AI_POLL_TIMEOUT_MS;
+    while (true) {
+        const task = await aiTaskApi.getStatus(taskId);
+        if (task.raw_status === "succeeded") {
+            const content = typeof task.result_content === "string"
+                ? task.result_content.trim()
+                : "";
+            if (!content) throw new Error("AI 任务未返回可用文本");
+            return content;
+        }
+        if (["failed", "cancelled", "support_review"].includes(task.raw_status)) {
+            throw new Error(task.safe_error?.message || "AI 生成失败，请稍后重试");
+        }
+        if (Date.now() >= deadline) {
+            throw new Error("AI 生成等待超时，可稍后在任务记录中查看结果");
+        }
+        await new Promise((resolve) => setTimeout(resolve, TEXT_AI_POLL_INTERVAL_MS));
+    }
+}
+
+type ScriptAnalysisPreview = {
+    characters: any[];
+    scenes: any[];
+    props: any[];
+};
+
+function parseStructuredAITaskResult(
+    content: string | Record<string, unknown> | null | undefined,
+    invalidMessage: string,
+): Record<string, unknown> {
+    let parsed: unknown = content;
+    if (typeof content === "string") {
+        const normalized = content
+            .trim()
+            .replace(/^```(?:json)?\s*/i, "")
+            .replace(/\s*```$/, "");
+        try {
+            parsed = JSON.parse(normalized);
+        } catch {
+            const start = normalized.indexOf("{");
+            const end = normalized.lastIndexOf("}");
+            if (start >= 0 && end > start) {
+                try {
+                    parsed = JSON.parse(normalized.slice(start, end + 1));
+                } catch {
+                    throw new Error(invalidMessage);
+                }
+            } else {
+                throw new Error(invalidMessage);
+            }
+        }
+    }
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+        throw new Error(invalidMessage);
+    }
+    return parsed as Record<string, unknown>;
+}
+
+function parseScriptAnalysisPreview(
+    content: string | Record<string, unknown> | null | undefined,
+): ScriptAnalysisPreview {
+    const result = parseStructuredAITaskResult(
+        content,
+        "AI 任务返回的剧本分析结果不是有效 JSON",
+    );
+    if (!("characters" in result) || !("scenes" in result) || !("props" in result)) {
+        throw new Error("AI 任务返回的剧本分析结果缺少必要字段");
+    }
+    return {
+        characters: Array.isArray(result.characters) ? result.characters : [],
+        scenes: Array.isArray(result.scenes) ? result.scenes : [],
+        props: Array.isArray(result.props) ? result.props : [],
+    };
+}
+
+async function waitForScriptAnalysisPreview(taskId: string): Promise<ScriptAnalysisPreview> {
+    const deadline = Date.now() + TEXT_AI_POLL_TIMEOUT_MS;
+    while (true) {
+        const task = await aiTaskApi.getStatus(taskId);
+        if (task.raw_status === "succeeded") {
+            return parseScriptAnalysisPreview(task.result_content);
+        }
+        if (["failed", "cancelled", "support_review"].includes(task.raw_status)) {
+            throw new Error(task.safe_error?.message || "AI 剧本分析失败，请稍后重试");
+        }
+        if (Date.now() >= deadline) {
+            throw new Error("AI 剧本分析等待超时，可稍后在任务记录中查看结果");
+        }
+        await new Promise((resolve) => setTimeout(resolve, TEXT_AI_POLL_INTERVAL_MS));
+    }
+}
+
+async function waitForStructuredAITaskResult(
+    taskId: string,
+    invalidMessage: string,
+): Promise<Record<string, unknown>> {
+    const deadline = Date.now() + TEXT_AI_POLL_TIMEOUT_MS;
+    while (true) {
+        const task = await aiTaskApi.getStatus(taskId);
+        if (task.raw_status === "succeeded") {
+            return parseStructuredAITaskResult(task.result_content, invalidMessage);
+        }
+        if (["failed", "cancelled", "support_review"].includes(task.raw_status)) {
+            throw new Error(task.safe_error?.message || "AI 生成失败，请稍后重试");
+        }
+        if (Date.now() >= deadline) {
+            throw new Error("AI 生成等待超时，可稍后在任务记录中查看结果");
+        }
+        await new Promise((resolve) => setTimeout(resolve, TEXT_AI_POLL_INTERVAL_MS));
+    }
+}
+
+export interface DialogueAudioBatchStats {
+    generated: number;
+    skipped: number;
+    failed: number;
+    no_voice: number;
+    total?: number;
+}
+
+async function waitForDialogueAudioBatch(
+    taskId: string,
+): Promise<{ _batch_stats: DialogueAudioBatchStats }> {
+    const deadline = Date.now() + TEXT_AI_POLL_TIMEOUT_MS;
+    while (true) {
+        const task = await aiTaskApi.getStatus(taskId);
+        if (task.raw_status === "succeeded") {
+            const result = task.result_content;
+            if (
+                result
+                && typeof result === "object"
+                && "_batch_stats" in result
+                && result._batch_stats
+                && typeof result._batch_stats === "object"
+            ) {
+                return result as unknown as { _batch_stats: DialogueAudioBatchStats };
+            }
+            throw new Error("对白音频任务缺少批量结果统计");
+        }
+        if (["failed", "cancelled", "support_review"].includes(task.raw_status)) {
+            throw new Error(task.safe_error?.message || "对白音频生成失败，请稍后重试");
+        }
+        if (Date.now() >= deadline) {
+            throw new Error("对白音频生成等待超时，可稍后在任务记录中查看结果");
+        }
+        await new Promise((resolve) => setTimeout(resolve, TEXT_AI_POLL_INTERVAL_MS));
+    }
+}
+
+type PolishPromptResponse = Record<string, unknown> & {
+    prompt_cn?: string;
+    prompt_en?: string;
+};
+
+async function resolvePolishPromptResponse(
+    response: PolishPromptResponse,
+): Promise<PolishPromptResponse> {
+    const taskId = typeof response.task_id === "string" ? response.task_id : "";
+    if (!taskId) return response;
+    return waitForStructuredAITaskResult(
+        taskId,
+        "AI 任务返回的提示词润色结果不是有效 JSON",
+    ) as Promise<PolishPromptResponse>;
+}
+
 // ─── Storyboard Schema v2 types ─────────────────────────────────────────────
 
 export interface DialogueStructured {
@@ -1871,6 +2401,29 @@ export interface RefineSSEEvent {
     error?: string;
 }
 
+async function withProjectVersionRetry<T>(
+    projectId: string,
+    mutation: () => Promise<T>,
+): Promise<T> {
+    const maxAttempts = 4;
+    for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+        try {
+            return await mutation();
+        } catch (error) {
+            const status = axiosFactory.isAxiosError(error)
+                ? error.response?.status
+                : undefined;
+            if (status !== 409 || attempt === maxAttempts - 1) throw error;
+
+            // Refreshing the document also refreshes the request interceptor's
+            // cached If-Match version before this mutation is retried.
+            await new Promise((resolve) => window.setTimeout(resolve, 40 * (attempt + 1)));
+            await apiClient.get(`${API_URL}/projects/${projectId}`);
+        }
+    }
+    throw new Error("内容版本重试失败");
+}
+
 export const api = {
     createProject: async (title: string, text: string, skipAnalysis: boolean = false, workflowMode: string = "r2v", seriesId?: string) => {
         const res = await apiClient.post(`${API_URL}/projects`, { title, text, workflow_mode: workflowMode, series_id: seriesId }, {
@@ -1915,8 +2468,27 @@ export const api = {
     },
 
     extractPreview: async (scriptId: string, text: string) => {
-        const res = await apiClient.post(`${API_URL}/projects/${scriptId}/extract_preview`, { text });
-        return res.data as { characters: any[]; scenes: any[]; props: any[] };
+        const res = await apiClient.post<
+            ScriptAnalysisPreview | SubmittedAITaskResponse
+        >(`${API_URL}/projects/${scriptId}/extract_preview`, { text });
+        if ("task_id" in res.data) {
+            return waitForScriptAnalysisPreview(res.data.task_id);
+        }
+        return res.data;
+    },
+
+    applyExtraction: async (
+        scriptId: string,
+        text: string,
+        extraction: ScriptAnalysisPreview,
+    ) => {
+        await apiClient.put(`${API_URL}/projects/${scriptId}/extraction`, {
+            text,
+            characters: extraction.characters,
+            scenes: extraction.scenes,
+            props: extraction.props,
+        });
+        return api.getProject(scriptId);
     },
 
     /** Persist `original_text` without LLM reparse. Used for textarea
@@ -1972,14 +2544,44 @@ export const api = {
         // off); explicit boolean is user's Advanced-section choice.
         watermark?: boolean
     ) => {
-        const res = await apiClient.post(`${API_URL}/projects/${id}/video_tasks`, withoutCloudModelOverrides({
+        const inputMediaIds = [
             image_url,
+            ...referenceVideoUrls,
+            ...referenceImageUrls,
+        ].map(parseMediaReference).filter((value): value is string => Boolean(value));
+        const cloudParameters = generationMode === "r2v"
+            ? {
+                duration,
+                resolution,
+                output_count: 1,
+                ...(seed != null ? { seed } : {}),
+                ...(watermark != null ? { watermark } : {}),
+            }
+            : {
+                duration,
+                resolution,
+                ratio: ratio || "16:9",
+                output_count: 1,
+                prompt_extend: promptExtend,
+                ...(negativePrompt ? { negative_prompt: negativePrompt } : {}),
+                ...(seed != null ? { seed } : {}),
+                ...(watermark != null ? { watermark } : {}),
+            };
+        const legacyMediaPayload = IS_CLOUD_DEPLOYMENT
+            ? {}
+            : {
+                image_url,
+                audio_url: audioUrl,
+                reference_video_urls: referenceVideoUrls,
+                reference_image_urls: referenceImageUrls,
+            };
+        const res = await apiClient.post(`${API_URL}/projects/${id}/video_tasks`, withoutCloudModelOverrides({
+            ...legacyMediaPayload,
             prompt,
             duration,
             seed,
             resolution,
             generate_audio: generateAudio,
-            audio_url: audioUrl,
             prompt_extend: promptExtend,
             negative_prompt: negativePrompt,
             batch_size: batchSize,
@@ -1987,7 +2589,6 @@ export const api = {
             frame_id: frameId,
             shot_type: shotType,
             generation_mode: generationMode,
-            reference_video_urls: referenceVideoUrls,
             // Kling
             mode,
             sound: sound != null ? (sound ? "on" : "off") : undefined,
@@ -1996,10 +2597,13 @@ export const api = {
             vidu_audio: viduAudio,
             movement_amplitude: movementAmplitude,
             // HappyHorse
-            reference_image_urls: referenceImageUrls,
             ratio,
             watermark,
             workbench_tab: workbenchTab,
+            ...(IS_CLOUD_DEPLOYMENT ? {
+                media_ids: inputMediaIds,
+                parameters: cloudParameters,
+            } : {}),
         }));
         return normalizeSubmittedAITaskResponse(res.data);
     },
@@ -2043,10 +2647,10 @@ export const api = {
             workbench_generate_count?: number;
         },
     ) => {
-        const res = await apiClient.patch(
+        const res = await withProjectVersionRetry(scriptId, () => apiClient.patch(
             `${API_URL}/projects/${scriptId}/frames/${frameId}/workbench`,
             patch,
-        );
+        ));
         return res.data;
     },
 
@@ -2187,6 +2791,13 @@ export const api = {
     },
 
     generateAsset: async (scriptId: string, assetId: string, assetType: string, stylePreset: string, stylePrompt?: string, generationType: string = "all", prompt: string = "", applyStyle: boolean = true, negativePrompt: string = "", batchSize: number = 1, modelName?: string, aspectRatio?: string) => {
+        const sizeByRatio: Record<string, string> = {
+            "16:9": "1280*720",
+            "9:16": "720*1280",
+            "1:1": "1280*1280",
+            "4:3": "1280*720",
+            "3:4": "720*1280",
+        };
         const res = await apiClient.post(`${API_URL}/projects/${scriptId}/assets/generate`, withoutCloudModelOverrides({
             asset_id: assetId,
             asset_type: assetType,
@@ -2199,6 +2810,15 @@ export const api = {
             batch_size: batchSize,
             model_name: modelName,
             aspect_ratio: aspectRatio,
+            ...(IS_CLOUD_DEPLOYMENT ? {
+                parameters: {
+                    count: Math.max(1, Math.min(4, batchSize)),
+                    size: sizeByRatio[aspectRatio || ""] || "1280*1280",
+                    prompt_extend: true,
+                    watermark: false,
+                    ...(negativePrompt ? { negative_prompt: negativePrompt } : {}),
+                },
+            } : {}),
         }));
         return normalizeSubmittedAITaskResponse(res.data);
     },
@@ -2214,6 +2834,28 @@ export const api = {
         const res = await apiClient.get(
             `${API_URL}/projects/${scriptId}/video_tasks/${taskId}`,
         );
+        return res.data;
+    },
+
+    attachGeneratedVideo: async (
+        scriptId: string,
+        frameId: string,
+        data: {
+            task_id: string;
+            media_id: string;
+            prompt: string;
+            image_url: string;
+            duration: number;
+            resolution: string;
+            model: string;
+            generation_mode: "i2v" | "r2v";
+            workbench_tab?: "t2i_i2v" | "direct_r2v";
+        },
+    ) => {
+        const res = await withProjectVersionRetry(scriptId, () => apiClient.post(
+            `${API_URL}/projects/${scriptId}/frames/${frameId}/video_candidates`,
+            data,
+        ));
         return res.data;
     },
 
@@ -2398,20 +3040,45 @@ export const api = {
 
     // Art Direction APIs
     analyzeScriptForStyles: async (scriptId: string, scriptText: string) => {
-        const res = await apiClient.post(`${API_URL}/projects/${scriptId}/art_direction/analyze`, {
+        const res = await apiClient.post<{
+            recommendations?: any[];
+            ai_task?: SubmittedAITaskResponse;
+        }>(`${API_URL}/projects/${scriptId}/art_direction/analyze`, {
             script_text: scriptText
         });
+        if (res.data.ai_task?.task_id) {
+            const result = await waitForStructuredAITaskResult(
+                res.data.ai_task.task_id,
+                "AI 任务返回的美术风格结果不是有效 JSON",
+            );
+            if (!Array.isArray(result.recommendations)) {
+                throw new Error("AI 任务返回的美术风格结果缺少 recommendations");
+            }
+            return { recommendations: result.recommendations };
+        }
         return res.data;
     },
 
     saveArtDirection: async (scriptId: string, selectedStyleId: string, styleConfig: any, customStyles: any[] = [], aiRecommendations: any[] = []) => {
+        const rawId = typeof selectedStyleId === "string" ? selectedStyleId.trim() : "";
+        const configId = styleConfig && typeof styleConfig.id === "string"
+            ? styleConfig.id.trim()
+            : "";
+        const normalizedStyleId = rawId || configId || "custom-style";
+        const normalizedStyleConfig = {
+            ...(styleConfig && typeof styleConfig === "object" ? styleConfig : {}),
+            id: normalizedStyleId,
+            is_custom: styleConfig?.is_custom ?? true,
+        };
         const res = await apiClient.post(`${API_URL}/projects/${scriptId}/art_direction/save`, {
-            selected_style_id: selectedStyleId,
-            style_config: styleConfig,
-            custom_styles: customStyles,
-            ai_recommendations: aiRecommendations
+            selected_style_id: normalizedStyleId,
+            style_config: normalizedStyleConfig,
+            custom_styles: Array.isArray(customStyles) ? customStyles.filter(Boolean) : [],
+            ai_recommendations: Array.isArray(aiRecommendations)
+                ? aiRecommendations.filter((item) => item && typeof item === "object")
+                : [],
         });
-        return res.data;
+        return IS_CLOUD_DEPLOYMENT ? api.getProject(scriptId) : res.data;
     },
 
     getStylePresets: async () => {
@@ -2450,7 +3117,7 @@ export const api = {
             image_urls: imageUrls,
             polish_model: polishModel,
         }));
-        return res.data;
+        return resolvePolishPromptResponse(res.data);
     },
     polishR2VPrompt: async (
         draftPrompt: string,
@@ -2470,7 +3137,7 @@ export const api = {
             image_urls: imageUrls,
             polish_model: polishModel,
         }));
-        return res.data;
+        return resolvePolishPromptResponse(res.data);
     },
     updateAssetDescription: async (scriptId: string, assetId: string, assetType: string, description: string) => {
         const res = await apiClient.post(`${API_URL}/projects/${scriptId}/assets/update_description`, {
@@ -2529,7 +3196,15 @@ export const api = {
             frame_id: frameId,
             composition_data: compositionData,
             prompt: prompt,
-            batch_size: batchSize
+            batch_size: batchSize,
+            ...(IS_CLOUD_DEPLOYMENT ? {
+                parameters: {
+                    count: Math.max(1, Math.min(4, batchSize)),
+                    size: "1280*720",
+                    prompt_extend: true,
+                    watermark: false,
+                },
+            } : {}),
         });
         return res.data;
     },
@@ -2540,10 +3215,86 @@ export const api = {
      * Analyzes script text and generates storyboard frames using AI.
      * Replaces existing frames with newly generated ones.
      */
-    analyzeToStoryboard: async (scriptId: string, text: string) => {
-        const res = await apiClient.post(`${API_URL}/projects/${scriptId}/storyboard/analyze`, {
-            text: text
+    analyzeToStoryboard: async (scriptId: string, text: string, entities?: {
+        characters?: any[];
+        scenes?: any[];
+        props?: any[];
+    }) => {
+        const selectEntityFields = (
+            items: any[] | undefined,
+            fields: string[],
+        ): Record<string, string | number | boolean>[] => (Array.isArray(items) ? items : [])
+            .filter((item) => item && typeof item === "object")
+            .map((item) => Object.fromEntries(
+                fields
+                    .filter((field) => ["string", "number", "boolean"].includes(typeof item[field]))
+                    .map((field) => [field, item[field]]),
+            ));
+        const entityPayload = {
+            characters: selectEntityFields(entities?.characters, [
+                "id", "name", "description", "age", "gender", "clothing",
+            ]),
+            scenes: selectEntityFields(entities?.scenes, [
+                "id", "name", "description", "time_of_day", "lighting_mood",
+            ]),
+            props: selectEntityFields(entities?.props, [
+                "id", "name", "description",
+            ]),
+        };
+        const res = await apiClient.post<SubmittedAITaskResponse | Record<string, any>>(
+            `${API_URL}/projects/${scriptId}/storyboard/analyze`, {
+            text,
+            entities: entityPayload,
         });
+        if ("task_id" in res.data && typeof res.data.task_id === "string") {
+            const result = await waitForStructuredAITaskResult(
+                res.data.task_id,
+                "AI 任务返回的分镜结果不是有效 JSON",
+            );
+            if (!Array.isArray(result.frames) || result.frames.length === 0) {
+                throw new Error("AI 任务返回的分镜结果缺少 frames");
+            }
+            const normalizeName = (value: unknown) => String(value || "").trim().toLowerCase();
+            const characterIds = new Map<string, string>(
+                entityPayload.characters.map((item) => [normalizeName(item.name), String(item.id || "")]),
+            );
+            const sceneIds = new Map<string, string>(
+                entityPayload.scenes.map((item) => [normalizeName(item.name), String(item.id || "")]),
+            );
+            const propIds = new Map<string, string>(
+                entityPayload.props.map((item) => [normalizeName(item.name), String(item.id || "")]),
+            );
+            const resolveIds = (values: unknown, lookup: Map<string, string>) =>
+                (Array.isArray(values) ? values : [])
+                    .map((value) => lookup.get(normalizeName(value)))
+                    .filter((value): value is string => Boolean(value));
+            const frames = result.frames.map((value) => {
+                const frame = value && typeof value === "object"
+                    ? value as Record<string, any>
+                    : {};
+                return {
+                    scene_id: frame.scene_id || sceneIds.get(normalizeName(frame.scene_ref_name)) || "",
+                    character_ids: Array.isArray(frame.character_ids)
+                        ? frame.character_ids
+                        : resolveIds(frame.character_ref_names, characterIds),
+                    prop_ids: Array.isArray(frame.prop_ids)
+                        ? frame.prop_ids
+                        : resolveIds(frame.prop_ref_names, propIds),
+                    action_description: frame.action_description || frame.action_summary || frame.visual_description || "",
+                    visual_description: frame.visual_description || frame.action_summary || undefined,
+                    shot_size: frame.shot_size || undefined,
+                    camera_angle: frame.camera_angle || "平视",
+                    camera_movement: typeof frame.camera_movement === "string"
+                        ? frame.camera_movement
+                        : frame.camera_movement?.description || undefined,
+                    dialogue: frame.dialogue || undefined,
+                    speaker: frame.speaker || undefined,
+                    duration: Number.isFinite(Number(frame.duration)) ? Number(frame.duration) : 5,
+                };
+            });
+            await apiClient.put(`${API_URL}/projects/${scriptId}/frames`, { frames });
+            return api.getProject(scriptId);
+        }
         return res.data;
     },
 
@@ -2754,12 +3505,18 @@ export const api = {
 
     /** PR-3j · Generate dialogue audio for every frame with dialogue.
      *  Skips frames whose snapshot hash still matches. */
-    generateDialogueAudioBatch: async (scriptId: string): Promise<{ _batch_stats: { generated: number; skipped: number; failed: number; no_voice: number } }> => {
+    generateDialogueAudioBatch: async (scriptId: string): Promise<{ _batch_stats: DialogueAudioBatchStats }> => {
         const response = await apiFetch(`${API_URL}/projects/${scriptId}/dialogue_audio/batch`, {
             method: "POST",
         });
         if (!response.ok) throw new Error("Failed to generate dialogue audio batch");
-        return response.json();
+        const result = await response.json() as
+            | { _batch_stats: DialogueAudioBatchStats }
+            | SubmittedAITaskResponse;
+        if ("task_id" in result) {
+            return waitForDialogueAudioBatch(result.task_id);
+        }
+        return result;
     },
 
     previewDub: async (scriptId: string, frameId: string, videoTaskId: string, offsetMs: number = 0) => {
@@ -3029,6 +3786,7 @@ export const api = {
         raw_snippet: string;
         ai_summary: string | null;
         ai_summary_stale: boolean;
+        version?: number;
         last_frames?: Array<{
             id: string;
             action_description: string;
@@ -3046,7 +3804,32 @@ export const api = {
         ai_summary_stale: boolean;
         previous_episode_id: string;
         previous_episode_title: string;
+        version?: number;
     }> => {
+        if (IS_CLOUD_DEPLOYMENT) {
+            const submitted = await apiClient.post<SubmittedAITaskResponse & {
+                version: number;
+                previous_episode_version: number;
+            }>(
+                `${API_URL}/projects/${scriptId}/previous_episode/summary`,
+                undefined,
+                {
+                    headers: {
+                        "Idempotency-Key": createIdempotencyKey("previous-summary"),
+                    },
+                },
+            );
+            const aiSummary = await waitForTextAITaskResult(submitted.data.task_id);
+            const saved = await apiClient.put(
+                `${API_URL}/projects/${scriptId}/last_episode_summary`,
+                {
+                    ai_summary: aiSummary,
+                    source_previous_version: submitted.data.previous_episode_version,
+                },
+                { headers: { "If-Match": String(submitted.data.version) } },
+            );
+            return saved.data;
+        }
         const res = await apiClient.post(`${API_URL}/projects/${scriptId}/previous_episode/summary`);
         return res.data;
     },
@@ -3111,7 +3894,28 @@ export const api = {
     generateNextEpisodeHook: async (scriptId: string): Promise<{
         hook: string;
         stale: boolean;
+        version?: number;
     }> => {
+        if (IS_CLOUD_DEPLOYMENT) {
+            const submitted = await apiClient.post<SubmittedAITaskResponse & {
+                version: number;
+            }>(
+                `${API_URL}/projects/${scriptId}/next_hook`,
+                undefined,
+                {
+                    headers: {
+                        "Idempotency-Key": createIdempotencyKey("next-hook"),
+                    },
+                },
+            );
+            const hook = await waitForTextAITaskResult(submitted.data.task_id);
+            const saved = await apiClient.put(
+                `${API_URL}/projects/${scriptId}/next_hook`,
+                { hook },
+                { headers: { "If-Match": String(submitted.data.version) } },
+            );
+            return saved.data;
+        }
         const res = await apiClient.post(`${API_URL}/projects/${scriptId}/next_hook`);
         return res.data;
     },

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import re
+import time
 import uuid
 from collections.abc import Mapping
 from typing import Any
@@ -109,9 +110,21 @@ def install_cloud_error_protocol(
     @app.middleware("http")
     async def correlation_middleware(request: Request, call_next):
         correlation_id = request_correlation_id(request)
+        started_at = time.perf_counter()
+        is_admin_api = request.url.path.startswith("/admin/") or request.url.path == "/admin"
         try:
             response = await call_next(request)
         except Exception as exc:  # noqa: BLE001 - this is the final safe boundary.
+            if is_admin_api:
+                metrics.increment(
+                    "admin_api_requests_total",
+                    labels={"operation": request.method.lower(), "outcome": "error", "status": "500"},
+                )
+                metrics.observe(
+                    "admin_api_request_duration_seconds",
+                    max(time.perf_counter() - started_at, 0),
+                    labels={"operation": request.method.lower(), "outcome": "error"},
+                )
             events.emit(
                 "api.unhandled_error",
                 correlation_id=correlation_id,
@@ -132,6 +145,21 @@ def install_cloud_error_protocol(
                 status_code=500,
                 code="INTERNAL_ERROR",
                 message="服务暂时不可用，请稍后重试",
+            )
+        if is_admin_api:
+            outcome = "succeeded" if response.status_code < 400 else "error"
+            metrics.increment(
+                "admin_api_requests_total",
+                labels={
+                    "operation": request.method.lower(),
+                    "outcome": outcome,
+                    "status": str(response.status_code),
+                },
+            )
+            metrics.observe(
+                "admin_api_request_duration_seconds",
+                max(time.perf_counter() - started_at, 0),
+                labels={"operation": request.method.lower(), "outcome": outcome},
             )
         if response.status_code in {403, 404} and request.headers.get("x-workspace-id"):
             outcome = "denied" if response.status_code == 403 else "hidden_or_missing"

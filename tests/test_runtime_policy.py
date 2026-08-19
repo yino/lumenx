@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from dataclasses import replace
-
 from src.platform.configuration_schemas import (
     PlatformConfig,
     PlatformFeatureFlags,
@@ -9,6 +7,7 @@ from src.platform.configuration_schemas import (
     RegistrationMode,
 )
 from src.platform.configuration_service import ConfigurationService
+from src.platform.contracts import AdminContext
 from src.platform.runtime_policy import (
     POLICY_SOURCE_REGISTRY,
     RUNTIME_POLICY_CONSUMERS,
@@ -37,7 +36,7 @@ def _configuration_database():
 def test_active_policy_is_typed_and_version_aware() -> None:
     database = _configuration_database()
     context = _create_scope(database)
-    admin = replace(context.identity, is_platform_admin=True)
+    admin = AdminContext(admin_id="9001", session_id="9101", username="admin")
     writer = ConfigurationService(database)
     resolver = RuntimePolicyResolver(database)
     draft = _draft(reason="运行策略第一版")

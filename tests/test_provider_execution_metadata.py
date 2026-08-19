@@ -60,6 +60,7 @@ def test_generation_adapters_return_normalized_usage_metadata() -> None:
 
 
 def test_llm_adapter_returns_provider_token_usage_and_request_id() -> None:
+    captured = {}
     response = SimpleNamespace(
         _request_id="request-llm-1",
         choices=[SimpleNamespace(message=SimpleNamespace(content="分析结果"))],
@@ -67,17 +68,50 @@ def test_llm_adapter_returns_provider_token_usage_and_request_id() -> None:
     )
     client = SimpleNamespace(
         chat=SimpleNamespace(
-            completions=SimpleNamespace(create=lambda **kwargs: response),
+            completions=SimpleNamespace(
+                create=lambda **kwargs: captured.update(kwargs) or response,
+            ),
         )
     )
     adapter = LLMAdapter(provider="openai", api_key="test-key", model="qwen-test")
     adapter._client = client
 
-    result = adapter.chat_with_usage([{"role": "user", "content": "分析剧本"}])
+    result = adapter.chat_with_usage(
+        [{"role": "user", "content": "分析剧本"}],
+        max_tokens=8192,
+    )
 
     assert result.content == "分析结果"
     assert result.raw_usage == {"input_tokens": 120, "output_tokens": 30}
     assert result.provider_request_id == "request-llm-1"
+    assert captured["max_tokens"] == 8192
+
+
+def test_dashscope_structured_call_can_disable_thinking() -> None:
+    captured = {}
+    response = SimpleNamespace(
+        _request_id="request-structured-1",
+        choices=[SimpleNamespace(message=SimpleNamespace(content='{"frames": []}'))],
+        usage=SimpleNamespace(prompt_tokens=80, completion_tokens=20),
+    )
+    client = SimpleNamespace(
+        chat=SimpleNamespace(
+            completions=SimpleNamespace(
+                create=lambda **kwargs: captured.update(kwargs) or response,
+            ),
+        )
+    )
+    adapter = LLMAdapter(provider="dashscope", api_key="test-key", model="qwen-test")
+    adapter._client = client
+
+    adapter.chat_with_usage(
+        [{"role": "user", "content": "生成 JSON"}],
+        response_format={"type": "json_object"},
+        max_tokens=8192,
+        enable_thinking=False,
+    )
+
+    assert captured["extra_body"] == {"enable_thinking": False}
 
 
 def test_dashscope_image_persistence_failure_stops_before_polling(monkeypatch) -> None:

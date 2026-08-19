@@ -29,7 +29,6 @@ def playground_api():
         session_id=int(context.identity.session_id),
         phone_canonical="+8613800138000",
         phone_verified=False,
-        is_platform_admin=False,
     )
     sessions = FakeSessions(principal)
     auth = SimpleNamespace(database=database, sessions=sessions)

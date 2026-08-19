@@ -20,11 +20,11 @@ import dynamic from "next/dynamic";
 import { api } from "@/lib/api";
 import { useTranslations } from "next-intl";
 import AuthGate from "@/components/auth/AuthGate";
+import AdminAuthGate from "@/components/admin/AdminAuthGate";
 import WorkspaceGate from "@/components/workspace/WorkspaceGate";
 import { useWorkspaceStore } from "@/store/workspaceStore";
 import { readClientStorage, writeClientStorage } from "@/lib/clientCacheScope";
-import { canAccessAdminRoute, parseAdminSection, type AdminSection } from "@/lib/adminRoute";
-import { useAuthStore } from "@/store/authStore";
+import { parseAdminRoute, type AdminRoute } from "@/lib/adminRoute";
 
 const ProjectClient = dynamic(() => import("@/components/project/ProjectClient"), { ssr: false });
 const SeriesDetailPage = dynamic(() => import("@/components/series/SeriesDetailPage"), { ssr: false });
@@ -468,8 +468,7 @@ function StudioApplication() {
   const [isImportDialogOpen, setIsImportDialogOpen] = useState(false);
   const [isSyncing, setIsSyncing] = useState(false);
   const [showCreateDropdown, setShowCreateDropdown] = useState(false);
-  const [currentView, setCurrentView] = useState<'home' | 'project' | 'series' | 'series-episode' | 'library' | 'settings' | 'playground' | 'wallet' | 'admin'>('home');
-  const [adminSection, setAdminSection] = useState<AdminSection>('users');
+  const [currentView, setCurrentView] = useState<'home' | 'project' | 'series' | 'series-episode' | 'library' | 'settings' | 'playground' | 'wallet'>('home');
   const [activeTab, setActiveTab] = useState<GlobalTab>("workspace");
   const [wsSearch, setWsSearch] = useState("");
   const online = useOnline();
@@ -486,7 +485,6 @@ function StudioApplication() {
   const currentWorkspace = useWorkspaceStore((state) =>
     state.workspaces.find((workspace) => workspace.id === state.currentWorkspaceId),
   );
-  const user = useAuthStore((state) => state.user);
   const deleteProject = useProjectStore((state) => state.deleteProject);
   const setProjects = useProjectStore((state) => state.setProjects);
   const fetchSeriesList = useProjectStore((state) => state.fetchSeriesList);
@@ -584,20 +582,10 @@ function StudioApplication() {
   useEffect(() => {
     const handleHashChange = () => {
       const hash = window.location.hash;
-      const requestedAdminSection = parseAdminSection(hash);
-      if (requestedAdminSection) {
-        if (!canAccessAdminRoute(Boolean(user?.is_platform_admin))) {
-          window.location.hash = '#/';
-          setCurrentView('home');
-          setActiveTab('workspace');
-          return;
-        }
-        setCurrentView('admin');
-        setAdminSection(requestedAdminSection);
-        setActiveTab('admin');
-        setProjectId(null);
-        setSeriesId(null);
-        setEpisodeId(null);
+      const requestedAdminRoute = parseAdminRoute(hash);
+      if (requestedAdminRoute) {
+        // The root component owns administrator routes and mounts a separate
+        // authentication boundary before this creator application.
         return;
       }
       if (hash === '#/wallet') {
@@ -669,7 +657,7 @@ function StudioApplication() {
     handleHashChange();
     window.addEventListener('hashchange', handleHashChange);
     return () => window.removeEventListener('hashchange', handleHashChange);
-  }, [user?.is_platform_admin]);
+  }, []);
 
   // 项目详情页 — 全屏，无 GlobalSidebar
   if (currentView === 'project' && projectId) {
@@ -711,9 +699,6 @@ function StudioApplication() {
     }
     if (currentView === 'playground') {
       return <PlaygroundPage />;
-    }
-    if (currentView === 'admin') {
-      return <PlatformAdminPage section={adminSection} />;
     }
     if (currentView === 'wallet') {
       return <WalletPage />;
@@ -1127,6 +1112,39 @@ function StudioApplication() {
 }
 
 export default function Home() {
+  const [routeState, setRouteState] = useState<{
+    ready: boolean;
+    adminRoute: AdminRoute | null;
+  }>({ ready: false, adminRoute: null });
+
+  useEffect(() => {
+    const resolveRoute = () => {
+      setRouteState({ ready: true, adminRoute: parseAdminRoute(window.location.hash) });
+    };
+    resolveRoute();
+    window.addEventListener("hashchange", resolveRoute);
+    return () => window.removeEventListener("hashchange", resolveRoute);
+  }, []);
+
+  if (!routeState.ready) {
+    return <main className="min-h-screen bg-background" aria-busy="true" />;
+  }
+
+  if (routeState.adminRoute) {
+    const route = routeState.adminRoute;
+    return (
+      <AdminAuthGate>
+        <main className="h-screen w-screen overflow-hidden bg-background text-foreground">
+          <PlatformAdminPage
+            section={route.section}
+            resourceId={route.resourceId}
+            queryString={route.queryString}
+          />
+        </main>
+      </AdminAuthGate>
+    );
+  }
+
   return (
     <AuthGate>
       <WorkspaceGate>

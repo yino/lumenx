@@ -5,7 +5,7 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from src.platform.contracts import UserContext
+from src.platform.contracts import AdminContext
 from sqlalchemy import func, select
 
 from src.platform.db_models import (
@@ -25,11 +25,11 @@ from src.platform.ticket_settlement import TicketSettlementService
 from tests.test_ticket_settlement import _settlement_database
 
 
-def _admin(context) -> UserContext:
-    return UserContext(
-        user_id=context.identity.user_id,
+def _admin(_context) -> AdminContext:
+    return AdminContext(
+        admin_id="9001",
         session_id="reconciliation-test",
-        is_platform_admin=True,
+        username="admin",
     )
 
 

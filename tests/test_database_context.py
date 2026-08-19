@@ -3,8 +3,13 @@ from unittest.mock import Mock
 
 from sqlalchemy import text
 
-from src.platform.contracts import UserContext
-from src.platform.database import Database, _reset_postgres_connection, set_transaction_user_context
+from src.platform.contracts import AdminContext, UserContext
+from src.platform.database import (
+    Database,
+    _reset_postgres_connection,
+    set_transaction_admin_context,
+    set_transaction_user_context,
+)
 
 
 def test_transaction_user_context_is_parameterized_and_local() -> None:
@@ -12,7 +17,6 @@ def test_transaction_user_context_is_parameterized_and_local() -> None:
     identity = UserContext(
         user_id="1",
         session_id="11",
-        is_platform_admin=True,
     )
 
     set_transaction_user_context(session, identity)
@@ -22,8 +26,21 @@ def test_transaction_user_context_is_parameterized_and_local() -> None:
     assert parameters == {
         "user_id": "1",
         "session_id": "11",
-        "is_platform_admin": "true",
     }
+
+
+def test_transaction_admin_context_uses_independent_local_settings() -> None:
+    session = Mock()
+
+    set_transaction_admin_context(
+        session,
+        AdminContext(admin_id="9001", session_id="9101", username="admin"),
+    )
+
+    statement, parameters = session.execute.call_args.args
+    assert "set_config('app.current_admin_id', :admin_id, true)" in str(statement)
+    assert "app.current_user_id" not in str(statement)
+    assert parameters == {"admin_id": "9001", "session_id": "9101"}
 
 
 def test_pool_reset_rolls_back_and_clears_postgres_settings() -> None:

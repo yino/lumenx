@@ -4,7 +4,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from fastapi import APIRouter, Depends, FastAPI, File, Query, Request, UploadFile
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
 
 from .auth.api import AuthApplication
 from .audit import AuditService
@@ -86,7 +86,6 @@ def install_cloud_media_api(
             identity=UserContext(
                 user_id=str(principal.user_id),
                 session_id=str(principal.session_id),
-                is_platform_admin=principal.is_platform_admin,
             ),
             workspace_id=canonical_workspace_id,
         )
@@ -139,6 +138,41 @@ def install_cloud_media_api(
             "provenance": dict(record.provenance),
             "created_at": record.created_at.isoformat(),
         }
+
+    @router.get("/media/{media_id}/download")
+    def download_media(
+        media_id: str,
+        context: WorkspaceContext = Depends(require_context),
+    ) -> Response:
+        record = storage.repository.require(context, media_id)
+        content = storage.read_bytes(context, media_id)
+        suffix = {
+            "audio/mpeg": ".mp3",
+            "audio/wav": ".wav",
+            "image/jpeg": ".jpg",
+            "image/png": ".png",
+            "video/mp4": ".mp4",
+        }.get(record.mime_type, "")
+        metrics.increment(
+            "media_operations_total",
+            labels={"operation": "download", "outcome": "succeeded"},
+        )
+        metrics.observe(
+            "media_size_bytes",
+            len(content),
+            labels={"operation": "download"},
+        )
+        return Response(
+            content=content,
+            media_type=record.mime_type,
+            headers={
+                "Cache-Control": "private, no-store",
+                "Content-Disposition": (
+                    f'attachment; filename="media-{media_id}{suffix}"'
+                ),
+                "Content-Length": str(len(content)),
+            },
+        )
 
     @router.get("/media/{media_id}/access")
     def get_media_access(

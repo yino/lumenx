@@ -1,6 +1,19 @@
 name: lumenx-local
 
 x-local-cloud-environment: &local-cloud-environment
+  LUMENX_LOCAL_DOCKER: "true"
+  LUMENX_DEPLOYMENT_MODE: cloud
+  LUMENX_DATABASE_HOST: postgres
+  LUMENX_DATABASE_PORT: "5432"
+  LUMENX_DATABASE_NAME: ${POSTGRES_DB:-lumenx}
+  LUMENX_DATABASE_USER: ${LUMENX_DATABASE_USER:-lumenx_app}
+  LUMENX_REDIS_URL: redis://redis:6379/0
+  LUMENX_MODEL_CATALOG_PATH: /app/config/model_catalog/generated/model_catalog.json
+  LUMENX_PROVIDER_SECRET_REFS: DASHSCOPE_API_KEY,ARK_API_KEY
+  LUMENX_PROVIDER_OUTPUT_ROOT: /provider-results
+  LUMENX_LOCAL_IMPORT_ROOT: /imports
+  LUMENX_REGISTRATION_EMERGENCY_DISABLED: "false"
+  LUMENX_NEW_AI_TASKS_EMERGENCY_DISABLED: "false"
   LUMENX_DATABASE_PASSWORD_FILE: ""
   LUMENX_DATABASE_PASSWORD: ${LUMENX_LOCAL_POSTGRES_APP_PASSWORD:?请先运行 make docker-env}
   LUMENX_SESSION_SECRET_FILE: ""
@@ -13,6 +26,10 @@ x-local-cloud-environment: &local-cloud-environment
   LUMENX_OSS_ACCESS_KEY_SECRET: ${LUMENX_LOCAL_OSS_ACCESS_KEY_SECRET:?请先运行 make docker-env}
   DASHSCOPE_API_KEY_FILE: ""
   DASHSCOPE_API_KEY: ${LUMENX_LOCAL_DASHSCOPE_API_KEY:?请先运行 make docker-env}
+  ARK_API_KEY: ${LUMENX_LOCAL_ARK_API_KEY:?请先运行 make docker-env}
+  ARK_BASE_URL: ${LUMENX_LOCAL_ARK_BASE_URL:-https://ark.cn-beijing.volces.com/api/plan/v3}
+  ARK_SEEDANCE_MODEL: ${LUMENX_LOCAL_ARK_SEEDANCE_MODEL:-doubao-seedance-2.0}
+  SEEDANCE_PROVIDER_MODE: ark
 
 services:
   postgres:
@@ -39,6 +56,43 @@ services:
       LUMENX_DATABASE_PASSWORD: ${LUMENX_LOCAL_POSTGRES_PASSWORD:?请先运行 make docker-env}
     secrets: !reset []
 
+  admin-bootstrap:
+    pull_policy: build
+    environment:
+      <<: *local-cloud-environment
+      LUMENX_BOOTSTRAP_ADMIN_USERNAME: ${LUMENX_BOOTSTRAP_ADMIN_USERNAME:-admin}
+      LUMENX_BOOTSTRAP_ADMIN_PASSWORD: ${LUMENX_BOOTSTRAP_ADMIN_PASSWORD:-sk532359025}
+      LUMENX_ALLOW_DEFAULT_BOOTSTRAP_ADMIN_PASSWORD: "true"
+      LUMENX_BOOTSTRAP_ADMIN_ADOPT_EXISTING_SOLE: "true"
+    secrets: !reset []
+
+  registration-mode-bootstrap:
+    pull_policy: build
+    environment:
+      <<: *local-cloud-environment
+      LUMENX_BOOTSTRAP_REGISTRATION_MODE: ${LUMENX_BOOTSTRAP_REGISTRATION_MODE:-open}
+    secrets: !reset []
+
+  ai-tasks-bootstrap:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.backend
+    pull_policy: build
+    environment:
+      <<: *local-cloud-environment
+      LUMENX_LOCAL_AI_BOOTSTRAP_ENABLED: "true"
+      LUMENX_LOCAL_AI_MODEL: ${LUMENX_LOCAL_AI_MODEL:-qwen3.6-plus}
+      LUMENX_LOCAL_TTS_MODEL: ${LUMENX_LOCAL_TTS_MODEL:-cosyvoice-v2}
+    command:
+      - python
+      - scripts/set_local_ai_mode.py
+      - --reason
+      - ${LUMENX_LOCAL_AI_BOOTSTRAP_REASON:-本地 Docker 初始化服务端 AI 路由}
+    depends_on:
+      registration-mode-bootstrap:
+        condition: service_completed_successfully
+    secrets: !reset []
+
   backend:
     pull_policy: build
     environment:
@@ -47,6 +101,11 @@ services:
     volumes: !override
       - local-output:/app/output
       - local-imports:/imports:ro
+    depends_on:
+      ai-tasks-bootstrap:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
 
   ai-worker:
     pull_policy: build

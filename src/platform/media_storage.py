@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import math
 import re
 import secrets
@@ -26,6 +27,9 @@ from .identifiers import parse_database_id, parse_optional_database_id
 from .settings import DeploymentSettings
 
 
+logger = logging.getLogger(__name__)
+
+
 class MediaValidationError(ValueError):
     pass
 
@@ -41,12 +45,18 @@ class MediaLifecycleConflictError(RuntimeError):
 class PrivateObjectStore(Protocol):
     def put(self, object_key: str, content: bytes, content_type: str) -> None: ...
 
+    def get(self, object_key: str) -> bytes: ...
+
     def signed_get_url(self, object_key: str, expires_seconds: int) -> str: ...
 
     def delete(self, object_key: str) -> None: ...
 
 
 class OSSPrivateObjectStore:
+    # oss2 applies this value to both connection and response timeouts. Large
+    # merged videos can take longer than a few seconds to receive the ACK.
+    REQUEST_TIMEOUT_SECONDS = 300
+
     def __init__(self, settings: DeploymentSettings) -> None:
         if (
             not settings.oss_endpoint
@@ -65,7 +75,7 @@ class OSSPrivateObjectStore:
             auth,
             settings.oss_endpoint,
             settings.oss_bucket_name,
-            connect_timeout=5,
+            connect_timeout=self.REQUEST_TIMEOUT_SECONDS,
         )
 
     def put(self, object_key: str, content: bytes, content_type: str) -> None:
@@ -87,6 +97,10 @@ class OSSPrivateObjectStore:
         if url.startswith("http://"):
             return f"https://{url[7:]}"
         return url
+
+    def get(self, object_key: str) -> bytes:
+        result = self.bucket.get_object(object_key)
+        return result.read()
 
     def delete(self, object_key: str) -> None:
         result = self.bucket.delete_object(object_key)
@@ -434,6 +448,12 @@ class CloudMediaStorage:
         try:
             self.object_store.put(object_key, media.content, media.content_type)
         except Exception as exc:
+            logger.exception(
+                "媒体对象上传失败: key=%s size_bytes=%d content_type=%s",
+                object_key,
+                len(media.content),
+                media.content_type,
+            )
             self.repository.set_lifecycle(
                 context,
                 str(pending.id),
@@ -609,6 +629,20 @@ class CloudMediaStorage:
         if not url:
             raise MediaStorageError("媒体授权链接生成失败")
         return url
+
+    def read_bytes(self, context: WorkspaceContext, media_id: str) -> bytes:
+        record = self.repository.require(context, media_id)
+        try:
+            content = self.object_store.get(record.object_key)
+        except Exception as exc:
+            raise MediaStorageError("媒体读取失败") from exc
+        if (
+            not isinstance(content, bytes)
+            or len(content) != record.size_bytes
+            or hashlib.sha256(content).hexdigest() != record.checksum_sha256
+        ):
+            raise MediaStorageError("媒体完整性校验失败")
+        return content
 
     def delete(self, context: WorkspaceContext, media_id: str) -> None:
         self.repository.set_lifecycle(

@@ -9,7 +9,7 @@ from typing import Any, Literal
 
 from sqlalchemy import select
 
-from .contracts import UserContext
+from .contracts import AdminContext, SystemContext
 from .database import Database
 from .db_models import (
     AITaskRecord,
@@ -122,14 +122,14 @@ class TicketReconciliationService:
 
     def reconcile(
         self,
-        admin: UserContext,
+        admin: AdminContext | SystemContext,
         *,
         target_user_id: str | None = None,
         stale_after: timedelta = timedelta(hours=24),
         now: datetime | None = None,
         max_issues: int = 1000,
     ) -> TicketReconciliationReport:
-        if not admin.is_platform_admin:
+        if not isinstance(admin, (AdminContext, SystemContext)):
             raise TicketReconciliationAuthorizationError("仅平台管理员可执行算力券对账")
         if stale_after <= timedelta(0):
             raise TicketReconciliationValidationError("陈旧预扣阈值必须大于零")
@@ -390,7 +390,7 @@ class TicketReconciliationService:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="核验云端算力券与 AI 用量账务")
-    parser.add_argument("--admin-user-id", required=True)
+    parser.add_argument("--admin-id", required=True)
     parser.add_argument("--target-user-id")
     parser.add_argument("--stale-after-minutes", type=int, default=24 * 60)
     parser.add_argument("--max-issues", type=int, default=1000)
@@ -402,10 +402,9 @@ def main() -> int:
     database = Database(settings.database_url)
     try:
         report = TicketReconciliationService(database).reconcile(
-            UserContext(
-                user_id=args.admin_user_id,
+            AdminContext(
+                admin_id=args.admin_id,
                 session_id="ticket-reconciliation",
-                is_platform_admin=True,
             ),
             target_user_id=args.target_user_id,
             stale_after=timedelta(minutes=args.stale_after_minutes),

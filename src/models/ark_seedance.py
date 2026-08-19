@@ -13,6 +13,7 @@ from typing import Any, Dict, List, Optional, Tuple
 import requests
 
 from .base import VideoGenModel
+from ..platform.provider_errors import ProviderRequestRejectedError
 from ..utils.endpoints import get_provider_base_url
 from ..utils.oss_utils import OSSImageUploader
 from ..utils.provider_media import resolve_media_input
@@ -84,6 +85,16 @@ class ArkSeedanceVideoModel(VideoGenModel):
             else:
                 code = payload.get("code", response.status_code) if isinstance(payload, dict) else response.status_code
                 message = payload.get("message", str(payload)) if isinstance(payload, dict) else str(payload)
+            # Keep the provider's actionable rejection in worker logs while the
+            # task API continues to expose only the safe generic error. Do not
+            # log request content, media URLs, or authorization headers here.
+            logger.warning(
+                "[Ark/Seedance] %s rejected (http=%s, code=%s, message=%s)",
+                action,
+                response.status_code,
+                str(code)[:120],
+                str(message)[:500],
+            )
             detail = f"{code} - {message}"
             # Ark returns HTTP 404/UnsupportedModel when a normal Ark model
             # (or a model not enabled for the account) is sent to the Agent
@@ -106,6 +117,25 @@ class ArkSeedanceVideoModel(VideoGenModel):
                     f"{detail}. 当前 ARK_SEEDANCE_MODEL 不是视频生成模型；"
                     "请使用控制台中支持内容生成的视频模型，Agent Plan 通常为 "
                     f"{AGENT_PLAN_MODEL}，普通方舟通常为 {STANDARD_MODEL}。"
+                )
+            normalized_code = str(code).lower()
+            if normalized_code == "modelnotopen":
+                raise ProviderRequestRejectedError(
+                    f"Ark Seedance {action} failed (HTTP {response.status_code}): {detail}",
+                    provider_code=str(code),
+                    safe_error_code="PROVIDER_MODEL_NOT_OPEN",
+                    safe_error_message=(
+                        "当前视频模型尚未在火山方舟账号开通，请开通模型后重试"
+                    ),
+                )
+            if normalized_code.startswith("inputimagesensitivecontentdetected"):
+                raise ProviderRequestRejectedError(
+                    f"Ark Seedance {action} failed (HTTP {response.status_code}): {detail}",
+                    provider_code=str(code),
+                    safe_error_code="PROVIDER_INPUT_SENSITIVE_CONTENT",
+                    safe_error_message=(
+                        "参考图片可能包含真人或隐私信息，请更换为插画/动漫图片后重试"
+                    ),
                 )
             raise RuntimeError(
                 f"Ark Seedance {action} failed (HTTP {response.status_code}): {detail}"

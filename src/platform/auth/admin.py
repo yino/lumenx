@@ -8,7 +8,7 @@ from datetime import UTC, datetime, timedelta
 from sqlalchemy import select, update
 from sqlalchemy.exc import IntegrityError
 
-from ..contracts import UserContext
+from ..contracts import AdminContext, UserContext
 from ..database import Database, set_transaction_reset_token_hash, set_transaction_user_context
 from ..db_models import (
     AuditEventRecord,
@@ -40,6 +40,10 @@ class ResetCredentialError(ValueError):
     pass
 
 
+class ProtectedAdministratorActionError(ValueError):
+    pass
+
+
 @dataclass(frozen=True, slots=True)
 class IssuedResetCredential:
     credential: str
@@ -53,8 +57,8 @@ class CreatedUser:
     phone_canonical: str
 
 
-def _require_admin(identity: UserContext) -> None:
-    if not identity.is_platform_admin:
+def _require_admin(identity: AdminContext) -> None:
+    if not isinstance(identity, AdminContext):
         raise AdminAuthorizationError("仅平台管理员可以执行此操作")
 
 
@@ -74,7 +78,7 @@ class UserAdministrationService:
 
     def create_user(
         self,
-        admin: UserContext,
+        admin: AdminContext,
         phone: str,
         password: str,
         reason: str,
@@ -93,7 +97,7 @@ class UserAdministrationService:
             raise ValueError("默认工作区名称不能为空")
         phone_canonical = normalize_phone(phone)
         password_hash = self.password_service.hash(password)
-        admin_id = parse_database_id(admin.user_id, field="管理员 ID")
+        admin_id = parse_database_id(admin.admin_id, field="管理员 ID")
 
         try:
             with self.database.transaction(admin) as session:
@@ -103,7 +107,6 @@ class UserAdministrationService:
                     password_hash=password_hash,
                     status="active",
                     phone_verified_at=None,
-                    is_platform_admin=False,
                 )
                 session.add(user)
                 session.flush()
@@ -112,7 +115,7 @@ class UserAdministrationService:
                     user.id,
                     initial_grant_microtickets,
                     reason="后台创建用户初始赠送",
-                    actor_user_id=admin_id,
+                    actor_admin_id=admin_id,
                     correlation={
                         "source": "admin_user_creation",
                         "config_version_id": config_version_id,
@@ -123,7 +126,7 @@ class UserAdministrationService:
                 session.flush()
                 session.add(
                     AuditEventRecord(
-                        actor_user_id=admin_id,
+                        actor_admin_id=admin_id,
                         target_user_id=user.id,
                         workspace_id=workspace.id,
                         action="user.create",
@@ -156,7 +159,7 @@ class UserAdministrationService:
 
     def set_status(
         self,
-        admin: UserContext,
+        admin: AdminContext,
         target_user_id: int,
         status: str,
         reason: str,
@@ -185,7 +188,7 @@ class UserAdministrationService:
                 )
             session.add(
                 AuditEventRecord(
-                    actor_user_id=parse_database_id(admin.user_id, field="管理员 ID"),
+                    actor_admin_id=parse_database_id(admin.admin_id, field="管理员 ID"),
                     target_user_id=target_user_id,
                     action="user.suspend" if status == "suspended" else "user.reactivate",
                     target_type="user",
@@ -199,7 +202,7 @@ class UserAdministrationService:
 
     def revoke_sessions(
         self,
-        admin: UserContext,
+        admin: AdminContext,
         target_user_id: int,
         reason: str,
         correlation_id: str | None = None,
@@ -209,7 +212,8 @@ class UserAdministrationService:
             raise ValueError("必须填写操作原因")
         now = datetime.now(UTC)
         with self.database.transaction(admin) as session:
-            if session.get(UserRecord, target_user_id) is None:
+            user = session.get(UserRecord, target_user_id)
+            if user is None:
                 raise UserNotFoundError("用户不存在")
             result = session.execute(
                 update(AuthSessionRecord)
@@ -222,7 +226,7 @@ class UserAdministrationService:
             revoked_count = int(result.rowcount or 0)
             session.add(
                 AuditEventRecord(
-                    actor_user_id=parse_database_id(admin.user_id, field="管理员 ID"),
+                    actor_admin_id=parse_database_id(admin.admin_id, field="管理员 ID"),
                     target_user_id=target_user_id,
                     action="user.sessions.revoke_all",
                     target_type="user",
@@ -236,7 +240,7 @@ class UserAdministrationService:
 
     def issue_reset_credential(
         self,
-        admin: UserContext,
+        admin: AdminContext,
         target_user_id: int,
         reason: str,
         *,
@@ -258,7 +262,7 @@ class UserAdministrationService:
             session.add(
                 PasswordResetCredentialRecord(
                     user_id=target_user_id,
-                    created_by_admin_id=parse_database_id(admin.user_id, field="管理员 ID"),
+                    created_by_admin_id=parse_database_id(admin.admin_id, field="管理员 ID"),
                     token_hash=credential_hash,
                     reason=reason.strip(),
                     created_at=now,
@@ -267,7 +271,7 @@ class UserAdministrationService:
             )
             session.add(
                 AuditEventRecord(
-                    actor_user_id=parse_database_id(admin.user_id, field="管理员 ID"),
+                    actor_admin_id=parse_database_id(admin.admin_id, field="管理员 ID"),
                     target_user_id=target_user_id,
                     action="user.password_reset.issue",
                     target_type="user",

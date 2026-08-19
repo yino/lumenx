@@ -14,6 +14,11 @@ from src.platform.ai_worker import (
     ProviderInvocationOutcome,
 )
 from src.platform.db_models import AITaskAttemptRecord, AITaskRecord, TicketHoldRecord
+from src.platform.metering import MeteringValidationError
+from src.platform.provider_errors import (
+    ProviderRequestRejectedError,
+    ProviderTerminalFailureError,
+)
 from src.platform.ticket_reservation import TicketReservationService
 from src.platform.ticket_settlement import TicketSettlementService
 from src.platform.ticket_wallet import TicketWalletService
@@ -83,6 +88,14 @@ class BlockingInvoker(RecordingInvoker):
             raw_usage={"image_count": 1},
             result={"provider_stage": "completed"},
         )
+
+
+class UnmeteredSyncInvoker(RecordingInvoker):
+    def invoke(self, client, task, on_provider_submission):
+        with self.lock:
+            self.task_ids.append(task.task_id)
+        on_provider_submission("dashscope", None, "provider-request-sync")
+        raise MeteringValidationError("供应商 token 用量超出任务配置快照上限")
 
 
 def _queued_task(database, context, media_id, asset_id):
@@ -211,6 +224,29 @@ def test_worker_acquires_once_and_builds_client_from_task_snapshot() -> None:
         database.engine.dispose()
 
 
+def test_unmetered_sync_result_releases_hold_and_stops_retry_loop() -> None:
+    database, context, media_id, asset_id = _gateway_database()
+    submitted = _queued_task(database, context, media_id, asset_id)
+    worker = _worker(database, RecordingClientFactory(), UnmeteredSyncInvoker())
+    try:
+        result = worker.execute(submitted.task_id)
+
+        assert result.status == "support_review"
+        with database.session_factory() as session:
+            task = session.get(AITaskRecord, int(submitted.task_id))
+            attempt = session.get(AITaskAttemptRecord, int(submitted.attempt_id))
+            hold = session.scalar(
+                select(TicketHoldRecord).where(TicketHoldRecord.task_id == task.id)
+            )
+            assert task is not None and attempt is not None and hold is not None
+            assert task.status == "support_review"
+            assert attempt.status == "failed"
+            assert hold.status == "released"
+            assert hold.remaining_microtickets == 0
+    finally:
+        database.engine.dispose()
+
+
 def test_duplicate_worker_deliveries_invoke_provider_once(tmp_path) -> None:
     database, task_id = _serialized_queued_task(tmp_path / "worker-delivery.db")
     factory = RecordingClientFactory()
@@ -334,6 +370,45 @@ def test_worker_redacts_provider_error_and_releases_nonbillable_hold() -> None:
         database.engine.dispose()
 
 
+def test_worker_exposes_safe_provider_rejection_reason() -> None:
+    database, context, media_id, asset_id = _gateway_database()
+    submitted = _queued_task(database, context, media_id, asset_id)
+    worker = _worker(
+        database,
+        RecordingClientFactory(),
+        RecordingInvoker(
+            error=ProviderRequestRejectedError(
+                "provider details must not reach the task API",
+                provider_code="InputImageSensitiveContentDetected.PrivacyInformation",
+                safe_error_code="PROVIDER_INPUT_SENSITIVE_CONTENT",
+                safe_error_message=(
+                    "参考图片可能包含真人或隐私信息，请更换为插画/动漫图片后重试"
+                ),
+            ),
+            record_submission=False,
+        ),
+    )
+    try:
+        result = worker.execute(submitted.task_id)
+
+        assert result.status == "failed"
+        with database.session_factory() as session:
+            task = session.get(AITaskRecord, int(submitted.task_id))
+            attempt = session.get(AITaskAttemptRecord, int(submitted.attempt_id))
+            assert task is not None and attempt is not None
+            assert task.safe_error_code == "PROVIDER_INPUT_SENSITIVE_CONTENT"
+            assert task.safe_error_message == (
+                "参考图片可能包含真人或隐私信息，请更换为插画/动漫图片后重试"
+            )
+            assert attempt.diagnostic == {
+                "billing_state": "not_billable",
+                "error_type": "ProviderRequestRejectedError",
+                "stage": "provider_invocation",
+            }
+    finally:
+        database.engine.dispose()
+
+
 def test_worker_keeps_hold_when_provider_acknowledged_before_crash() -> None:
     database, context, media_id, asset_id = _gateway_database()
     submitted = _queued_task(database, context, media_id, asset_id)
@@ -370,5 +445,46 @@ def test_worker_keeps_hold_when_provider_acknowledged_before_crash() -> None:
             assert secret not in str(attempt.diagnostic)
             assert hold.status == "held"
             assert hold.remaining_microtickets == hold.quoted_microtickets
+    finally:
+        database.engine.dispose()
+
+
+def test_worker_releases_hold_when_provider_reports_terminal_failure() -> None:
+    database, context, media_id, asset_id = _gateway_database()
+    submitted = _queued_task(database, context, media_id, asset_id)
+    worker = _worker(
+        database,
+        RecordingClientFactory(),
+        RecordingInvoker(
+            error=ProviderTerminalFailureError(
+                "provider rejected the request",
+                provider_status="FAILED",
+            )
+        ),
+    )
+    try:
+        result = worker.execute(submitted.task_id)
+
+        assert result.status == "support_review"
+        with database.session_factory() as session:
+            task = session.get(AITaskRecord, int(submitted.task_id))
+            attempt = session.get(AITaskAttemptRecord, int(submitted.attempt_id))
+            hold = session.scalar(
+                select(TicketHoldRecord).where(TicketHoldRecord.task_id == task.id)
+            )
+            assert task is not None
+            assert attempt is not None
+            assert hold is not None
+            assert task.status == "support_review"
+            assert task.safe_error_code == "PROVIDER_TERMINAL_FAILURE"
+            assert attempt.status == "failed"
+            assert attempt.diagnostic == {
+                "billing_state": "acknowledged",
+                "error_type": "ProviderTerminalFailureError",
+                "stage": "provider_invocation",
+                "provider_status": "FAILED",
+            }
+            assert hold.status == "released"
+            assert hold.remaining_microtickets == 0
     finally:
         database.engine.dispose()

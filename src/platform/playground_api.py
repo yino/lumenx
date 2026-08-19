@@ -125,7 +125,6 @@ def install_cloud_playground_api(
             identity=UserContext(
                 user_id=str(principal.user_id),
                 session_id=str(principal.session_id),
-                is_platform_admin=principal.is_platform_admin,
             ),
             workspace_id=canonical_workspace_id,
         )

@@ -7,8 +7,8 @@ from typing import Literal
 
 from sqlalchemy import func, select
 
-from .auth.admin import AdminAuthorizationError
-from .contracts import UserContext
+from .admin_access import require_platform_admin_context
+from .contracts import AdminContext
 from .database import Database
 from .db_models import (
     AuditEventRecord,
@@ -46,7 +46,8 @@ class TicketLedgerItem:
     available_after: int
     held_after: int
     reason: str | None
-    actor_user_id: str | None
+    actor_admin_id: str | None
+    legacy_actor_user_id: str | None
     correlation: dict[str, object]
     created_at: datetime
 
@@ -63,12 +64,11 @@ class TicketAdministrationService:
         self.database = database
 
     @staticmethod
-    def _require_admin(admin: UserContext) -> int:
-        if not admin.is_platform_admin:
-            raise AdminAuthorizationError("仅平台管理员可以管理用户算力券")
+    def _require_admin(admin: AdminContext) -> int:
         try:
-            return parse_database_id(admin.user_id, field="管理员 ID")
-        except ValueError as exc:
+            require_platform_admin_context(admin)
+            return parse_database_id(admin.admin_id, field="管理员 ID")
+        except (PermissionError, ValueError) as exc:
             raise TicketAdministrationConflictError("管理员标识无效") from exc
 
     @staticmethod
@@ -100,7 +100,10 @@ class TicketAdministrationService:
             available_after=record.available_after,
             held_after=record.held_after,
             reason=record.reason,
-            actor_user_id=(
+            actor_admin_id=(
+                str(record.actor_admin_id) if record.actor_admin_id is not None else None
+            ),
+            legacy_actor_user_id=(
                 str(record.actor_user_id) if record.actor_user_id is not None else None
             ),
             correlation=dict(record.correlation or {}),
@@ -109,7 +112,7 @@ class TicketAdministrationService:
 
     def adjust(
         self,
-        admin: UserContext,
+        admin: AdminContext,
         target_user_id: int,
         *,
         operation: TicketAdjustmentOperation,
@@ -117,7 +120,7 @@ class TicketAdministrationService:
         reason: str,
         correlation_id: str | None = None,
     ) -> TicketWalletSnapshot:
-        actor_user_id = self._require_admin(admin)
+        actor_admin_id = self._require_admin(admin)
         if operation not in {"grant", "debit", "compensation"}:
             raise TicketAdministrationConflictError("算力券调整类型无效")
         try:
@@ -144,7 +147,7 @@ class TicketAdministrationService:
                         wallet,
                         amount,
                         reason=normalized_reason,
-                        actor_user_id=actor_user_id,
+                        actor_admin_id=actor_admin_id,
                         correlation={
                             "admin_operation": operation,
                             "correlation_id": normalized_correlation_id,
@@ -157,7 +160,7 @@ class TicketAdministrationService:
                         amount,
                         entry_type=operation,
                         reason=normalized_reason,
-                        actor_user_id=actor_user_id,
+                        actor_admin_id=actor_admin_id,
                         correlation={
                             "admin_operation": operation,
                             "correlation_id": normalized_correlation_id,
@@ -168,7 +171,7 @@ class TicketAdministrationService:
 
             session.add(
                 AuditEventRecord(
-                    actor_user_id=actor_user_id,
+                    actor_admin_id=actor_admin_id,
                     target_user_id=target_user_id,
                     action=f"ticket.{operation}",
                     target_type="ticket_wallet",
@@ -191,7 +194,7 @@ class TicketAdministrationService:
 
     def get_wallet(
         self,
-        admin: UserContext,
+        admin: AdminContext,
         target_user_id: int,
         *,
         offset: int = 0,

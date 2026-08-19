@@ -10,6 +10,7 @@ from src.models.ark_seedance import (
     STANDARD_MODEL,
     ArkSeedanceVideoModel,
 )
+from src.platform.provider_errors import ProviderRequestRejectedError
 
 
 class _FakeResponse:
@@ -287,3 +288,24 @@ def test_non_video_model_error_explains_seedance_model_setting():
     )
     with pytest.raises(RuntimeError, match="不是视频生成模型"):
         ArkSeedanceVideoModel._response_json(response, action="task creation")
+
+
+def test_sensitive_input_error_is_safe_and_actionable():
+    response = _FakeResponse(
+        status_code=400,
+        payload={
+            "error": {
+                "code": "InputImageSensitiveContentDetected.PrivacyInformation",
+                "message": "input image may contain real person",
+            }
+        },
+        url="https://ark.cn-beijing.volces.com/api/v3/contents/generations/tasks",
+    )
+
+    with pytest.raises(ProviderRequestRejectedError) as raised:
+        ArkSeedanceVideoModel._response_json(response, action="task creation")
+
+    assert raised.value.safe_error_code == "PROVIDER_INPUT_SENSITIVE_CONTENT"
+    assert raised.value.safe_error_message == (
+        "参考图片可能包含真人或隐私信息，请更换为插画/动漫图片后重试"
+    )

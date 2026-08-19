@@ -12,6 +12,7 @@ from src.platform.ai_recovery import (
 from src.platform.ai_task_state import AITaskStateService
 from src.platform.ai_worker import AIWorkerTaskRepository
 from src.platform.db_models import AITaskAttemptRecord, AITaskRecord, TicketHoldRecord
+from src.platform.ticket_settlement import TicketSettlementService
 from tests.test_ai_gateway import RecordingDispatcher, _gateway, _gateway_database, _payload
 from tests.test_ai_worker import (
     RecordingClientFactory,
@@ -47,7 +48,13 @@ def _queued_task(database, context, media_id, asset_id):
     )
 
 
-def _recovery_service(database, invoker, *, stale_after_seconds=300):
+def _recovery_service(
+    database,
+    invoker,
+    *,
+    stale_after_seconds=300,
+    settle_unrecoverable=False,
+):
     return AIWorkerRecoveryService(
         recovery=AIRecoveryRepository(
             database,
@@ -56,6 +63,11 @@ def _recovery_service(database, invoker, *, stale_after_seconds=300):
         task_state=AITaskStateService(database),
         model_clients=RecordingClientFactory(),
         provider_recovery=invoker,
+        settlement=(
+            TicketSettlementService(database)
+            if settle_unrecoverable
+            else None
+        ),
     )
 
 
@@ -71,7 +83,10 @@ def test_recovery_resumes_known_provider_task_without_resubmission() -> None:
     recovery = _recovery_service(database, recovery_invoker)
     try:
         assert crashed_worker.execute(submitted.task_id).status == "ambiguous"
-        assert submitted.task_id in AIRecoveryRepository(database).list_candidate_ids()
+        assert submitted.task_id in AIRecoveryRepository(
+            database,
+            stale_after_seconds=0,
+        ).list_candidate_ids()
 
         result = recovery.recover(submitted.task_id)
         duplicate = recovery.recover(submitted.task_id)
@@ -131,6 +146,47 @@ def test_recovery_marks_missing_provider_identifier_ambiguous() -> None:
             assert attempt.status == "ambiguous"
             assert attempt.diagnostic["reason"] == "provider_task_id_missing"
             assert hold.status == "held"
+    finally:
+        database.engine.dispose()
+
+
+def test_recovery_releases_unmetered_task_without_provider_identifier() -> None:
+    database, context, media_id, asset_id = _gateway_database()
+    submitted = _queued_task(database, context, media_id, asset_id)
+    state = AITaskStateService(database)
+    invoker = RecordingRecoveryInvoker()
+    try:
+        acquisition = AIWorkerTaskRepository(database).acquire(submitted.task_id)
+        assert acquisition.lease is not None
+        state.record_provider_submission(
+            context,
+            task_id=submitted.task_id,
+            attempt_id=submitted.attempt_id,
+            provider_request_id="provider-request-only",
+            provider_task_id=None,
+            billable_acknowledged=True,
+        )
+
+        result = _recovery_service(
+            database,
+            invoker,
+            settle_unrecoverable=True,
+        ).recover(submitted.task_id)
+
+        assert result.status == "support_review"
+        assert result.recovered is True
+        assert invoker.calls == []
+        with database.session_factory() as session:
+            task = session.get(AITaskRecord, int(submitted.task_id))
+            attempt = session.get(AITaskAttemptRecord, int(submitted.attempt_id))
+            hold = session.scalar(
+                select(TicketHoldRecord).where(TicketHoldRecord.task_id == task.id)
+            )
+            assert task is not None and attempt is not None and hold is not None
+            assert task.status == "support_review"
+            assert attempt.status == "failed"
+            assert hold.status == "released"
+            assert hold.remaining_microtickets == 0
     finally:
         database.engine.dispose()
 

@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import os
 import time
-import uuid
 from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -13,12 +12,15 @@ from urllib.parse import urljoin
 import requests
 from sqlalchemy import func, select, text
 
+from src.platform.auth.admin_identity import (
+    ADMIN_CSRF_COOKIE_NAME,
+    ADMIN_SESSION_COOKIE_NAME,
+)
 from src.platform.auth.sessions import CSRF_COOKIE_NAME
 from src.platform.auth.invitations import hash_invitation_secret
-from src.platform.bootstrap_admin import PlatformAdminBootstrapService
 from src.platform.configuration_schemas import ConfigurationDraft
 from src.platform.configuration_service import ConfigurationService
-from src.platform.contracts import UserContext
+from src.platform.contracts import AdminContext, UserContext
 from src.platform.database import Database, set_transaction_invitation_hash
 from src.platform.db_models import (
     AITaskRecord,
@@ -53,10 +55,17 @@ class RecordingRecoveryDispatcher:
 
 
 class EdgeSession:
-    def __init__(self, origin: str, checks: list[str]) -> None:
+    def __init__(
+        self,
+        origin: str,
+        checks: list[str],
+        *,
+        csrf_cookie_name: str = CSRF_COOKIE_NAME,
+    ) -> None:
         self.origin = origin.rstrip("/")
         self.session = requests.Session()
         self.checks = checks
+        self.csrf_cookie_name = csrf_cookie_name
 
     def _cookie_header(self) -> str | None:
         values = self.session.cookies.get_dict()
@@ -81,7 +90,7 @@ class EdgeSession:
             headers["Cookie"] = cookie_header
         if method in UNSAFE_METHODS:
             headers.setdefault("Origin", self.origin)
-            csrf_token = self.session.cookies.get(CSRF_COOKIE_NAME)
+            csrf_token = self.session.cookies.get(self.csrf_cookie_name)
             if csrf and csrf_token:
                 headers.setdefault("X-CSRF-Token", csrf_token)
         response = self.session.request(
@@ -182,6 +191,38 @@ def _login(origin: str, checks: list[str], phone: str, password: str, label: str
     return client
 
 
+def _admin_login(
+    origin: str,
+    checks: list[str],
+    username: str,
+    password: str,
+    label: str,
+) -> tuple[EdgeSession, dict[str, Any]]:
+    client = EdgeSession(
+        origin,
+        checks,
+        csrf_cookie_name=ADMIN_CSRF_COOKIE_NAME,
+    )
+    response = client.request(
+        "POST",
+        "/api/v1/admin/auth/login",
+        expected=200,
+        label=label,
+        json={"identifier": username, "password": password},
+    )
+    cookies = response.headers.get("set-cookie", "")
+    if "Secure" not in cookies or "HttpOnly" not in cookies or "SameSite=lax" not in cookies:
+        raise SmokeFailure("管理员登录 Cookie 缺少 Secure、HttpOnly 或 SameSite 属性")
+    if not client.session.cookies.get(ADMIN_SESSION_COOKIE_NAME):
+        raise SmokeFailure("管理员登录未设置独立会话 Cookie")
+    payload = response.json()
+    admin = payload.get("admin")
+    if not isinstance(admin, dict) or not admin.get("id"):
+        raise SmokeFailure("管理员登录响应缺少独立管理员身份")
+    checks.append(f"{label}安全 Cookie")
+    return client, admin
+
+
 def _create_invitation(
     admin: EdgeSession,
     phone: str,
@@ -191,7 +232,7 @@ def _create_invitation(
 ) -> tuple[str, str]:
     response = admin.request(
         "POST",
-        "/api/v1/auth/admin/invitations",
+        "/api/v1/admin/invitations",
         expected=201,
         label=label,
         json={
@@ -292,6 +333,123 @@ def _submit_task(
     return task_id, _poll_task(client, workspace_id, task_id, label)
 
 
+def _verify_manual_recharge(
+    admin: EdgeSession,
+    user: EdgeSession,
+    user_id: str,
+) -> str:
+    created = admin.request(
+        "POST",
+        "/api/v1/admin/recharge-orders",
+        expected=201,
+        label="管理员创建人工充值订单",
+        headers={"Idempotency-Key": "release-smoke-recharge-create"},
+        json={
+            "user_id": int(user_id),
+            "cash_amount_fen": 200,
+            "ticket_amount_microtickets": 2_000_000,
+            "offline_reference": "RELEASE-SMOKE-OFFLINE",
+            "reason": "发布测试登记线下充值",
+        },
+    ).json()
+    order_id = str(created["id"])
+    completed = admin.request(
+        "POST",
+        f"/api/v1/admin/recharge-orders/{order_id}/complete",
+        expected=200,
+        label="管理员完成人工充值订单",
+        headers={"Idempotency-Key": "release-smoke-recharge-complete"},
+        json={"expected_version": 1, "reason": "发布测试确认线下到账"},
+    ).json()
+    if completed.get("status") != "completed":
+        raise SmokeFailure("人工充值订单完成后状态异常")
+    refunded = admin.request(
+        "POST",
+        f"/api/v1/admin/recharge-orders/{order_id}/refund",
+        expected=200,
+        label="管理员登记人工充值部分退款",
+        headers={"Idempotency-Key": "release-smoke-recharge-refund"},
+        json={
+            "expected_version": 2,
+            "cash_amount_fen": 100,
+            "ticket_amount_microtickets": 1_000_000,
+            "reason": "发布测试登记部分退款",
+        },
+    ).json()
+    if refunded.get("status") != "partially_refunded":
+        raise SmokeFailure("人工充值部分退款后状态异常")
+    history = user.request(
+        "GET",
+        "/api/v1/wallet/history?view=ledger&limit=100",
+        expected=200,
+        label="用户人工充值与退款历史可见",
+    ).json()
+    order_entries = [
+        item
+        for item in history.get("items", [])
+        if item.get("order_number") == created.get("order_number")
+    ]
+    if {item.get("entry_type") for item in order_entries} != {
+        "manual_recharge",
+        "manual_recharge_refund",
+    }:
+        raise SmokeFailure("用户账本未同时显示人工充值和退款记录")
+    return order_id
+
+
+def _verify_system_scene(
+    admin: EdgeSession,
+    user: EdgeSession,
+    workspace_id: str,
+) -> tuple[str, str]:
+    created = admin.request(
+        "POST",
+        "/api/v1/admin/system-scenes",
+        expected=201,
+        label="管理员创建启用的系统场景",
+        json={
+            "scene": {
+                "name": "发布测试雨夜街巷",
+                "description": "用于验证用户只读复制的发布测试场景",
+                "category": "城市",
+                "tags": ["发布测试", "雨夜"],
+                "prompt": "cinematic rainy street release smoke",
+                "negative_prompt": "",
+                "style": "电影感",
+                "aspect_ratio": "16:9",
+                "visibility": "enabled",
+                "sort_order": 10,
+                "schema_version": 1,
+            },
+            "reason": "发布测试创建系统场景",
+        },
+    ).json()
+    scene_id = str(created["id"])
+    catalog = user.request(
+        "GET",
+        "/api/v1/system-scenes",
+        expected=200,
+        label="普通用户读取启用系统场景",
+    ).json()
+    if scene_id not in {str(item.get("id")) for item in catalog.get("items", [])}:
+        raise SmokeFailure("新建系统场景未出现在用户只读目录")
+    copied = user.request(
+        "POST",
+        f"/api/v1/system-scenes/{scene_id}/copy",
+        expected=201,
+        label="普通用户复制系统场景到工作区",
+        headers={"X-Workspace-ID": workspace_id},
+        json={"project_id": None},
+    ).json()
+    if (
+        copied.get("scope") != "workspace"
+        or str(copied.get("source_system_scene_id")) != scene_id
+        or int(copied.get("source_version", 0)) != int(created["version"])
+    ):
+        raise SmokeFailure("系统场景副本缺少来源快照信息")
+    return scene_id, str(copied["asset_record_id"])
+
+
 def _write_evidence(
     *,
     path: Path,
@@ -340,18 +498,48 @@ def main() -> int:
     )
     checks: list[str] = []
     database = Database(settings.database_url)
-    admin_phone = "13800138000"
-    admin_password = "ReleaseSmoke!2026-Admin"
+    admin_username = os.getenv("LUMENX_BOOTSTRAP_ADMIN_USERNAME", "admin")
+    admin_password = os.getenv(
+        "LUMENX_BOOTSTRAP_ADMIN_PASSWORD",
+        "ReleaseSmoke!2026-Admin",
+    )
     user_password = "ReleaseSmoke!2026-User"
     try:
-        bootstrap = PlatformAdminBootstrapService(
-            database,
-            settings.session_secret.get_secret_value(),
-        ).bootstrap(admin_phone, admin_password)
-        admin_identity = UserContext(
-            user_id=bootstrap.user_id,
+        edge = EdgeSession(origin, checks)
+        edge.request("GET", "/api/v1/health", expected=200, label="边缘健康检查")
+        edge.request("GET", "/api/v1/ready", expected=200, label="边缘就绪检查")
+        unknown = edge.request(
+            "GET",
+            "/api/v1/release-smoke-missing",
+            expected=404,
+            label="未知 API JSON 404",
+        )
+        if "text/html" in unknown.headers.get("content-type", "").lower():
+            raise SmokeFailure("未知 API 错误回退到了 SPA")
+        spa = requests.get(f"{origin}/release-smoke-client-route", timeout=30)
+        if spa.status_code != 200 or "text/html" not in spa.headers.get("content-type", ""):
+            raise SmokeFailure("SPA 路由与 API 命名空间未正确分离")
+        checks.append("SPA 路由分离")
+
+        admin, admin_profile = _admin_login(
+            origin,
+            checks,
+            admin_username,
+            admin_password,
+            "管理员登录",
+        )
+        admin_payload = admin.request(
+            "GET",
+            "/api/v1/admin/auth/me",
+            expected=200,
+            label="Compose 初始化管理员可见",
+        ).json()
+        if admin_payload.get("admin", {}).get("id") != admin_profile.get("id"):
+            raise SmokeFailure("Compose 初始化管理员会话身份不一致")
+        admin_identity = AdminContext(
+            admin_id=str(admin_profile["id"]),
             session_id="release-smoke-setup",
-            is_platform_admin=True,
+            username=str(admin_profile["username"]),
         )
         configuration = ConfigurationService(database)
         initial = configuration.create_version(
@@ -370,23 +558,6 @@ def main() -> int:
         if warmed_initial.id != initial.id:
             raise SmokeFailure("配置读取器未缓存初始激活版本")
 
-        edge = EdgeSession(origin, checks)
-        edge.request("GET", "/api/v1/health", expected=200, label="边缘健康检查")
-        edge.request("GET", "/api/v1/ready", expected=200, label="边缘就绪检查")
-        unknown = edge.request(
-            "GET",
-            "/api/v1/release-smoke-missing",
-            expected=404,
-            label="未知 API JSON 404",
-        )
-        if "text/html" in unknown.headers.get("content-type", "").lower():
-            raise SmokeFailure("未知 API 错误回退到了 SPA")
-        spa = requests.get(f"{origin}/release-smoke-client-route", timeout=30)
-        if spa.status_code != 200 or "text/html" not in spa.headers.get("content-type", ""):
-            raise SmokeFailure("SPA 路由与 API 命名空间未正确分离")
-        checks.append("SPA 路由分离")
-
-        admin = _login(origin, checks, admin_phone, admin_password, "管理员登录")
         invitation1, _ = _create_invitation(admin, "13800138001", "创建用户一邀请")
         invitation2, _ = _create_invitation(admin, "13800138002", "创建用户二邀请")
         rollback_invitation, _ = _create_invitation(
@@ -423,7 +594,7 @@ def main() -> int:
         )
         invitation_list = admin.request(
             "GET",
-            "/api/v1/auth/admin/invitations",
+            "/api/v1/admin/invitations",
             expected=200,
             label="管理员邀请列表",
         ).json()
@@ -431,7 +602,7 @@ def main() -> int:
             raise SmokeFailure("邀请列表不应回显邀请码明文")
         admin.request(
             "POST",
-            f"/api/v1/auth/admin/invitations/{revoked_invitation_id}/revoke",
+            f"/api/v1/admin/invitations/{revoked_invitation_id}/revoke",
             expected=200,
             label="管理员撤销邀请",
             json={"reason": "验证撤销后不可注册"},
@@ -514,7 +685,7 @@ def main() -> int:
         if expired.json().get("code") != "INVITATION_INVALID":
             raise SmokeFailure("已过期邀请响应泄露了邀请状态")
         preauth_identity = UserContext(
-            user_id=str(uuid.UUID(int=0)),
+            user_id="0",
             session_id="release-smoke-preauth",
         )
         with database.transaction(preauth_identity) as session:
@@ -618,7 +789,7 @@ def main() -> int:
         ) as session:
             foreign_workspace = session.scalar(
                 select(WorkspaceRecord.id).where(
-                    WorkspaceRecord.id == uuid.UUID(workspace2)
+                    WorkspaceRecord.id == int(workspace2)
                 )
             )
             exposed_invitation = session.scalar(
@@ -627,6 +798,15 @@ def main() -> int:
         if foreign_workspace is not None or exposed_invitation is not None:
             raise SmokeFailure("普通用户 PostgreSQL RLS 暴露了他人工作区或注册邀请")
         checks.append("PostgreSQL 用户与邀请 RLS 隔离")
+
+        _verify_manual_recharge(admin, user1_registered, user1_id)
+        _verify_system_scene(admin, user1_registered, workspace1)
+        user1_registered.request(
+            "GET",
+            "/api/v1/admin/system-scenes",
+            expected=403,
+            label="普通用户系统场景管理端拒绝",
+        )
 
         upload = user1_registered.request(
             "POST",
@@ -742,7 +922,7 @@ def main() -> int:
         ) as session:
             active_sessions = session.scalar(
                 select(func.count(AuthSessionRecord.id)).where(
-                    AuthSessionRecord.user_id == user1_id,
+                    AuthSessionRecord.user_id == int(user1_id),
                     AuthSessionRecord.revoked_at.is_(None),
                 )
             )
@@ -760,7 +940,9 @@ def main() -> int:
             records = {
                 str(record.id): record
                 for record in session.scalars(
-                    select(AITaskRecord).where(AITaskRecord.id.in_([task_a, task_b]))
+                    select(AITaskRecord).where(
+                        AITaskRecord.id.in_([int(task_a), int(task_b)])
+                    )
                 )
             }
             if records[task_a].config_snapshot["config_version_id"] == version_b:
@@ -770,25 +952,21 @@ def main() -> int:
         checks.append("跨进程配置传播与旧任务快照保留")
 
         maintenance_checked_at = datetime.now(UTC)
-        expired_workspace_id = uuid.uuid4()
-        retained_workspace_id = uuid.uuid4()
         with database.transaction(admin_identity) as session:
-            session.add_all(
-                [
-                    WorkspaceRecord(
-                        id=expired_workspace_id,
-                        user_id=uuid.UUID(user2_id),
-                        name="发布测试已过保留期工作区",
-                        deleted_at=maintenance_checked_at - timedelta(days=31),
-                    ),
-                    WorkspaceRecord(
-                        id=retained_workspace_id,
-                        user_id=uuid.UUID(user2_id),
-                        name="发布测试保留期内工作区",
-                        deleted_at=maintenance_checked_at - timedelta(days=29),
-                    ),
-                ]
+            expired_workspace_record = WorkspaceRecord(
+                user_id=int(user2_id),
+                name="发布测试已过保留期工作区",
+                deleted_at=maintenance_checked_at - timedelta(days=31),
             )
+            retained_workspace_record = WorkspaceRecord(
+                user_id=int(user2_id),
+                name="发布测试保留期内工作区",
+                deleted_at=maintenance_checked_at - timedelta(days=29),
+            )
+            session.add_all([expired_workspace_record, retained_workspace_record])
+            session.flush()
+            expired_workspace_id = expired_workspace_record.id
+            retained_workspace_id = retained_workspace_record.id
         runtime_policy = RuntimePolicyResolver(database, verification_available=False)
         retention_report = RetentionCleanupService(
             database,

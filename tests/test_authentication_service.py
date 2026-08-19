@@ -15,6 +15,7 @@ from src.platform.auth.service import (
 )
 from src.platform.auth.sessions import SessionPolicy, issue_session
 from src.platform.db_models import (
+    AdminUserRecord,
     AuditEventRecord,
     AuthSessionRecord,
     Base,
@@ -43,7 +44,6 @@ def test_unknown_phone_and_wrong_password_use_same_error() -> None:
         phone_canonical="+8613800138000",
         password_hash=passwords.hash("correct-pass-2026"),
         status="active",
-        is_platform_admin=False,
     )
     unknown_service = AuthenticationService(
         AuthenticationDatabase(unknown_session), "s" * 32, password_service=passwords
@@ -57,7 +57,7 @@ def test_unknown_phone_and_wrong_password_use_same_error() -> None:
     with pytest.raises(CredentialError) as wrong_error:
         known_service.login("13800138000", "wrong-pass-2026")
 
-    assert str(unknown_error.value) == str(wrong_error.value) == "手机号或密码不正确"
+    assert str(unknown_error.value) == str(wrong_error.value) == "账号或密码不正确"
 
 
 def test_successful_login_creates_session_and_returns_workspace() -> None:
@@ -67,7 +67,6 @@ def test_successful_login_creates_session_and_returns_workspace() -> None:
         phone_canonical="+8613800138000",
         password_hash=passwords.hash("correct-pass-2026"),
         status="active",
-        is_platform_admin=False,
     )
     workspace_id = 1
     session = Mock()
@@ -108,7 +107,6 @@ def test_login_snapshots_policy_and_revokes_oldest_session_at_limit() -> None:
                 phone_canonical="+8613800138000",
                 password_hash=passwords.hash("correct-pass-2026"),
                 status="active",
-                is_platform_admin=False,
             )
         session.add(user)
         session.flush()
@@ -145,4 +143,25 @@ def test_login_snapshots_policy_and_revokes_oldest_session_at_limit() -> None:
             persisted_new.absolute_expires_at - persisted_new.created_at
         ).total_seconds() == 600
         assert event.target_id == str(old_session.id)
+    database.engine.dispose()
+
+
+def test_normal_user_login_does_not_accept_independent_admin_credentials() -> None:
+    database = AuthenticationIntegrationDatabase()
+    Base.metadata.create_all(database.engine, checkfirst=True)
+    passwords = PasswordService()
+    with database.session_factory.begin() as session:
+        admin = AdminUserRecord(
+            username="admin",
+            password_hash=passwords.hash("sk532359025"),
+            status="active",
+        )
+        session.add(admin)
+
+    with pytest.raises(CredentialError, match="账号或密码不正确"):
+        AuthenticationService(
+            database,
+            "s" * 32,
+            password_service=passwords,
+        ).login("ADMIN", "sk532359025")
     database.engine.dispose()

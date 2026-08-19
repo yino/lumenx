@@ -16,9 +16,9 @@ from .configuration_schemas import (
     PlatformConfig,
 )
 from .configuration_service import ConfigurationService, StoredConfiguration
-from .contracts import UserContext
+from .contracts import AdminContext
 from .database import Database
-from .db_models import AuditEventRecord, UserRecord
+from .db_models import AdminUserRecord, AuditEventRecord
 from .identifiers import parse_database_id
 from .settings import DeploymentMode, get_deployment_settings
 
@@ -59,21 +59,22 @@ class ModelCatalogSeeder:
         ).encode()
         return catalog, hashlib.sha256(canonical).hexdigest()
 
-    def _require_database_admin(self, admin: UserContext) -> None:
+    def _require_database_admin(self, admin: AdminContext) -> None:
         self.configuration._require_admin(admin)
         with self.database.transaction(admin) as session:
-            is_admin = session.scalar(
-                select(UserRecord.is_platform_admin).where(
-                    UserRecord.id
-                    == parse_database_id(admin.user_id, field="管理员 ID")
+            stored_admin = session.scalar(
+                select(AdminUserRecord).where(
+                    AdminUserRecord.id
+                    == parse_database_id(admin.admin_id, field="管理员 ID"),
+                    AdminUserRecord.status == "active",
                 )
             )
-        if not is_admin:
-            raise PermissionError("指定用户不是平台管理员")
+        if stored_admin is None:
+            raise PermissionError("指定管理员不存在或已停用")
 
     def _find_existing(
         self,
-        admin: UserContext,
+        admin: AdminContext,
         fingerprint: str,
     ) -> StoredConfiguration | None:
         with self.database.transaction(admin) as session:
@@ -269,7 +270,7 @@ class ModelCatalogSeeder:
 
     def seed(
         self,
-        admin: UserContext,
+        admin: AdminContext,
         platform: PlatformConfig,
         *,
         reason: str,
@@ -317,7 +318,7 @@ class ModelCatalogSeeder:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="导入云端模型目录草稿")
-    parser.add_argument("--admin-user-id", required=True)
+    parser.add_argument("--admin-id", required=True)
     parser.add_argument("--catalog")
     parser.add_argument("--tokens-per-ticket", type=int, default=1000)
     parser.add_argument("--reason", default="从仓库模型目录生成初始配置草稿")
@@ -343,10 +344,9 @@ def main() -> None:
             exposed_capabilities=[AICapability.IMAGE_T2I],
         )
         stored, created = ModelCatalogSeeder(database, catalog_path).seed(
-            UserContext(
-                user_id=args.admin_user_id,
+            AdminContext(
+                admin_id=args.admin_id,
                 session_id="catalog-seeder",
-                is_platform_admin=True,
             ),
             platform,
             reason=args.reason,

@@ -56,6 +56,14 @@ function startAssetPoll(
                 clearInterval(interval);
                 activePolls.delete(entityId);
                 if (progressToastId) toast.dismiss(progressToastId);
+                if (IS_CLOUD_DEPLOYMENT && status.media_ids?.[0]) {
+                    await api.updateAssetImage(
+                        projectId,
+                        entityId,
+                        kind,
+                        `media:${status.media_ids[0]}`,
+                    );
+                }
                 const fresh = await api.getProject(projectId);
                 const { updateProject, removeGeneratingTask } = getStore();
                 updateProject(projectId, fresh);

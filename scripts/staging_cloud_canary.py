@@ -17,9 +17,13 @@ from urllib.parse import urlparse
 import requests
 from sqlalchemy import select
 
+from src.platform.auth.admin_identity import (
+    ADMIN_CSRF_COOKIE_NAME,
+    ADMIN_SESSION_COOKIE_NAME,
+)
 from src.platform.auth.sessions import CSRF_COOKIE_NAME
 from src.platform.configuration_api import _deployment_resource_fingerprints
-from src.platform.contracts import UserContext
+from src.platform.contracts import AdminContext
 from src.platform.database import Database
 from src.platform.db_models import AITaskAttemptRecord, UsageEventRecord
 from src.platform.settings import DeploymentMode, get_deployment_settings
@@ -110,6 +114,16 @@ def _required_env(name: str) -> str:
     return value
 
 
+def _positive_integer_id(value: Any, label: str) -> int:
+    try:
+        parsed = int(str(value))
+    except (TypeError, ValueError) as exc:
+        raise CanaryFailure(f"{label}缺少有效正整数标识") from exc
+    if parsed <= 0:
+        raise CanaryFailure(f"{label}缺少有效正整数标识")
+    return parsed
+
+
 def _iso_now() -> str:
     return datetime.now(UTC).isoformat()
 
@@ -180,9 +194,15 @@ def validate_isolation_manifest(
 
 
 class EdgeClient:
-    def __init__(self, origin: str) -> None:
+    def __init__(
+        self,
+        origin: str,
+        *,
+        csrf_cookie_name: str = CSRF_COOKIE_NAME,
+    ) -> None:
         self.origin = origin
         self.session = requests.Session()
+        self.csrf_cookie_name = csrf_cookie_name
 
     def request(
         self,
@@ -197,7 +217,7 @@ class EdgeClient:
         headers = dict(kwargs.pop("headers", {}))
         if method in {"POST", "PUT", "PATCH", "DELETE"}:
             headers.setdefault("Origin", self.origin)
-            csrf_token = self.session.cookies.get(CSRF_COOKIE_NAME)
+            csrf_token = self.session.cookies.get(self.csrf_cookie_name)
             if csrf_token:
                 headers.setdefault("X-CSRF-Token", csrf_token)
         try:
@@ -239,19 +259,30 @@ class EdgeClient:
             raise CanaryFailure("登录成功响应未设置安全会话")
         return payload
 
+    def admin_login(self, username: str, password: str) -> dict[str, Any]:
+        payload = self.request(
+            "POST",
+            "/api/v1/admin/auth/login",
+            expected=200,
+            json={"identifier": username, "password": password},
+        ).json()
+        if not self.session.cookies.get(ADMIN_SESSION_COOKIE_NAME):
+            raise CanaryFailure("管理员登录未设置独立安全会话")
+        return payload
+
     def get_json(self, path: str, **kwargs: Any) -> dict[str, Any] | list[Any]:
         return self.request("GET", path, expected=200, **kwargs).json()
 
 
 def _admin_client(origin: str) -> tuple[EdgeClient, dict[str, Any]]:
-    client = EdgeClient(origin)
-    client.login(
-        _required_env("LUMENX_CANARY_ADMIN_PHONE"),
+    client = EdgeClient(origin, csrf_cookie_name=ADMIN_CSRF_COOKIE_NAME)
+    client.admin_login(
+        _required_env("LUMENX_CANARY_ADMIN_USERNAME"),
         _required_env("LUMENX_CANARY_ADMIN_PASSWORD"),
     )
-    me = client.get_json("/api/v1/auth/me")
-    if not isinstance(me, dict) or not me.get("user", {}).get("is_platform_admin"):
-        raise CanaryFailure("canary 管理账号没有平台管理员权限")
+    me = client.get_json("/api/v1/admin/auth/me")
+    if not isinstance(me, dict) or not me.get("admin", {}).get("id"):
+        raise CanaryFailure("canary 管理账号没有独立管理员身份")
     return client, me
 
 
@@ -259,10 +290,7 @@ def _user_client(origin: str, phone_env: str, password_env: str) -> tuple[EdgeCl
     client = EdgeClient(origin)
     response = client.login(_required_env(phone_env), _required_env(password_env))
     user_id = str(response.get("user", {}).get("id") or "")
-    try:
-        uuid.UUID(user_id)
-    except ValueError as exc:
-        raise CanaryFailure("canary 用户响应缺少有效用户标识") from exc
+    _positive_integer_id(user_id, "canary 用户响应")
     return client, user_id
 
 
@@ -377,10 +405,7 @@ def _workspace(client: EdgeClient) -> str:
     if not isinstance(payload, list) or len(payload) != 1:
         raise CanaryFailure("canary 用户必须且只能有一个隔离工作区")
     workspace_id = str(payload[0].get("id") or "")
-    try:
-        uuid.UUID(workspace_id)
-    except ValueError as exc:
-        raise CanaryFailure("canary 工作区标识无效") from exc
+    _positive_integer_id(workspace_id, "canary 工作区")
     return workspace_id
 
 
@@ -409,7 +434,7 @@ def _poll_task(
 
 
 def _database_evidence(
-    admin_user_id: str,
+    admin_id: str,
     user_id: str,
     task_id: str,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
@@ -417,10 +442,9 @@ def _database_evidence(
     if settings.deployment_mode is not DeploymentMode.CLOUD or not settings.database_url:
         raise CanaryFailure("execute/finalize 必须在同一 staging cloud 部署环境内运行")
     database = Database(settings.database_url)
-    admin = UserContext(
-        user_id=admin_user_id,
+    admin = AdminContext(
+        admin_id=str(_positive_integer_id(admin_id, "canary 管理员")),
         session_id="staging-canary-reconciliation",
-        is_platform_admin=True,
     )
     try:
         report = TicketReconciliationService(database).reconcile(
@@ -430,13 +454,19 @@ def _database_evidence(
         with database.transaction(admin) as session:
             attempt = session.scalar(
                 select(AITaskAttemptRecord)
-                .where(AITaskAttemptRecord.task_id == uuid.UUID(task_id))
+                .where(
+                    AITaskAttemptRecord.task_id
+                    == _positive_integer_id(task_id, "canary 任务")
+                )
                 .order_by(AITaskAttemptRecord.attempt_number.desc())
                 .limit(1)
             )
             usage = session.scalar(
                 select(UsageEventRecord)
-                .where(UsageEventRecord.task_id == uuid.UUID(task_id))
+                .where(
+                    UsageEventRecord.task_id
+                    == _positive_integer_id(task_id, "canary 任务")
+                )
                 .order_by(UsageEventRecord.created_at.desc())
                 .limit(1)
             )
@@ -579,7 +609,7 @@ def execute(args: argparse.Namespace) -> int:
             files={"file": ("canary.png", PNG_1X1, "image/png")},
         ).json()
         media_id = str(uploaded.get("id") or "")
-        uuid.UUID(media_id)
+        _positive_integer_id(media_id, "canary 媒体")
         secondary.request(
             "GET",
             f"/api/v1/media/{media_id}",
@@ -625,7 +655,7 @@ def execute(args: argparse.Namespace) -> int:
         if submitted.get("actual_model", {}).get("model_id") != expected_model_id:
             raise CanaryFailure("真实供应商 canary 未使用审核模型")
         task_id = str(submitted.get("task_id") or "")
-        uuid.UUID(task_id)
+        _positive_integer_id(task_id, "canary 任务")
         status = _poll_task(user, workspace_id, task_id, args.poll_timeout_seconds)
         if not status.get("media_ids"):
             raise CanaryFailure("真实供应商 canary 未持久化结果媒体")
@@ -635,9 +665,9 @@ def execute(args: argparse.Namespace) -> int:
         )
         if not isinstance(detail, dict) or detail.get("billing", {}).get("open_hold_ids"):
             raise CanaryFailure("真实供应商 canary 结束后仍有开放预扣")
-        admin_user_id = str(admin_me["user"]["id"])
+        admin_id = str(admin_me["admin"]["id"])
         reconciliation, database_evidence = _database_evidence(
-            admin_user_id,
+            admin_id,
             user_id,
             task_id,
         )
@@ -773,7 +803,7 @@ def finalize(args: argparse.Namespace) -> int:
     active = _active_config(admin)
     _require_closed_state(deployment, active)
     reconciliation, _database_values = _database_evidence(
-        str(admin_me["user"]["id"]),
+        str(admin_me["admin"]["id"]),
         str(state_payload["user_id"]),
         str(state_payload["task_id"]),
     )

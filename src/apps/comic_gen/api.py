@@ -61,6 +61,9 @@ from ...platform.content_api import install_cloud_content_api
 from ...platform.configuration_api import install_cloud_configuration_api
 from ...platform.administration_api import install_cloud_platform_administration_api
 from ...platform.ticket_administration_api import install_cloud_ticket_administration_api
+from ...platform.manual_recharge_api import install_cloud_manual_recharge_api
+from ...platform.system_scenes_api import install_cloud_system_scenes_api
+from ...platform.admin_inspection_api import install_cloud_admin_inspection_api
 from ...platform.ticket_history_api import install_cloud_ticket_history_api
 from ...platform.media_api import install_cloud_media_api
 from ...platform.import_api import install_cloud_import_api
@@ -168,6 +171,7 @@ if app.state.deployment_adapters.cloud_authentication_required:
     install_cloud_configuration_api(app, cloud_auth, app.state.deployment_settings)
     install_cloud_platform_administration_api(app, cloud_auth)
     install_cloud_ticket_administration_api(app, cloud_auth)
+    install_cloud_manual_recharge_api(app, cloud_auth, app.state.deployment_settings)
     install_cloud_ticket_history_api(app, cloud_auth)
     install_cloud_ai_task_api(app, cloud_auth)
     install_workspace_api(app, cloud_auth)
@@ -177,6 +181,18 @@ if app.state.deployment_adapters.cloud_authentication_required:
         cloud_auth,
         app.state.deployment_settings,
         storage=app.state.deployment_adapters.media(cloud_auth.database),
+    )
+    install_cloud_system_scenes_api(
+        app,
+        cloud_auth,
+        app.state.deployment_settings,
+        cloud_media,
+    )
+    install_cloud_admin_inspection_api(
+        app,
+        cloud_auth,
+        app.state.deployment_settings,
+        cloud_media,
     )
     if app.state.deployment_settings.deployment_mode is DeploymentMode.TEST:
         from ...platform.test_adapters import (

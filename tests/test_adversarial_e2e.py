@@ -183,12 +183,10 @@ def test_rls_connection_reuse_resets_previous_identity_before_next_request() -> 
     first_identity = SimpleNamespace(
         user_id="1",
         session_id="1",
-        is_platform_admin=False,
     )
     second_identity = SimpleNamespace(
         user_id="2",
         session_id="2",
-        is_platform_admin=False,
     )
 
     set_transaction_user_context(first_session, first_identity)

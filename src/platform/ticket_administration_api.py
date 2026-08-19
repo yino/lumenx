@@ -7,11 +7,9 @@ from fastapi import APIRouter, Depends, FastAPI, Query, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
-from .auth.admin import AdminAuthorizationError
+from .admin_access import create_require_platform_admin
 from .auth.api import AuthApplication
-from .auth.protection import UNSAFE_METHODS
-from .auth.sessions import SessionAuthenticationError, SessionPrincipal
-from .contracts import UserContext
+from .contracts import AdminContext
 from .ticket_administration import (
     AdminTicketWalletView,
     TicketAdministrationConflictError,
@@ -71,7 +69,8 @@ def _view_response(view: AdminTicketWalletView) -> dict[str, Any]:
                 "available_after": str(item.available_after),
                 "held_after": str(item.held_after),
                 "reason": item.reason,
-                "actor_user_id": item.actor_user_id,
+                "actor_admin_id": item.actor_admin_id,
+                "legacy_actor_user_id": item.legacy_actor_user_id,
                 "correlation": item.correlation,
                 "created_at": item.created_at,
             }
@@ -88,30 +87,17 @@ def install_cloud_ticket_administration_api(
     service = TicketAdministrationService(auth.database)
     router = APIRouter(prefix="/admin/tickets", tags=["算力券管理"])
 
-    def require_admin(request: Request) -> UserContext:
-        token = request.cookies.get("lumenx_session")
-        if not token:
-            raise SessionAuthenticationError("AUTH_REQUIRED", "请先登录")
-        csrf_token = (
-            request.headers.get("x-csrf-token")
-            if request.method in UNSAFE_METHODS
-            else None
-        )
-        principal: SessionPrincipal = auth.sessions.resolve(token, csrf_token=csrf_token)
-        if not principal.is_platform_admin:
-            raise AdminAuthorizationError("仅平台管理员可以管理用户算力券")
-        return UserContext(
-            user_id=str(principal.user_id),
-            session_id=str(principal.session_id),
-            is_platform_admin=True,
-        )
+    require_admin = create_require_platform_admin(
+        auth.admin_sessions,
+        denied_message="仅平台管理员可以管理用户算力券",
+    )
 
     @router.get("/users/{user_id}")
     def get_wallet(
         user_id: int,
         offset: int = Query(default=0, ge=0),
         limit: int = Query(default=50, ge=1, le=100),
-        identity: UserContext = Depends(require_admin),
+        identity: AdminContext = Depends(require_admin),
     ) -> dict[str, Any]:
         return _view_response(
             service.get_wallet(identity, user_id, offset=offset, limit=limit)
@@ -122,7 +108,7 @@ def install_cloud_ticket_administration_api(
         user_id: int,
         payload: AdminTicketAdjustmentRequest,
         request: Request,
-        identity: UserContext,
+        identity: AdminContext,
     ) -> dict[str, Any]:
         wallet = service.adjust(
             identity,
@@ -146,7 +132,7 @@ def install_cloud_ticket_administration_api(
         user_id: int,
         payload: AdminTicketAdjustmentRequest,
         request: Request,
-        identity: UserContext = Depends(require_admin),
+        identity: AdminContext = Depends(require_admin),
     ) -> dict[str, Any]:
         return adjust("grant", user_id, payload, request, identity)
 
@@ -155,7 +141,7 @@ def install_cloud_ticket_administration_api(
         user_id: int,
         payload: AdminTicketAdjustmentRequest,
         request: Request,
-        identity: UserContext = Depends(require_admin),
+        identity: AdminContext = Depends(require_admin),
     ) -> dict[str, Any]:
         return adjust("debit", user_id, payload, request, identity)
 
@@ -164,7 +150,7 @@ def install_cloud_ticket_administration_api(
         user_id: int,
         payload: AdminTicketAdjustmentRequest,
         request: Request,
-        identity: UserContext = Depends(require_admin),
+        identity: AdminContext = Depends(require_admin),
     ) -> dict[str, Any]:
         return adjust("compensation", user_id, payload, request, identity)
 

@@ -48,6 +48,21 @@ export default function ArtDirection() {
     const [editingNegative, setEditingNegative] = useState("");
     const [isSaving, setIsSaving] = useState(false);
 
+    const normalizeAIRecommendation = (style: StyleConfig, index: number): StyleConfig => {
+        const rawName = typeof style?.name === "string" ? style.name.trim() : "";
+        const slug = rawName
+            .toLowerCase()
+            .replace(/[^a-z0-9]+/g, "-")
+            .replace(/^-+|-+$/g, "") || `style-${index + 1}`;
+        return {
+            ...style,
+            id: typeof style?.id === "string" && style.id.trim()
+                ? style.id
+                : `ai-${slug}-${index + 1}`,
+            is_custom: style?.is_custom ?? true,
+        };
+    };
+
     const filteredPresets = useMemo(() => {
         if (activeCategory === "all") return presets;
         return presets.filter(p => p.category === activeCategory);
@@ -164,7 +179,9 @@ export default function ArtDirection() {
 
     useEffect(() => {
         if (currentProject?.art_direction?.ai_recommendations) {
-            setAiRecommendations(currentProject.art_direction.ai_recommendations);
+            setAiRecommendations(
+                currentProject.art_direction.ai_recommendations.map(normalizeAIRecommendation),
+            );
         }
     }, [currentProject?.art_direction?.ai_recommendations]);
 

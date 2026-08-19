@@ -32,6 +32,9 @@ class FakePrivateObjectStore:
             raise RuntimeError("upload failed")
         self.objects[object_key] = (content, content_type)
 
+    def get(self, object_key: str) -> bytes:
+        return self.objects[object_key][0]
+
     def signed_get_url(self, object_key: str, expires_seconds: int) -> str:
         self.signed.append((object_key, expires_seconds))
         return f"https://private.example/{object_key}?expires={expires_seconds}"
@@ -103,6 +106,26 @@ def test_cloud_media_store_derives_private_key_and_persists_metadata(
         assert record.provenance["workspace_id"] == context.workspace_id
         assert record.provenance["project_id"] == project_id
         assert record.provenance["filename"] == "avatar.PNG"
+
+
+def test_cloud_media_read_verifies_object_integrity(media_environment) -> None:
+    _database, context, project_id, object_store, storage = media_environment
+    content = b"video-content"
+    stored = storage.store(
+        context,
+        MediaWrite(
+            content=content,
+            content_type="video/mp4",
+            filename="clip.mp4",
+            project_id=project_id,
+        ),
+    )
+
+    assert storage.read_bytes(context, stored.media_id) == content
+
+    object_store.objects[stored.object_key] = (b"tampered", "video/mp4")
+    with pytest.raises(MediaStorageError, match="完整性校验失败"):
+        storage.read_bytes(context, stored.media_id)
 
 
 def test_cloud_media_store_marks_failed_upload_for_reconciliation(

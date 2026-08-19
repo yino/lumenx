@@ -6,7 +6,12 @@ from fastapi import APIRouter, Depends, FastAPI, File, HTTPException, Request, U
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field
 
-from .ai_gateway_api import AITaskSubmitter, CloudAIRequestAdapter
+from .ai_gateway_api import (
+    AITaskSubmitter,
+    CloudAIRequestAdapter,
+    require_idempotency_key,
+    submit_ai_task,
+)
 from .ai_request_policy import enforce_cloud_ai_request
 from .auth.api import AuthApplication
 from .auth.protection import UNSAFE_METHODS
@@ -56,6 +61,12 @@ class AddFrameRequest(BaseModel):
     insert_at: int | None = Field(default=None, ge=0)
 
 
+class ReplaceGeneratedFramesRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    frames: list[dict[str, Any]] = Field(min_length=1)
+
+
 class FrameTargetRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -78,6 +89,7 @@ class UpdateFrameWorkbenchRequest(BaseModel):
     workbench_tab_mode: Literal["t2i_i2v", "direct_r2v"] | None = None
     t2i_selected_index: int | None = Field(default=None, ge=0)
     workbench_generate_count: int | None = Field(default=None, ge=1, le=6)
+    t2i_image_urls: list[str] | None = Field(default=None, max_length=10)
 
 
 class AttachFrameMediaRequest(BaseModel):
@@ -94,6 +106,26 @@ class AttachFrameMediaRequest(BaseModel):
         "preview_video",
     ]
     media_id: str = Field(min_length=1)
+
+
+class AttachGeneratedVideoRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    task_id: str = Field(min_length=1)
+    media_id: str = Field(min_length=1)
+    prompt: str = ""
+    image_url: str = ""
+    duration: int = Field(default=5, ge=1, le=600)
+    resolution: str = Field(default="720p", min_length=1, max_length=32)
+    model: str = Field(default="server-selected", min_length=1, max_length=160)
+    generation_mode: Literal["i2v", "r2v"] = "i2v"
+    workbench_tab: Literal["t2i_i2v", "direct_r2v"] | None = None
+
+
+class SelectFrameVideoRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    video_id: str = Field(min_length=1)
 
 
 class AudioMixRequest(BaseModel):
@@ -157,7 +189,7 @@ def install_cloud_storyboard_api(
     *,
     ai_submitter: AITaskSubmitter | None = None,
 ) -> CloudStoryboardService:
-    service = CloudStoryboardService(auth.database)
+    service = CloudStoryboardService(auth.database, media_storage)
     router = APIRouter(tags=["工作区分镜"])
     ai_adapter = (
         CloudAIRequestAdapter(ai_submitter) if ai_submitter is not None else None
@@ -189,7 +221,6 @@ def install_cloud_storyboard_api(
             identity=UserContext(
                 user_id=str(principal.user_id),
                 session_id=str(principal.session_id),
-                is_platform_admin=principal.is_platform_admin,
             ),
             workspace_id=canonical_workspace_id,
         )
@@ -233,6 +264,22 @@ def install_cloud_storyboard_api(
                 camera_angle=payload.camera_angle,
                 insert_at=payload.insert_at,
                 expected_version=_parse_expected_version(request),
+            )
+        )
+
+    @router.put("/projects/{project_id}/frames")
+    def replace_generated_frames(
+        project_id: str,
+        payload: ReplaceGeneratedFramesRequest,
+        request: Request,
+        context: WorkspaceContext = Depends(require_context),
+    ) -> dict[str, Any]:
+        return _content_response(
+            service.replace_generated_frames(
+                context,
+                project_id,
+                payload.frames,
+                _parse_expected_version(request),
             )
         )
 
@@ -333,6 +380,96 @@ def install_cloud_storyboard_api(
                 frame_id,
                 payload.media_kind,
                 payload.media_id,
+                _parse_expected_version(request),
+            )
+        )
+
+    @router.post("/projects/{project_id}/frames/{frame_id}/video_candidates")
+    def attach_generated_video(
+        project_id: str,
+        frame_id: str,
+        payload: AttachGeneratedVideoRequest,
+        request: Request,
+        context: WorkspaceContext = Depends(require_context),
+    ) -> dict[str, Any]:
+        return _content_response(
+            service.attach_generated_video(
+                context,
+                project_id,
+                frame_id,
+                task_id=payload.task_id,
+                media_id=payload.media_id,
+                prompt=payload.prompt,
+                image_url=payload.image_url,
+                duration=payload.duration,
+                resolution=payload.resolution,
+                model=payload.model,
+                generation_mode=payload.generation_mode,
+                workbench_tab=payload.workbench_tab,
+                expected_version=_parse_expected_version(request),
+            )
+        )
+
+    @router.post("/projects/{project_id}/frames/{frame_id}/select_video")
+    def select_frame_video(
+        project_id: str,
+        frame_id: str,
+        payload: SelectFrameVideoRequest,
+        request: Request,
+        context: WorkspaceContext = Depends(require_context),
+    ) -> dict[str, Any]:
+        return _content_response(
+            service.select_frame_video(
+                context,
+                project_id,
+                frame_id,
+                payload.video_id,
+                _parse_expected_version(request),
+            )
+        )
+
+    @router.post("/projects/{project_id}/frames/{frame_id}/auto_select_latest_video")
+    def auto_select_latest_video(
+        project_id: str,
+        frame_id: str,
+        request: Request,
+        context: WorkspaceContext = Depends(require_context),
+    ) -> dict[str, Any]:
+        return _content_response(
+            service.auto_select_latest_video(
+                context,
+                project_id,
+                frame_id,
+                _parse_expected_version(request),
+            )
+        )
+
+    @router.post("/projects/{project_id}/frames/{frame_id}/unpin_video")
+    def unpin_frame_video(
+        project_id: str,
+        frame_id: str,
+        request: Request,
+        context: WorkspaceContext = Depends(require_context),
+    ) -> dict[str, Any]:
+        return _content_response(
+            service.unpin_frame_video(
+                context,
+                project_id,
+                frame_id,
+                _parse_expected_version(request),
+            )
+        )
+
+    @router.post("/projects/{project_id}/merge")
+    def merge_project_videos(
+        project_id: str,
+        request: Request,
+        context: WorkspaceContext = Depends(require_context),
+    ) -> dict[str, Any]:
+        return _content_response(
+            service.merge_videos(
+                context,
+                project_id,
                 _parse_expected_version(request),
             )
         )
@@ -457,6 +594,28 @@ def install_cloud_storyboard_api(
             },
         )
 
+    @router.post("/projects/{project_id}/dialogue_audio/batch")
+    async def generate_dialogue_audio_batch(
+        project_id: str,
+        request: Request,
+        context: WorkspaceContext = Depends(require_context),
+    ) -> JSONResponse:
+        await enforce_cloud_ai_request(request)
+        if ai_submitter is None:
+            return await gateway_not_ready(request, context)
+        content, stats = service.build_dialogue_batch_content(context, project_id)
+        if not content["items"]:
+            return JSONResponse(status_code=200, content={"_batch_stats": stats})
+        submitted = submit_ai_task(
+            ai_submitter,
+            context,
+            capability="speech.tts",
+            idempotency_key=require_idempotency_key(request, {}),
+            project_id=project_id,
+            content=content,
+        )
+        return JSONResponse(status_code=202, content=submitted)
+
     ai_routes = [
         (
             "/projects/{project_id}/storyboard/analyze",
@@ -519,11 +678,6 @@ def install_cloud_storyboard_api(
             "audio.dub.apply",
         ),
         (
-            "/projects/{project_id}/dialogue_audio/batch",
-            "speech.tts",
-            "audio.dialogue.batch",
-        ),
-        (
             "/projects/{project_id}/mix/generate_sfx",
             "audio.sfx",
             "audio.sfx.generate",
@@ -568,14 +722,7 @@ def install_cloud_storyboard_api(
         ("/projects/{project_id}/video_tasks/{task_id}/cancel", ["POST"]),
         ("/tasks/{task_id}", ["GET"]),
         ("/projects/{project_id}/frames/{frame_id}/dub", ["DELETE"]),
-        ("/projects/{project_id}/frames/{frame_id}/select_video", ["POST"]),
-        (
-            "/projects/{project_id}/frames/{frame_id}/auto_select_latest_video",
-            ["POST"],
-        ),
-        ("/projects/{project_id}/frames/{frame_id}/unpin_video", ["POST"]),
         ("/projects/{project_id}/frames/{frame_id}/extract_last_frame", ["POST"]),
-        ("/projects/{project_id}/merge", ["POST"]),
         ("/projects/{project_id}/export", ["POST"]),
     ]
     for index, (path, methods) in enumerate(blocked_non_gateway_routes):

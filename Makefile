@@ -12,7 +12,7 @@ OPENSPEC_CHANGE ?= harden-cloud-launch-readiness
 .PHONY: help doctor install dev backend frontend build build-mac build-windows \
 	test test-backend test-frontend lint typecheck check-colors compile check migrate \
 	docker-env docker-config docker-production-config docker-build docker-up docker-down \
-	docker-logs docker-ps docker-migrate \
+	docker-logs docker-ps docker-migrate docker-admin-recover docker-admin-adopt \
 	openspec-validate release-check
 
 help:
@@ -46,6 +46,8 @@ help:
 		'  make docker-logs     持续查看本地服务日志' \
 		'  make docker-ps       查看本地服务状态' \
 		'  make docker-migrate  在本地 Compose 中执行一次数据库迁移' \
+		'  make docker-admin-recover  用 .env 中的密码显式恢复现有管理员凭据' \
+		'  make docker-admin-adopt  一次性接管唯一的异名管理员为 .env 配置身份' \
 		'  make docker-production-config  仅校验生产 Secret 配置' \
 		'' \
 		'可覆盖变量：PYTHON、PYTHON_BOOTSTRAP、NPM、COMPOSE、BACKEND_PORT、FRONTEND_PORT、OPENSPEC_CHANGE'
@@ -123,7 +125,7 @@ docker-config: docker-env
 	$(COMPOSE) config --quiet
 
 docker-production-config:
-	$(COMPOSE) -f docker-compose.yml config --quiet
+	$(COMPOSE) -f docker-compose.yml -f docker-compose.release.yml config --quiet
 
 docker-build: docker-config
 	$(COMPOSE) build
@@ -142,6 +144,17 @@ docker-ps: docker-env
 
 docker-migrate: docker-config
 	$(COMPOSE) run --rm migration
+
+docker-admin-recover: docker-config
+	$(COMPOSE) run --rm admin-bootstrap python -m src.platform.bootstrap_admin \
+		--username "$${LUMENX_BOOTSTRAP_ADMIN_USERNAME:-admin}" --rotate-existing
+
+docker-admin-adopt: docker-config
+	$(COMPOSE) build migration admin-bootstrap
+	$(COMPOSE) run --rm migration
+	$(COMPOSE) run --rm admin-bootstrap python -m src.platform.bootstrap_admin \
+		--username "$${LUMENX_BOOTSTRAP_ADMIN_USERNAME:-admin}" \
+		--adopt-existing-sole-admin
 
 openspec-validate:
 	openspec validate $(OPENSPEC_CHANGE) --strict

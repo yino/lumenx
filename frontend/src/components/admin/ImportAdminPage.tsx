@@ -22,6 +22,7 @@ import {
   type AdminPage,
 } from "@/lib/api";
 import { toast } from "@/store/toastStore";
+import { AdminReasonDialog } from "./AdminDialogs";
 
 
 const EMPTY_PAGE: AdminPage<AdminImportBatchItem> = {
@@ -101,6 +102,7 @@ export default function ImportAdminPage() {
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [activeBatchId, setActiveBatchId] = useState<string | null>(null);
+  const [rollbackTargetId, setRollbackTargetId] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -170,16 +172,16 @@ export default function ImportAdminPage() {
     }
   };
 
-  const rollbackBatch = async (batchId: string) => {
-    const reason = window.prompt("请输入回滚原因");
-    if (!reason?.trim()) return;
-    if (!window.confirm("确认回滚该导入批次？已被继续使用的数据会保留。")) return;
+  const rollbackBatch = async (reason: string) => {
+    if (!rollbackTargetId) return;
+    const batchId = rollbackTargetId;
     setActiveBatchId(batchId);
     try {
-      const result = await adminPlatformApi.rollbackImport(batchId, reason.trim());
+      const result = await adminPlatformApi.rollbackImport(batchId, reason);
       toast.success(result.message, {
         body: `已回滚 ${result.reverted_items} 项，保留 ${result.preserved_items} 项`,
       });
+      setRollbackTargetId(null);
       await load();
       await inspectBatch(batchId);
     } catch (error) {
@@ -215,12 +217,12 @@ export default function ImportAdminPage() {
 
       <section className="grid gap-4 border-b border-glass-border pb-7 lg:grid-cols-2">
         <label>
-          <span className="mb-1.5 block text-xs font-medium text-text-secondary">目标用户 UUID</span>
-          <input value={targetUserId} onChange={(event) => setTargetUserId(event.target.value)} className="h-10 w-full rounded-md border border-glass-border bg-glass px-3 font-mono text-sm outline-none focus:border-primary/60" />
+          <span className="mb-1.5 block text-xs font-medium text-text-secondary">目标用户 ID</span>
+          <input inputMode="numeric" value={targetUserId} onChange={(event) => setTargetUserId(event.target.value.replace(/\D/g, ""))} className="h-10 w-full rounded-md border border-glass-border bg-glass px-3 font-mono text-sm outline-none focus:border-primary/60" />
         </label>
         <label>
-          <span className="mb-1.5 block text-xs font-medium text-text-secondary">目标工作区 UUID</span>
-          <input value={targetWorkspaceId} onChange={(event) => setTargetWorkspaceId(event.target.value)} className="h-10 w-full rounded-md border border-glass-border bg-glass px-3 font-mono text-sm outline-none focus:border-primary/60" />
+          <span className="mb-1.5 block text-xs font-medium text-text-secondary">目标工作区 ID</span>
+          <input inputMode="numeric" value={targetWorkspaceId} onChange={(event) => setTargetWorkspaceId(event.target.value.replace(/\D/g, ""))} className="h-10 w-full rounded-md border border-glass-border bg-glass px-3 font-mono text-sm outline-none focus:border-primary/60" />
         </label>
         <label>
           <span className="mb-1.5 block text-xs font-medium text-text-secondary">源目录</span>
@@ -289,7 +291,7 @@ export default function ImportAdminPage() {
                 <div className="flex items-center gap-2 lg:justify-end">
                   <button type="button" title="查看详情" aria-label="查看详情" onClick={() => void inspectBatch(batch.id)} disabled={activeBatchId === batch.id} className="flex h-9 w-9 items-center justify-center rounded-md border border-glass-border bg-glass text-text-secondary hover:bg-hover-bg hover:text-foreground disabled:opacity-50">{activeBatchId === batch.id ? <Loader2 size={15} className="animate-spin" /> : <Eye size={15} />}</button>
                   {(batch.status === "dry_run" || batch.status === "failed") && <button type="button" title="执行导入" aria-label="执行导入" onClick={() => void executeBatch(batch.id)} disabled={activeBatchId === batch.id} className="flex h-9 w-9 items-center justify-center rounded-md border border-primary/30 bg-primary/10 text-primary hover:bg-primary/20 disabled:opacity-50"><Play size={15} /></button>}
-                  {(batch.status === "completed" || batch.status === "failed") && <button type="button" title="回滚批次" aria-label="回滚批次" onClick={() => void rollbackBatch(batch.id)} disabled={activeBatchId === batch.id} className="flex h-9 w-9 items-center justify-center rounded-md border border-amber-400/25 bg-amber-400/10 text-amber-200 hover:bg-amber-400/15 disabled:opacity-50"><RotateCcw size={15} /></button>}
+                  {(batch.status === "completed" || batch.status === "failed") && <button type="button" title="回滚批次" aria-label="回滚批次" onClick={() => setRollbackTargetId(batch.id)} disabled={activeBatchId === batch.id} className="flex h-9 w-9 items-center justify-center rounded-md border border-amber-400/25 bg-amber-400/10 text-amber-200 hover:bg-amber-400/15 disabled:opacity-50"><RotateCcw size={15} /></button>}
                 </div>
               </article>
             ))}
@@ -306,6 +308,7 @@ export default function ImportAdminPage() {
           {detail.error_report && <p className="text-sm text-red-200">批次存在失败项，可修复源数据后继续执行。</p>}
         </section>
       )}
+      {rollbackTargetId && <AdminReasonDialog title="回滚导入批次" description="系统只回滚尚未被继续使用的数据，已产生后续引用的数据会保留并写入报告。" confirmLabel="确认回滚" danger busy={activeBatchId === rollbackTargetId} onClose={() => setRollbackTargetId(null)} onConfirm={rollbackBatch} />}
     </div>
   );
 }

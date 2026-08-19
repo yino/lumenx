@@ -52,6 +52,7 @@ def _history_response(history: PaginatedTicketHistory) -> dict[str, Any]:
                     "workspace_id": item.workspace_id,
                     "project_id": item.project_id,
                     "task_id": item.task_id,
+                    "order_number": item.order_number,
                     "metering_tokens": (
                         str(item.metering_tokens)
                         if item.metering_tokens is not None
@@ -117,7 +118,6 @@ def install_cloud_ticket_history_api(
         return UserContext(
             user_id=str(principal.user_id),
             session_id=str(principal.session_id),
-            is_platform_admin=principal.is_platform_admin,
         )
 
     @router.get("")

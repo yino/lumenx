@@ -94,6 +94,8 @@ class LLMAdapter:
         messages: List[Dict[str, str]],
         model: Optional[str] = None,
         response_format: Optional[Dict[str, str]] = None,
+        max_tokens: Optional[int] = None,
+        enable_thinking: Optional[bool] = None,
     ) -> str:
         """
         Send a chat completion request and return the response content.
@@ -113,6 +115,8 @@ class LLMAdapter:
             messages,
             model=model,
             response_format=response_format,
+            max_tokens=max_tokens,
+            enable_thinking=enable_thinking,
         ).content
 
     def chat_with_usage(
@@ -120,12 +124,21 @@ class LLMAdapter:
         messages: List[Dict[str, str]],
         model: Optional[str] = None,
         response_format: Optional[Dict[str, str]] = None,
+        max_tokens: Optional[int] = None,
+        enable_thinking: Optional[bool] = None,
     ) -> ProviderTextResult:
         client = self._get_client()
 
         # 显式 model override 路径：单次尝试，失败就抛。
         if model:
-            return self._chat_once_with_usage(client, model, messages, response_format)
+            return self._chat_once_with_usage(
+                client,
+                model,
+                messages,
+                response_format,
+                max_tokens,
+                enable_thinking,
+            )
 
         # Provider 默认路径：DashScope 走 fallback chain，OpenAI 单次尝试。
         if self.provider == "openai":
@@ -134,6 +147,8 @@ class LLMAdapter:
                 self._get_default_model(),
                 messages,
                 response_format,
+                max_tokens,
+                enable_thinking,
             )
 
         last_err: Optional[Exception] = None
@@ -144,6 +159,8 @@ class LLMAdapter:
                     candidate,
                     messages,
                     response_format,
+                    max_tokens,
+                    enable_thinking,
                 )
             except RuntimeError as e:
                 # 仅在 "模型不存在 / 不可用" 类错误时回退；其他错误（鉴权、限流、网络）
@@ -171,12 +188,16 @@ class LLMAdapter:
         model: str,
         messages: List[Dict[str, str]],
         response_format: Optional[Dict[str, str]],
+        max_tokens: Optional[int] = None,
+        enable_thinking: Optional[bool] = None,
     ) -> str:
         return self._chat_once_with_usage(
             client,
             model,
             messages,
             response_format,
+            max_tokens,
+            enable_thinking,
         ).content
 
     def _chat_once_with_usage(
@@ -185,6 +206,8 @@ class LLMAdapter:
         model: str,
         messages: List[Dict[str, str]],
         response_format: Optional[Dict[str, str]],
+        max_tokens: Optional[int] = None,
+        enable_thinking: Optional[bool] = None,
     ) -> ProviderTextResult:
         kwargs: Dict[str, Any] = {
             "model": model,
@@ -192,6 +215,10 @@ class LLMAdapter:
         }
         if response_format:
             kwargs["response_format"] = response_format
+        if isinstance(max_tokens, int) and not isinstance(max_tokens, bool) and max_tokens > 0:
+            kwargs["max_tokens"] = max_tokens
+        if self.provider != "openai" and isinstance(enable_thinking, bool):
+            kwargs["extra_body"] = {"enable_thinking": enable_thinking}
 
         try:
             response = client.chat.completions.create(**kwargs)

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -30,6 +31,8 @@ def storyboard_api():
                     id="frame-1",
                     scene_id="scene-1",
                     action_description="人物走进房间",
+                    dialogue="你终于来了。",
+                    speaker="林渊",
                     rendered_image_asset=None,
                 )
             ]
@@ -44,7 +47,6 @@ def storyboard_api():
         session_id=int(context.identity.session_id),
         phone_canonical="+8613800138000",
         phone_verified=False,
-        is_platform_admin=False,
     )
     sessions = FakeSessions(principal)
     auth = SimpleNamespace(database=database, sessions=sessions)
@@ -186,10 +188,21 @@ def test_cloud_storyboard_uploads_store_private_media_ids(storyboard_api) -> Non
         for key in object_store.objects
     )
 
+    persisted = client.patch(
+        f"/projects/{project_id}/frames/frame-1/workbench",
+        json={
+            "t2i_image_urls": [t2i.json()["image_url"]],
+            "t2i_selected_index": 0,
+        },
+        headers=_headers(context.workspace_id, version=3),
+    )
+    assert persisted.status_code == 200, persisted.text
+    assert persisted.json()["t2i_image_urls"] == [t2i.json()["image_url"]]
+
     invalid_type = client.post(
         f"/projects/{project_id}/frames/frame-1/upload_t2i",
         files={"file": ("payload.svg", b"<svg/>", "image/svg+xml")},
-        headers=_headers(context.workspace_id, version=3),
+        headers=_headers(context.workspace_id, version=4),
     )
     assert invalid_type.status_code == 422
     assert invalid_type.json()["code"] == "MEDIA_INVALID"
@@ -234,6 +247,78 @@ def test_cloud_storyboard_media_and_audio_mix_reject_path_authority(
         headers=_headers(context.workspace_id, version=2),
     )
     assert foreign_media.status_code == 404
+
+
+def test_generated_video_becomes_selected_candidate_and_can_be_merged(
+    storyboard_api,
+    monkeypatch,
+) -> None:
+    _database, context, _sessions, object_store, client, project_id, _other = (
+        storyboard_api
+    )
+    media_id = client.post(
+        f"/media?project_id={project_id}",
+        files={"file": ("clip.mp4", b"source-video", "video/mp4")},
+        headers=_headers(context.workspace_id),
+    ).json()["id"]
+
+    attached = client.post(
+        f"/projects/{project_id}/frames/frame-1/video_candidates",
+        json={
+            "task_id": "ai-task-101",
+            "media_id": media_id,
+            "prompt": "人物走进房间",
+            "duration": 3,
+            "resolution": "720p",
+            "model": "wan2.7-i2v",
+            "generation_mode": "i2v",
+            "workbench_tab": "t2i_i2v",
+        },
+        headers=_headers(context.workspace_id, version=1),
+    )
+
+    assert attached.status_code == 200, attached.text
+    payload = attached.json()
+    assert payload["version"] == 2
+    assert payload["frames"][0]["selected_video_id"] == "ai-task-101"
+    assert payload["frames"][0]["video_url"] == f"media:{media_id}"
+    assert payload["video_tasks"][0]["status"] == "completed"
+    assert payload["video_tasks"][0]["video_url"] == f"media:{media_id}"
+
+    monkeypatch.setattr(
+        "src.platform.storyboard_service.get_ffmpeg_path",
+        lambda: "/usr/bin/ffmpeg",
+    )
+
+    ffmpeg_call: dict[str, object] = {}
+
+    def fake_ffmpeg(arguments, **_kwargs):
+        if Path(arguments[0]).name == "ffprobe":
+            return SimpleNamespace(returncode=0, stdout="3.125\n", stderr="")
+        ffmpeg_call["arguments"] = arguments
+        subtitle_filter = arguments[arguments.index("-vf") + 1]
+        subtitle_path = subtitle_filter.removeprefix("subtitles=").split(":", 1)[0]
+        ffmpeg_call["subtitles"] = Path(subtitle_path).read_text(encoding="utf-8")
+        Path(arguments[-1]).write_bytes(b"merged-video")
+        return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr("src.platform.storyboard_service.subprocess.run", fake_ffmpeg)
+    merged = client.post(
+        f"/projects/{project_id}/merge",
+        headers=_headers(context.workspace_id, version=2),
+    )
+
+    assert merged.status_code == 200, merged.text
+    merged_reference = merged.json()["merged_video_url"]
+    assert merged_reference.startswith("media:")
+    assert merged_reference != f"media:{media_id}"
+    assert "-vf" in ffmpeg_call["arguments"]
+    assert ffmpeg_call["subtitles"] == (
+        "1\n"
+        "00:00:00,000 --> 00:00:03,125\n"
+        "林渊：你终于来了。\n"
+    )
+    assert any(content == b"merged-video" for content, _mime in object_store.objects.values())
 
 
 def test_cloud_ai_media_routes_never_reach_legacy_pipeline(storyboard_api) -> None:

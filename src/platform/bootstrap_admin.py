@@ -2,26 +2,30 @@ from __future__ import annotations
 
 import argparse
 import getpass
+import os
 import uuid
 from dataclasses import dataclass
+from datetime import UTC, datetime
 
-from sqlalchemy import select, text
+from sqlalchemy import select, text, update
+from sqlalchemy.orm import Session
 
-from .auth.registration import RegistrationPolicy, RegistrationService
-from .auth.security import normalize_phone
-from .configuration_schemas import RegistrationMode
-from .contracts import UserContext
+from .auth.security import PasswordService, normalize_username
+from .contracts import SystemContext
 from .database import Database
-from .db_models import AuditEventRecord, UserRecord
+from .db_models import AdminSessionRecord, AdminUserRecord, AuditEventRecord
 from .settings import DeploymentMode, get_deployment_settings
+
+
+LOCAL_DEFAULT_ADMIN_PASSWORD = "sk532359025"
 
 
 @dataclass(frozen=True, slots=True)
 class BootstrapAdminResult:
-    user_id: str
-    phone_canonical: str
+    admin_id: str
+    username: str
     created: bool
-    promoted: bool
+    adopted: bool = False
 
 
 class BootstrapPasswordRequiredError(ValueError):
@@ -32,128 +36,341 @@ class BootstrapAlreadyCompletedError(RuntimeError):
     pass
 
 
-class PlatformAdminBootstrapService:
-    def __init__(
-        self,
-        database: Database,
-        session_secret: str,
-        *,
-        initial_grant_microtickets: int = 0,
-    ) -> None:
-        self.database = database
-        self.registration = RegistrationService(
-            database,
-            session_secret,
-            policy=RegistrationPolicy(
-                initial_grant_microtickets=initial_grant_microtickets,
-                registration_mode=RegistrationMode.OPEN,
-            ),
-        )
+class InsecureBootstrapPasswordError(ValueError):
+    pass
 
-    def bootstrap(self, phone: str, password: str | None = None) -> BootstrapAdminResult:
-        phone_canonical = normalize_phone(phone)
-        bootstrap_identity = UserContext(
-            user_id="0",
-            session_id="platform-admin-bootstrap",
-            is_platform_admin=True,
-        )
-        with self.database.transaction(bootstrap_identity) as session:
+
+class BootstrapAdminNotFoundError(LookupError):
+    pass
+
+
+class BootstrapSoleAdminRecoveryError(RuntimeError):
+    pass
+
+
+class PlatformAdminBootstrapService:
+    def __init__(self, database: Database) -> None:
+        self.database = database
+        self.password_service = PasswordService()
+
+    def bootstrap(
+        self,
+        username: str,
+        password: str | None,
+        *,
+        allow_local_default_password: bool = False,
+        adopt_existing_sole_admin: bool = False,
+    ) -> BootstrapAdminResult:
+        canonical_username = normalize_username(username)
+        if password is None:
+            raise BootstrapPasswordRequiredError("创建系统管理员时必须提供初始密码")
+        if (
+            password == LOCAL_DEFAULT_ADMIN_PASSWORD
+            and not allow_local_default_password
+        ):
+            raise InsecureBootstrapPasswordError(
+                "非本地环境禁止使用默认管理员密码"
+            )
+
+        identity = SystemContext(service_name="admin-bootstrap")
+        with self.database.transaction(identity) as session:
             if session.bind is not None and session.bind.dialect.name == "postgresql":
                 session.execute(text("SELECT pg_advisory_xact_lock(1280785237)"))
-            existing_admin = session.scalar(
-                select(UserRecord)
-                .where(UserRecord.is_platform_admin.is_(True))
-                .order_by(UserRecord.created_at.asc(), UserRecord.id.asc())
-                .limit(1)
-                .with_for_update()
+            administrators = list(
+                session.scalars(
+                    select(AdminUserRecord)
+                    .order_by(AdminUserRecord.id)
+                    .with_for_update()
+                )
             )
-            existing = session.scalar(
-                select(UserRecord).where(UserRecord.phone_canonical == phone_canonical)
+            existing = next(
+                (
+                    admin
+                    for admin in administrators
+                    if admin.username == canonical_username
+                ),
+                None,
             )
-            if existing_admin is not None and (
-                existing is None or existing.id != existing_admin.id
-            ):
+            if existing is not None:
+                return BootstrapAdminResult(
+                    admin_id=str(existing.id),
+                    username=existing.username,
+                    created=False,
+                )
+            if administrators:
+                if adopt_existing_sole_admin and len(administrators) == 1:
+                    return self._adopt_locked_admin(
+                        session,
+                        administrators[0],
+                        canonical_username=canonical_username,
+                        password=password,
+                        action="admin_auth.bootstrap.adopt_sole_admin",
+                        reason="本地 Compose 自动接管唯一系统管理员身份",
+                    )
                 raise BootstrapAlreadyCompletedError(
-                    "首个平台管理员已完成初始化，不能通过初始化命令提升其他账号"
+                    "系统管理员已完成初始化，不能通过初始化命令创建第二个管理员"
                 )
-        created = existing is None
-        if existing is None:
-            if password is None:
-                raise BootstrapPasswordRequiredError(
-                    "创建首个平台管理员时必须提供初始密码"
-                )
-            registered = self.registration.register(phone_canonical, password)
-            user_id = registered.user_id
-        else:
-            user_id = existing.id
-
-        identity = UserContext(
-            user_id=str(user_id),
-            session_id="platform-admin-bootstrap",
-            is_platform_admin=True,
-        )
-        promoted = False
-        with self.database.transaction(identity) as session:
-            user = session.get(UserRecord, user_id)
-            if user is None:
-                raise RuntimeError("首个平台管理员用户不存在")
-            if user.status != "active":
-                raise RuntimeError("不能把已停用用户设为平台管理员")
-            if not user.is_platform_admin:
-                user.is_platform_admin = True
-                promoted = True
+            admin = AdminUserRecord(
+                username=canonical_username,
+                password_hash=self.password_service.hash(password),
+                status="active",
+                must_change_password=True,
+            )
+            session.add(admin)
+            session.flush()
             session.add(
                 AuditEventRecord(
-                    actor_user_id=user.id,
-                    target_user_id=user.id,
-                    action="auth.bootstrap_admin",
-                    target_type="user",
-                    target_id=str(user.id),
-                    reason="首个平台管理员初始化",
-                    before_summary={"is_platform_admin": not promoted},
+                    actor_admin_id=admin.id,
+                    action="admin_auth.bootstrap",
+                    target_type="admin_user",
+                    target_id=str(admin.id),
+                    reason="系统管理员初始化",
                     after_summary={
-                        "is_platform_admin": True,
-                        "created": created,
-                        "operational_exception": "first_admin_bootstrap",
+                        "username": admin.username,
+                        "created": True,
+                        "must_change_password": True,
                     },
                     correlation_id=str(uuid.uuid4()),
                 )
             )
-        return BootstrapAdminResult(
-            user_id=str(user_id),
-            phone_canonical=phone_canonical,
-            created=created,
-            promoted=promoted,
+            return BootstrapAdminResult(
+                admin_id=str(admin.id),
+                username=admin.username,
+                created=True,
+            )
+
+    def _adopt_locked_admin(
+        self,
+        session: Session,
+        admin: AdminUserRecord,
+        *,
+        canonical_username: str,
+        password: str,
+        action: str,
+        reason: str,
+    ) -> BootstrapAdminResult:
+        recovered_at = datetime.now(UTC)
+        previous_username = admin.username
+        previous_status = admin.status
+        admin.username = canonical_username
+        admin.password_hash = self.password_service.hash(password)
+        admin.password_changed_at = recovered_at
+        admin.status = "active"
+        admin.must_change_password = True
+        session.execute(
+            update(AdminSessionRecord)
+            .where(
+                AdminSessionRecord.admin_user_id == admin.id,
+                AdminSessionRecord.revoked_at.is_(None),
+            )
+            .values(revoked_at=recovered_at)
         )
+        session.add(
+            AuditEventRecord(
+                actor_admin_id=admin.id,
+                action=action,
+                target_type="admin_user",
+                target_id=str(admin.id),
+                reason=reason,
+                before_summary={
+                    "username": previous_username,
+                    "status": previous_status,
+                },
+                after_summary={
+                    "username": admin.username,
+                    "status": admin.status,
+                    "sessions_revoked": True,
+                    "must_change_password": True,
+                },
+                correlation_id=str(uuid.uuid4()),
+            )
+        )
+        return BootstrapAdminResult(
+            admin_id=str(admin.id),
+            username=admin.username,
+            created=False,
+            adopted=True,
+        )
+
+    def rotate_existing_password(
+        self,
+        username: str,
+        password: str | None,
+        *,
+        allow_local_default_password: bool = False,
+    ) -> BootstrapAdminResult:
+        canonical_username = normalize_username(username)
+        if password is None:
+            raise BootstrapPasswordRequiredError("恢复系统管理员时必须提供新密码")
+        if (
+            password == LOCAL_DEFAULT_ADMIN_PASSWORD
+            and not allow_local_default_password
+        ):
+            raise InsecureBootstrapPasswordError("非本地环境禁止使用默认管理员密码")
+
+        recovered_at = datetime.now(UTC)
+        identity = SystemContext(service_name="admin-credential-recovery")
+        with self.database.transaction(identity) as session:
+            if session.bind is not None and session.bind.dialect.name == "postgresql":
+                session.execute(text("SELECT pg_advisory_xact_lock(1280785237)"))
+            admin = session.scalar(
+                select(AdminUserRecord)
+                .where(AdminUserRecord.username == canonical_username)
+                .limit(1)
+                .with_for_update()
+            )
+            if admin is None:
+                raise BootstrapAdminNotFoundError("指定的系统管理员不存在，无法恢复凭据")
+            admin.password_hash = self.password_service.hash(password)
+            admin.password_changed_at = recovered_at
+            admin.status = "active"
+            admin.must_change_password = True
+            session.execute(
+                update(AdminSessionRecord)
+                .where(
+                    AdminSessionRecord.admin_user_id == admin.id,
+                    AdminSessionRecord.revoked_at.is_(None),
+                )
+                .values(revoked_at=recovered_at)
+            )
+            session.add(
+                AuditEventRecord(
+                    actor_admin_id=admin.id,
+                    action="admin_auth.credential.recover",
+                    target_type="admin_user",
+                    target_id=str(admin.id),
+                    reason="显式管理员凭据恢复",
+                    after_summary={
+                        "username": admin.username,
+                        "sessions_revoked": True,
+                        "must_change_password": True,
+                    },
+                    correlation_id=str(uuid.uuid4()),
+                )
+            )
+            return BootstrapAdminResult(
+                admin_id=str(admin.id),
+                username=admin.username,
+                created=False,
+            )
+
+    def adopt_existing_sole_admin(
+        self,
+        username: str,
+        password: str | None,
+        *,
+        allow_local_default_password: bool = False,
+    ) -> BootstrapAdminResult:
+        canonical_username = normalize_username(username)
+        if password is None:
+            raise BootstrapPasswordRequiredError("接管系统管理员时必须提供新密码")
+        if (
+            password == LOCAL_DEFAULT_ADMIN_PASSWORD
+            and not allow_local_default_password
+        ):
+            raise InsecureBootstrapPasswordError("非本地环境禁止使用默认管理员密码")
+
+        identity = SystemContext(service_name="admin-sole-identity-adoption")
+        with self.database.transaction(identity) as session:
+            if session.bind is not None and session.bind.dialect.name == "postgresql":
+                session.execute(text("SELECT pg_advisory_xact_lock(1280785237)"))
+            administrators = list(
+                session.scalars(
+                    select(AdminUserRecord)
+                    .order_by(AdminUserRecord.id)
+                    .with_for_update()
+                )
+            )
+            if len(administrators) != 1:
+                raise BootstrapSoleAdminRecoveryError(
+                    "显式接管要求数据库中恰好存在一个系统管理员"
+                )
+
+            return self._adopt_locked_admin(
+                session,
+                administrators[0],
+                canonical_username=canonical_username,
+                password=password,
+                action="admin_auth.credential.adopt_sole_admin",
+                reason="显式接管唯一系统管理员身份",
+            )
+
+
+def _env_true(name: str) -> bool:
+    return os.getenv(name, "").strip().lower() in {"1", "true", "yes", "on"}
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="幂等创建或提升 LumenX 平台管理员")
-    parser.add_argument("--phone", required=True)
+    parser = argparse.ArgumentParser(description="幂等创建 LumenX 独立系统管理员")
+    parser.add_argument(
+        "--username",
+        default=os.getenv("LUMENX_BOOTSTRAP_ADMIN_USERNAME", "admin"),
+    )
     parser.add_argument(
         "--password",
-        help="仅新建用户时使用；省略后从终端安全读取，不写入命令历史",
+        help="仅首次创建时使用；省略后从环境变量或终端读取",
+    )
+    parser.add_argument(
+        "--password-env",
+        default="LUMENX_BOOTSTRAP_ADMIN_PASSWORD",
+        help="初始密码环境变量名",
+    )
+    recovery_group = parser.add_mutually_exclusive_group()
+    recovery_group.add_argument(
+        "--rotate-existing",
+        action="store_true",
+        help="显式恢复现有管理员密码并撤销其全部后台会话",
+    )
+    recovery_group.add_argument(
+        "--adopt-existing-sole-admin",
+        action="store_true",
+        help="显式把唯一现有管理员接管为指定用户名并恢复凭据",
     )
     args = parser.parse_args()
     settings = get_deployment_settings()
-    if settings.deployment_mode is not DeploymentMode.CLOUD or not settings.database_url:
-        raise RuntimeError("平台管理员初始化仅支持已配置 PostgreSQL 的云端模式")
+    if settings.deployment_mode not in {DeploymentMode.CLOUD, DeploymentMode.TEST}:
+        raise RuntimeError("系统管理员初始化仅支持 PostgreSQL 云端或发布测试模式")
+    if not settings.database_url:
+        raise RuntimeError("系统管理员初始化缺少 PostgreSQL 连接")
+
+    password = args.password or os.getenv(args.password_env)
+    if password is None:
+        password = getpass.getpass("请输入系统管理员初始密码：")
+    allow_default = _env_true("LUMENX_ALLOW_DEFAULT_BOOTSTRAP_ADMIN_PASSWORD")
+    adopt_on_local_bootstrap = _env_true(
+        "LUMENX_BOOTSTRAP_ADMIN_ADOPT_EXISTING_SOLE"
+    )
+    if adopt_on_local_bootstrap and not allow_default:
+        raise RuntimeError("非本地环境禁止自动接管现有系统管理员")
     database = Database(settings.database_url)
     try:
-        service = PlatformAdminBootstrapService(
-            database,
-            settings.session_secret.get_secret_value(),
-            initial_grant_microtickets=settings.registration_initial_grant_microtickets,
-        )
-        try:
-            result = service.bootstrap(args.phone, args.password)
-        except BootstrapPasswordRequiredError:
-            password = getpass.getpass("用户不存在，请输入初始密码：")
-            result = service.bootstrap(args.phone, password)
-        state = "已创建并设为管理员" if result.created else (
-            "已提升为管理员" if result.promoted else "已经是管理员"
-        )
-        print(f"{state}：{result.phone_canonical}，用户 ID {result.user_id}")
+        service = PlatformAdminBootstrapService(database)
+        if args.adopt_existing_sole_admin:
+            result = service.adopt_existing_sole_admin(
+                args.username,
+                password,
+                allow_local_default_password=allow_default,
+            )
+            state = "唯一身份已接管"
+        elif args.rotate_existing:
+            result = service.rotate_existing_password(
+                args.username,
+                password,
+                allow_local_default_password=allow_default,
+            )
+            state = "凭据已恢复"
+        else:
+            result = service.bootstrap(
+                args.username,
+                password,
+                allow_local_default_password=allow_default,
+                adopt_existing_sole_admin=adopt_on_local_bootstrap,
+            )
+            if result.adopted:
+                state = "唯一身份已自动接管"
+            else:
+                state = "已创建" if result.created else "已存在"
+        print(f"系统管理员{state}：{result.username}，管理员 ID {result.admin_id}")
         return 0
     finally:
         database.dispose()

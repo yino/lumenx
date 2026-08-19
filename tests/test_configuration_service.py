@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from dataclasses import replace
-
 import pytest
 from sqlalchemy import select
 
@@ -11,7 +9,7 @@ from src.platform.configuration_service import (
     ConfigurationService,
     ConfigurationValidationError,
 )
-from src.platform.contracts import UserContext
+from src.platform.contracts import AdminContext, UserContext
 from src.platform.db_models import (
     AuditEventRecord,
     ConfigVersionRecord,
@@ -30,7 +28,7 @@ def configuration_service():
     PlatformConfigRecord.__table__.create(database.engine)
     AuditEventRecord.__table__.create(database.engine)
     context = _create_scope(database)
-    admin = replace(context.identity, is_platform_admin=True)
+    admin = AdminContext(admin_id="9001", session_id="9101", username="admin")
     yield database, admin, ConfigurationService(database)
     database.engine.dispose()
 
@@ -316,9 +314,8 @@ def test_configuration_administration_requires_platform_admin(
 ) -> None:
     _database, admin, service = configuration_service
     normal_user = UserContext(
-        user_id=admin.user_id,
-        session_id=admin.session_id,
-        is_platform_admin=False,
+        user_id="2001",
+        session_id="2101",
     )
 
     with pytest.raises(PermissionError, match="平台管理员"):

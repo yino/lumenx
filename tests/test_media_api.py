@@ -48,7 +48,6 @@ def media_api():
         session_id=int(context.identity.session_id),
         phone_canonical="+8613800138000",
         phone_verified=False,
-        is_platform_admin=False,
     )
     sessions = FakeSessions(principal)
     auth = SimpleNamespace(
@@ -125,6 +124,16 @@ def test_media_upload_returns_id_without_object_key(media_api) -> None:
     assert access.json()["url"].startswith("https://private.example/")
     assert access.json()["policy_config_version_id"] == "media-policy-v1"
     assert object_store.signed[-1][1] <= 60
+
+    download = client.get(
+        f"/media/{payload['id']}/download",
+        headers=_headers(context.workspace_id),
+    )
+    assert download.status_code == 200
+    assert download.content == b"image-content"
+    assert download.headers["content-type"] == "image/png"
+    assert download.headers["cache-control"] == "private, no-store"
+    assert download.headers["content-disposition"].endswith('.png"')
 
 
 def test_legacy_upload_paths_use_media_id_contract(media_api) -> None:

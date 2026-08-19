@@ -5,6 +5,7 @@ import uuid
 import pytest
 from sqlalchemy import func, select
 
+from src.platform.ai_task_state import AITaskStateService
 from src.platform.db_models import (
     AITaskAttemptRecord,
     AITaskRecord,
@@ -246,6 +247,55 @@ def test_billable_postprocessing_failure_settles_and_marks_support_review() -> N
         assert task.safe_error_code == "OUTPUT_STORAGE_FAILED"
         assert hold.status == "settled"
         assert usage.outcome == "billable_failure"
+    database.engine.dispose()
+
+
+def test_unmetered_billable_failure_releases_full_hold_and_marks_review() -> None:
+    database, context, reservation = _settlement_database()
+    created_attempt = AITaskStateService(database).create_initial_attempt(
+        context,
+        task_id=reservation.task_id,
+        config_snapshot={
+            "config_version_id": "test-unmetered-failure",
+            "capability": "script.analysis",
+            "parameters": {},
+            "metering_formula": LLM_FORMULA,
+        },
+        provider="dashscope",
+        provider_model_id="qwen-test",
+    )
+    with database.session_factory.begin() as session:
+        task = session.get(AITaskRecord, int(reservation.task_id))
+        attempt = session.get(AITaskAttemptRecord, int(created_attempt.id))
+        assert task is not None and attempt is not None
+        task.status = "running"
+        task.provider_billable = True
+        attempt.status = "ambiguous"
+
+    result = TicketSettlementService(database).release_unmetered_billable_failure(
+        context,
+        task_id=reservation.task_id,
+        attempt_id=str(attempt.id),
+        support_review_reason="供应商用量超出报价快照",
+        safe_error_code="PROVIDER_USAGE_REVIEW_REQUIRED",
+        safe_error_message="预扣已退回",
+        attempt_diagnostic={"stage": "provider_invocation"},
+    )
+
+    assert result.support_review is True
+    assert result.charged_microtickets == 0
+    assert result.released_microtickets == 2_000_000
+    assert result.wallet.held_microtickets == 0
+    with database.session_factory() as session:
+        task = session.get(AITaskRecord, int(reservation.task_id))
+        hold = session.get(TicketHoldRecord, int(reservation.hold_id))
+        usage = session.get(UsageEventRecord, int(result.usage_event_id))
+        assert task is not None and hold is not None and usage is not None
+        assert task.status == "support_review"
+        assert task.provider_billable is True
+        assert hold.status == "released"
+        assert usage.outcome == "billable_failure"
+        assert usage.raw_provider_usage == {"unmetered": True}
     database.engine.dispose()
 
 

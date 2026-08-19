@@ -46,7 +46,7 @@ AttemptStatus = Literal[
 TASK_TRANSITIONS: dict[str, frozenset[str]] = {
     "reserved": frozenset({"queued", "failed", "cancelled"}),
     "queued": frozenset({"running", "failed", "cancelled"}),
-    "running": frozenset({"provider_succeeded", "failed", "cancelled"}),
+    "running": frozenset({"provider_succeeded", "failed", "cancelled", "support_review"}),
     "provider_succeeded": frozenset({"succeeded", "support_review"}),
     "succeeded": frozenset(),
     "failed": frozenset(),

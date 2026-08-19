@@ -18,6 +18,17 @@ The edge proxy SHALL forward the entire versioned API subtree without maintainin
 - **WHEN** a backend route is added below the supported internal API surface
 - **THEN** it is reachable through `/api/v1` without adding another Nginx location block
 
+### Requirement: Cloud content helpers use the hosted execution boundary
+Browser content helpers that combine persisted project state with AI generation MUST read and write user-scoped PostgreSQL documents, and MUST submit generation through the persistent metered AI gateway instead of invoking the desktop pipeline or a provider directly.
+
+#### Scenario: User opens the next-episode hook panel
+- **WHEN** an authenticated user reads a project's next-episode hook in the selected workspace
+- **THEN** the server returns the PostgreSQL-backed cache, staleness state, and optimistic version without creating an AI task
+
+#### Scenario: User generates a next-episode hook
+- **WHEN** an authenticated user explicitly requests generation for a non-empty owned project
+- **THEN** the server builds the prompt from the stored script ending, submits a `prompt.polish` persistent metered task, exposes only the safe text result to that task owner, and persists the accepted result with optimistic version control
+
 ### Requirement: Internal-only backend boundary
 The default cloud Compose topology MUST make Nginx the public application entry point and MUST NOT publish the backend service port to external interfaces.
 

@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import json
 import uuid
-from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -13,12 +12,13 @@ from src.platform.configuration_service import (
     ConfigurationService,
     ConfigurationValidationError,
 )
+from src.platform.contracts import AdminContext
 from src.platform.db_models import (
+    AdminUserRecord,
     AuditEventRecord,
     ConfigVersionRecord,
     ModelConfigRecord,
     PlatformConfigRecord,
-    UserRecord,
 )
 from src.platform.model_catalog_seeder import ModelCatalogSeeder
 from tests.test_configuration_schemas import _image_route, _platform
@@ -35,12 +35,18 @@ def catalog_seeder():
     ModelConfigRecord.__table__.create(database.engine)
     PlatformConfigRecord.__table__.create(database.engine)
     AuditEventRecord.__table__.create(database.engine)
-    context = _create_scope(database)
-    admin = replace(context.identity, is_platform_admin=True)
+    AdminUserRecord.__table__.create(database.engine)
+    _create_scope(database)
+    admin = AdminContext(admin_id="9001", session_id="9101", username="admin")
     with database.session_factory.begin() as session:
-        user = session.get(UserRecord, int(admin.user_id))
-        assert user is not None
-        user.is_platform_admin = True
+        session.add(
+            AdminUserRecord(
+                id=9001,
+                username="admin",
+                password_hash="test-password-hash",
+                status="active",
+            )
+        )
     yield database, admin
     database.engine.dispose()
 

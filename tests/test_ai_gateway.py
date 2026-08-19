@@ -85,6 +85,37 @@ class UnavailableRouteProvider:
         raise LookupError("当前没有可用的模型配置")
 
 
+class SpeechRouteProvider:
+    def __init__(self) -> None:
+        self.version_id = str(uuid.uuid4())
+
+    def build_plan(self, capability, requested_parameters):
+        route = ModelRouteSnapshot(
+            config_version_id=self.version_id,
+            route_id=str(uuid.uuid4()),
+            capability=str(capability),
+            provider="dashscope",
+            provider_model_id="cosyvoice-v2",
+            display_name="平台对白语音模型",
+            parameters=dict(requested_parameters),
+            metering_formula={
+                "kind": "speech",
+                "unit": "characters",
+                "tokens_per_unit": 1,
+                "max_units": 20_000,
+            },
+            fallback_policy={"enabled": False, "max_attempts": 1},
+            secret_ref="DASHSCOPE_API_KEY",
+        )
+        return CapabilityRoutePlan(
+            config_version_id=self.version_id,
+            capability=str(capability),
+            tokens_per_ticket=1000,
+            max_ai_concurrency_per_user=2,
+            routes=(route,),
+        )
+
+
 def _gateway_database():
     database, context = _reservation_database(initial_balance=3_000_000)
     AITaskAttemptRecord.__table__.create(database.engine)
@@ -177,6 +208,32 @@ def test_gateway_validates_quotes_reserves_persists_attempt_and_dispatches_only_
             assert attempt is not None
             assert attempt.config_snapshot == task.config_snapshot
             assert attempt.provider_model_id == "wan-image-v1"
+    finally:
+        database.engine.dispose()
+
+
+def test_gateway_quotes_speech_batch_from_submitted_characters() -> None:
+    database, context, media_id, asset_id = _gateway_database()
+    dispatcher = RecordingDispatcher()
+    try:
+        result = _gateway(database, dispatcher, SpeechRouteProvider()).submit(
+            context,
+            _payload(
+                media_id,
+                asset_id,
+                capability="speech.tts",
+                idempotency_key="speech-batch-quote-1",
+                content={
+                    "operation": "audio.dialogue.batch",
+                    "items": [{"text": "第一句"}, {"text": "第二句台词"}],
+                },
+                parameters={},
+            ),
+        )
+
+        assert result.quoted_microtickets == 8_000
+        assert result.model_display_name == "平台对白语音模型"
+        assert dispatcher.task_ids == [result.task_id]
     finally:
         database.engine.dispose()
 

@@ -1,12 +1,11 @@
 from __future__ import annotations
 
-from dataclasses import replace
-
 import pytest
 from pydantic import SecretStr
 
 from src.platform.configuration_schemas import ConfigurationDraft
 from src.platform.configuration_service import ConfigurationService
+from src.platform.contracts import AdminContext, UserContext
 from src.platform.db_models import (
     AuditEventRecord,
     ConfigVersionRecord,
@@ -30,7 +29,7 @@ def routing_service():
     PlatformConfigRecord.__table__.create(database.engine)
     AuditEventRecord.__table__.create(database.engine)
     context = _create_scope(database)
-    admin = replace(context.identity, is_platform_admin=True)
+    admin = AdminContext(admin_id="9001", session_id="9101", username="admin")
     service = ConfigurationService(database)
     yield database, admin, service
     database.engine.dispose()
@@ -90,7 +89,7 @@ def test_route_plan_selects_primary_and_only_eligible_fallback(
         primary_model="wan-image-primary",
         include_fallback=True,
     )
-    runtime_user = replace(admin, is_platform_admin=False)
+    runtime_user = UserContext(user_id="2001", session_id="2101")
     provider = DatabaseModelConfigurationProvider(service, runtime_user)
 
     plan = provider.build_plan("image.t2i", {"count": 2})
@@ -150,7 +149,7 @@ def test_request_scoped_client_uses_task_snapshot_and_injected_secret(
     )
     provider = DatabaseModelConfigurationProvider(
         service,
-        replace(admin, is_platform_admin=False),
+        UserContext(user_id="2001", session_id="2101"),
     )
     original_plan = provider.build_plan("image.t2i", {"count": 2})
 

@@ -26,8 +26,10 @@ interface ScriptNode {
 export default function ScriptProcessor() {
     const ts = useTranslations("script");
     const tc = useTranslations("common");
+    const tr = useTranslations("reconcile");
     const currentProject = useProjectStore((state) => state.currentProject);
     const updateProject = useProjectStore((state) => state.updateProject);
+    const selectProject = useProjectStore((state) => state.selectProject);
     const analyzeProject = useProjectStore((state) => state.analyzeProject);
     const isAnalyzing = useProjectStore((state) => state.isAnalyzing);
 
@@ -36,6 +38,7 @@ export default function ScriptProcessor() {
     // store update that spread the backend payload without re-mapping).
     const projectText = (currentProject?.originalText ?? (currentProject as any)?.original_text) || "";
     const [script, setScript] = useState(projectText);
+    const persistedScriptRef = useRef(projectText);
     const [nodes, setNodes] = useState<ScriptNode[]>([]);
 
     // UI State
@@ -51,6 +54,7 @@ export default function ScriptProcessor() {
         if (currentProject) {
             const txt = (currentProject as any)?.original_text ?? currentProject.originalText ?? "";
             setScript(txt || "");
+            persistedScriptRef.current = txt || "";
         }
     }, [currentProject?.id]);
 
@@ -90,6 +94,11 @@ export default function ScriptProcessor() {
     // R2V v2 Phase 4 — ReconcileModal opens after a successful analyze
     // when the episode belongs to a series (series_id !== null).
     const [reconcileOpen, setReconcileOpen] = useState(false);
+    const hasLocalEntities = !!currentProject?.series_id && [
+        ...(currentProject.characters || []),
+        ...(currentProject.scenes || []),
+        ...(currentProject.props || []),
+    ].some((asset: any) => asset.scope === "project" || asset.source === "episode");
 
     useEffect(() => {
         const handler = () => setReconcileOpen(true);
@@ -222,15 +231,27 @@ export default function ScriptProcessor() {
                         </>
                     ) : null}
                     trailing={(
-                        <button
-                            type="button"
-                            onClick={handleAnalyze}
-                            disabled={!script || isAnalyzing}
-                            className="inline-flex h-8 items-center gap-1.5 rounded-full bg-primary px-4 py-1.5 font-sans text-[0.8125rem] font-semibold text-on-accent shadow-[var(--btn-pri-glow),inset_0_1.5px_0_rgba(255,255,255,0.14)] transition-all duration-fast ease-out-quart hover:bg-primary-hover disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/55"
-                        >
-                            {isAnalyzing ? <Loader2 size={13} className="animate-spin" /> : <Wand2 size={13} />}
-                            <span>{isAnalyzing ? ts("analyzingScript") : ts("extractEntities")}</span>
-                        </button>
+                        <div className="flex items-center gap-2">
+                            {hasLocalEntities && (
+                                <button
+                                    type="button"
+                                    onClick={() => setReconcileOpen(true)}
+                                    className="inline-flex h-8 items-center gap-1.5 rounded-full border border-glass-border bg-glass px-3 py-1.5 font-sans text-[0.8125rem] font-medium text-text-secondary transition-colors hover:border-primary/45 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/55"
+                                >
+                                    <Sparkles size={13} />
+                                    <span>{tr("open")}</span>
+                                </button>
+                            )}
+                            <button
+                                type="button"
+                                onClick={handleAnalyze}
+                                disabled={!script || isAnalyzing}
+                                className="inline-flex h-8 items-center gap-1.5 rounded-full bg-primary px-4 py-1.5 font-sans text-[0.8125rem] font-semibold text-on-accent shadow-[var(--btn-pri-glow),inset_0_1.5px_0_rgba(255,255,255,0.14)] transition-all duration-fast ease-out-quart hover:bg-primary-hover disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/55"
+                            >
+                                {isAnalyzing ? <Loader2 size={13} className="animate-spin" /> : <Wand2 size={13} />}
+                                <span>{isAnalyzing ? ts("analyzingScript") : ts("extractEntities")}</span>
+                            </button>
+                        </div>
                     )}
                 />
                 <div className="flex-1 relative p-6 bg-surface overflow-hidden">
@@ -259,10 +280,10 @@ export default function ScriptProcessor() {
                             // typing — that's reserved for the explicit
                             // "提取实体" CTA.
                             if (!currentProject) return;
-                            const stored = ((currentProject as any).original_text ?? currentProject.originalText) || "";
-                            if (stored === script) return;
+                            if (persistedScriptRef.current === script) return;
                             try {
                                 await api.updateScriptText(currentProject.id, script);
+                                persistedScriptRef.current = script;
                             } catch (err) {
                                 console.warn("Failed to persist script text:", err);
                             }
@@ -288,6 +309,14 @@ export default function ScriptProcessor() {
                 isOpen={reconcileOpen}
                 scriptId={currentProject?.id ?? null}
                 onClose={() => setReconcileOpen(false)}
+                onApplied={async () => {
+                    if (!currentProject?.id) return;
+                    try {
+                        await selectProject(currentProject.id);
+                    } catch (error) {
+                        console.warn("Failed to refresh reconciled project:", error);
+                    }
+                }}
             />
 
         </div>

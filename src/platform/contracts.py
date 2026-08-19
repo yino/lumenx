@@ -16,7 +16,18 @@ TemplateT = TypeVar("TemplateT")
 class UserContext:
     user_id: str
     session_id: str | None = None
-    is_platform_admin: bool = False
+
+
+@dataclass(frozen=True, slots=True)
+class AdminContext:
+    admin_id: str
+    session_id: str | None = None
+    username: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class SystemContext:
+    service_name: str
 
 
 @dataclass(frozen=True, slots=True)

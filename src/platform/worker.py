@@ -9,7 +9,11 @@ from .ai_dispatch import (
     AI_TASK_QUEUE,
     CeleryRecoveryDispatcher,
 )
-from .ai_recovery import AIWorkerRecoveryService
+from .ai_recovery import (
+    AIRecoveryRepository,
+    AIWorkerRecoveryService,
+    UnsupportedProviderRecoveryInvoker,
+)
 from .ai_worker import AIWorkerService
 from .database import Database
 from .maintenance import (
@@ -84,6 +88,7 @@ _maintenance_service: PlatformMaintenance | None = None
 
 def _configure_release_test_worker() -> AIWorkerService:
     from .ai_io import AIOutputFinalizationService, AIProviderInputResolver
+    from .ai_result_application import AIResultApplicationService
     from .ai_task_state import AITaskStateService
     from .ai_worker import AIWorkerTaskRepository
     from .media_storage import CloudMediaStorage
@@ -117,12 +122,14 @@ def _configure_release_test_worker() -> AIWorkerService:
             settlement=settlement,
             media_storage=storage,
             downloader=DeterministicProviderOutputDownloader(settings),
+            result_applier=AIResultApplicationService(database),
         ),
     )
 
 
 def _configure_cloud_worker() -> AIWorkerService:
     from .ai_io import AIOutputFinalizationService, AIProviderInputResolver
+    from .ai_result_application import AIResultApplicationService
     from .ai_task_state import AITaskStateService
     from .ai_worker import AIWorkerTaskRepository
     from .credentials import EnvironmentCredentialProvider
@@ -154,7 +161,29 @@ def _configure_cloud_worker() -> AIWorkerService:
             settlement=settlement,
             media_storage=storage,
             downloader=ProductionProviderOutputDownloader(settings),
+            result_applier=AIResultApplicationService(database),
         ),
+    )
+
+
+def _configure_cloud_recovery() -> AIWorkerRecoveryService:
+    from .ai_task_state import AITaskStateService
+    from .credentials import EnvironmentCredentialProvider
+    from .model_routing import RequestScopedModelClientFactory
+    from .ticket_settlement import TicketSettlementService
+
+    if not settings.database_url:
+        raise RuntimeError("AI worker 恢复服务缺少 PostgreSQL 配置")
+    database = Database(settings.database_url)
+    task_state = AITaskStateService(database)
+    return AIWorkerRecoveryService(
+        recovery=AIRecoveryRepository(database),
+        task_state=task_state,
+        model_clients=RequestScopedModelClientFactory(
+            EnvironmentCredentialProvider(settings.provider_secret_ref_names)
+        ),
+        provider_recovery=UnsupportedProviderRecoveryInvoker(),
+        settlement=TicketSettlementService(database),
     )
 
 
@@ -162,6 +191,7 @@ if settings.deployment_mode is DeploymentMode.TEST:
     _worker_service = _configure_release_test_worker()
 elif settings.deployment_mode is DeploymentMode.CLOUD:
     _worker_service = _configure_cloud_worker()
+    _recovery_service = _configure_cloud_recovery()
 
 
 def configure_worker_service(service: AIWorkerService) -> None:

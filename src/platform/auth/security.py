@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import re
 
 import phonenumbers
 from argon2 import PasswordHasher, Type
@@ -13,6 +14,10 @@ from ..db_models import UserRecord
 
 
 class InvalidPhoneError(ValueError):
+    pass
+
+
+class InvalidUsernameError(ValueError):
     pass
 
 
@@ -38,6 +43,22 @@ def normalize_phone(value: str, default_region: str = "CN") -> str:
     if not phonenumbers.is_valid_number(phone) or number_type not in mobile_types:
         raise InvalidPhoneError("手机号格式不正确")
     return phonenumbers.format_number(phone, PhoneNumberFormat.E164)
+
+
+def normalize_username(value: str) -> str:
+    normalized = value.strip().lower()
+    if not re.fullmatch(r"[a-z][a-z0-9_.-]{2,31}", normalized):
+        raise InvalidUsernameError("用户名格式不正确")
+    return normalized
+
+
+def normalize_login_identifier(value: str) -> tuple[str, str]:
+    raw = value.strip()
+    if not raw:
+        raise InvalidPhoneError("请输入手机号或用户名")
+    if re.search(r"[a-zA-Z_.-]", raw):
+        return "username", normalize_username(raw)
+    return "phone", normalize_phone(raw)
 
 
 def ensure_phone_available(session: Session, phone_canonical: str) -> None:
