@@ -24,7 +24,7 @@ from fastapi import FastAPI, HTTPException, BackgroundTasks, UploadFile, File, R
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
-from typing import Optional, Dict, List, Any
+from typing import Optional, Dict, List, Any, Literal
 import asyncio
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -4026,6 +4026,18 @@ class PolishVideoPromptRequest(BaseModel):
     polish_model: str = ""
 
 
+class CanvasPromptInput(BaseModel):
+    node_id: str = Field(..., max_length=200)
+    title: str = Field("", max_length=200)
+    content: str = Field(..., min_length=1, max_length=10000)
+
+
+class ComposeCanvasPromptRequest(BaseModel):
+    inputs: List[CanvasPromptInput] = Field(..., min_length=1, max_length=20)
+    target: Literal["image", "video"] = "image"
+    instruction: str = Field("", max_length=2000)
+
+
 def _polish_error_response(err) -> Dict[str, Any]:
     """把 PolishError 转成统一的 502 响应体。
     model_echo 时附带原文双语供前端做 warning 渲染。"""
@@ -4039,6 +4051,36 @@ def _polish_error_response(err) -> Dict[str, Any]:
     if err.prompt_en:
         body["prompt_en"] = err.prompt_en
     return body
+
+
+@app.post("/canvas/compose_prompt")
+def compose_canvas_prompt(request: ComposeCanvasPromptRequest):
+    """Compose connected canvas text nodes into one bilingual generation prompt."""
+    from .llm import PolishError
+    try:
+        processor = ScriptProcessor()
+        result = processor.compose_canvas_prompt(
+            inputs=[
+                {
+                    "node_id": item.node_id,
+                    "title": item.title,
+                    "content": item.content,
+                }
+                for item in request.inputs
+            ],
+            target=request.target,
+            instruction=request.instruction,
+        )
+        return {
+            "prompt_cn": result.get("prompt_cn", ""),
+            "prompt_en": result.get("prompt_en", ""),
+        }
+    except PolishError as e:
+        logger.warning("compose_canvas_prompt failed: %s", e)
+        raise HTTPException(status_code=502, detail=_polish_error_response(e))
+    except Exception as e:
+        logger.exception("compose_canvas_prompt unexpected error")
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.post("/video/polish_prompt")

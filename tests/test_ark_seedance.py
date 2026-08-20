@@ -2,6 +2,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+import requests
 
 from src.apps.comic_gen.models import AssetUnit, Character, ImageVariant, VideoTask
 from src.apps.comic_gen.pipeline import ComicGenPipeline
@@ -196,6 +197,89 @@ def test_submit_poll_and_download_agent_plan_video(monkeypatch, tmp_path):
     }
     assert result_path == str(output_path)
     assert output_path.read_bytes() == b"test-video"
+
+
+def test_video_download_retries_transient_ssl_failure(monkeypatch, tmp_path):
+    calls = {"count": 0}
+
+    def fake_get(*args, **kwargs):
+        del args, kwargs
+        calls["count"] += 1
+        if calls["count"] == 1:
+            raise requests.exceptions.SSLError("temporary EOF")
+        return _FakeResponse(content=b"recovered-video")
+
+    monkeypatch.setattr("src.models.ark_seedance.requests.get", fake_get)
+    monkeypatch.setattr("src.models.ark_seedance.time.sleep", lambda _: None)
+
+    output_path = tmp_path / "retry.mp4"
+    ArkSeedanceVideoModel._download_video(
+        "https://example.com/video.mp4",
+        str(output_path),
+    )
+
+    assert calls["count"] == 2
+    assert output_path.read_bytes() == b"recovered-video"
+
+
+def test_submission_and_polling_recover_from_transient_ssl_and_503(monkeypatch, tmp_path):
+    calls = {"submit": 0, "poll": 0}
+
+    def fake_post(*args, **kwargs):
+        del args, kwargs
+        calls["submit"] += 1
+        if calls["submit"] == 1:
+            raise requests.exceptions.SSLError("submission EOF")
+        return _FakeResponse(
+            payload={"id": "cgt-recovered"},
+            headers={"x-request-id": "req-recovered"},
+        )
+
+    def fake_get(url, **kwargs):
+        if url.endswith("/cgt-recovered"):
+            calls["poll"] += 1
+            if calls["poll"] == 1:
+                raise requests.exceptions.SSLError("poll EOF")
+            if calls["poll"] == 2:
+                return _FakeResponse(status_code=503, payload={"message": "busy"})
+            return _FakeResponse(payload={
+                "id": "cgt-recovered",
+                "status": "succeeded",
+                "content": {"video_url": "https://example.com/recovered.mp4"},
+            })
+        assert kwargs.get("stream") is True
+        return _FakeResponse(content=b"recovered-video")
+
+    monkeypatch.setattr("src.models.ark_seedance.requests.post", fake_post)
+    monkeypatch.setattr("src.models.ark_seedance.requests.get", fake_get)
+    monkeypatch.setattr("src.models.ark_seedance.time.sleep", lambda *_args: None)
+    provider_ids = {}
+
+    output_path = tmp_path / "recovered.mp4"
+    model = ArkSeedanceVideoModel({
+        "api_key": "test-key",
+        "poll_interval": 0.01,
+        "max_wait": 30,
+    })
+    result_path, _ = model.generate(
+        prompt="雨巷交锋",
+        output_path=str(output_path),
+        generation_mode="t2v",
+        on_provider_ids=lambda provider, task_id, request_id: provider_ids.update(
+            provider=provider,
+            task_id=task_id,
+            request_id=request_id,
+        ),
+    )
+
+    assert calls == {"submit": 2, "poll": 3}
+    assert provider_ids == {
+        "provider": "volcengine-ark",
+        "task_id": "cgt-recovered",
+        "request_id": "req-recovered",
+    }
+    assert result_path == str(output_path)
+    assert output_path.read_bytes() == b"recovered-video"
 
 
 def test_task_failure_surfaces_official_error(monkeypatch, tmp_path):

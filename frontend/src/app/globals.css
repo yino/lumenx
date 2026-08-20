@@ -542,6 +542,58 @@ html.atelier-light .xyq-capability-pill {
   background: rgba(255, 255, 255, 0.32);
 }
 
+/* ─── Free canvas / XYFlow ─── */
+.lumenx-free-canvas {
+  --free-canvas-dot: color-mix(in srgb, var(--color-text-muted) 42%, transparent);
+  --free-canvas-minimap-mask: color-mix(in srgb, var(--color-bg-base) 74%, transparent);
+}
+
+.lumenx-free-canvas .react-flow__node {
+  border-radius: 1rem;
+}
+
+.lumenx-free-canvas .react-flow__node:focus-visible .free-canvas-node {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 3px;
+}
+
+.lumenx-free-canvas .react-flow__edge-path {
+  filter: drop-shadow(0 0 4px color-mix(in srgb, var(--color-accent) 22%, transparent));
+  transition: stroke-width 160ms ease, opacity 160ms ease, filter 160ms ease;
+}
+
+.lumenx-free-canvas .react-flow__edge:hover .react-flow__edge-path,
+.lumenx-free-canvas .react-flow__edge.selected .react-flow__edge-path {
+  stroke-width: 2.2;
+  opacity: 1;
+  filter: drop-shadow(0 0 7px color-mix(in srgb, var(--color-accent) 44%, transparent));
+}
+
+.lumenx-free-canvas .react-flow__controls-button {
+  border-color: var(--color-border-default);
+  background: var(--color-bg-elevated);
+  color: var(--color-text-secondary);
+}
+
+.lumenx-free-canvas .react-flow__controls-button:hover {
+  background: var(--color-bg-hover);
+  color: var(--color-text-primary);
+}
+
+.lumenx-free-canvas .react-flow__controls-button svg {
+  fill: currentColor;
+}
+
+.lumenx-free-canvas .react-flow__attribution {
+  border-radius: 0.45rem 0 0 0;
+  background: color-mix(in srgb, var(--color-bg-elevated) 85%, transparent);
+  color: var(--color-text-muted);
+}
+
+.lumenx-free-canvas .react-flow__attribution a {
+  color: inherit;
+}
+
 @media (max-width: 767px) {
   .xyq-workspace-hero {
     min-height: 260px;

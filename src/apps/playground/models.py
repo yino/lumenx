@@ -32,6 +32,9 @@ class PlaygroundGeneration(BaseModel):
     outputs: List[PlaygroundOutput] = Field(default_factory=list, description="Generated outputs")
     status: str = Field("pending", description="Generation status: pending/processing/completed/failed")
     error: Optional[str] = Field(None, description="Error message if generation failed")
+    provider_name: Optional[str] = Field(None, description="Remote provider name")
+    provider_task_id: Optional[str] = Field(None, description="Remote provider task identifier")
+    provider_request_id: Optional[str] = Field(None, description="Remote provider request identifier")
     created_at: str = Field(..., description="Creation timestamp in ISO 8601 format")
 
 

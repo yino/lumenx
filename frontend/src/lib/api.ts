@@ -253,6 +253,7 @@ const CLOUD_AI_ROUTE_PATTERNS = [
     /^\/projects\/[^/]+\/assets\/[^/]+\/[^/]+\/generate_video$/,
     /^\/projects\/[^/]+\/(?:previous_episode\/summary|art_direction\/analyze|reparse)$/,
     /^\/video\/(?:polish_prompt|polish_r2v_prompt)$/,
+    /^\/canvas\/compose_prompt$/,
     /^\/voice\/(?:preview|clone|design\/preview|design\/translate)$/,
 ];
 
@@ -4148,6 +4149,31 @@ export const crudApi = {
 
 // ─── Playground API ─────────────────────────────────────────────────────────
 
+export interface CanvasPromptInputRequest {
+  node_id: string;
+  title: string;
+  content: string;
+}
+
+export interface CanvasPromptCompositionResponse {
+  prompt_cn: string;
+  prompt_en: string;
+}
+
+export const canvasApi = {
+  composePrompt: async (data: {
+    inputs: CanvasPromptInputRequest[];
+    target: "image" | "video";
+    instruction?: string;
+  }): Promise<CanvasPromptCompositionResponse> => {
+    const response = await apiClient.post<CanvasPromptCompositionResponse>(
+      `${API_URL}/canvas/compose_prompt`,
+      data,
+    );
+    return response.data;
+  },
+};
+
 export interface PlaygroundGenerateRequest {
   mode: string;
   model_id?: string;
@@ -4193,6 +4219,9 @@ export interface PlaygroundGenerationResponse {
   support_review_reason?: string | null;
   error_code?: string;
   error?: string;
+  provider_name?: string | null;
+  provider_task_id?: string | null;
+  provider_request_id?: string | null;
   created_at: string;
   updated_at?: string;
   quoted_microtickets?: string;
@@ -4348,6 +4377,9 @@ export const playgroundApi = {
       tokens_per_ticket?: string;
       cancellation_requested?: boolean;
       support_review?: boolean;
+      provider_name?: string | null;
+      provider_task_id?: string | null;
+      provider_request_id?: string | null;
     }>(API_URL + "/playground/history/" + id + "/status");
     return {
       ...response.data,

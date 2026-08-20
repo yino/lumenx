@@ -2,44 +2,156 @@
 
 import { useState, useMemo, useCallback } from 'react';
 import { useTranslations } from 'next-intl';
-import { Sparkles, Grid3x3, GalleryHorizontal } from 'lucide-react';
+import { GalleryHorizontal, Grid3x3, Layers3, Sparkles } from 'lucide-react';
 import { usePlaygroundStore, type PlaygroundGeneration } from './usePlaygroundStore';
 import { playgroundApi } from '@/lib/api';
 import ResultCard from './ResultCard';
 import GalleryView from './GalleryView';
 import DetailPanel from './DetailPanel';
 import QueuePanel from './QueuePanel';
+import ProjectCard, { deriveCover } from '@/components/project/ProjectCard';
+import type { Project, Series } from '@/store/projectStore';
+import { coverGradient, GRAIN_URL } from '@/lib/atelierCover';
 
-type FilterType = 'all' | 'image' | 'video';
+type FilterType = 'all' | 'project' | 'image' | 'video';
 
 const VIDEO_MODES = new Set(['t2v', 'i2v', 'r2v', 'v2v']);
 
-function formatSessionLabel(
-  dateStr: string,
-  todayLabel: string,
-  yesterdayLabel: string,
-): string {
-  const date = new Date(dateStr);
-  const now = new Date();
-  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-  const yesterday = new Date(today.getTime() - 86400000);
-  const itemDay = new Date(date.getFullYear(), date.getMonth(), date.getDate());
-
-  const hh = String(date.getHours()).padStart(2, '0');
-  const mm = String(date.getMinutes()).padStart(2, '0');
-
-  if (itemDay.getTime() === today.getTime()) {
-    return `${todayLabel} · ${hh}:${mm}`;
-  }
-  if (itemDay.getTime() === yesterday.getTime()) {
-    return `${yesterdayLabel} · ${hh}:${mm}`;
-  }
-  const month = date.getMonth() + 1;
-  const day = date.getDate();
-  return `${month}/${day} · ${hh}:${mm}`;
+export interface HistoryDateGroup {
+  key: string;
+  kind: 'today' | 'yesterday' | 'thisWeek' | 'month' | 'unknown';
+  year?: number;
+  month?: number;
 }
 
-export default function ResultGallery() {
+/** Calendar grouping uses the viewer's local timezone and treats Monday as
+ * the first day of the week. Today/yesterday always win over week grouping. */
+export function getHistoryDateGroup(
+  dateStr: string,
+  now = new Date(),
+): HistoryDateGroup {
+  const date = new Date(dateStr);
+  if (Number.isNaN(date.getTime())) {
+    return { key: 'unknown', kind: 'unknown' };
+  }
+
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const yesterday = new Date(today);
+  yesterday.setDate(today.getDate() - 1);
+  const weekStart = new Date(today);
+  const daysSinceMonday = (today.getDay() + 6) % 7;
+  weekStart.setDate(today.getDate() - daysSinceMonday);
+  const itemDay = new Date(date.getFullYear(), date.getMonth(), date.getDate());
+
+  if (itemDay.getTime() === today.getTime()) {
+    return { key: 'today', kind: 'today' };
+  }
+  if (itemDay.getTime() === yesterday.getTime()) {
+    return { key: 'yesterday', kind: 'yesterday' };
+  }
+  if (itemDay >= weekStart && itemDay < yesterday) {
+    return { key: 'this-week', kind: 'thisWeek' };
+  }
+  const year = date.getFullYear();
+  const month = date.getMonth() + 1;
+  return { key: `month-${year}-${month}`, kind: 'month', year, month };
+}
+
+interface ResultGalleryProps {
+  series?: Series[];
+  seriesEpisodes?: Record<string, Project[]>;
+  projects?: Project[];
+  onDeleteProject?: (id: string) => void;
+}
+
+type UnifiedContentItem =
+  | { kind: 'series'; series: Series; episodes: Project[]; timestamp: string; key: string }
+  | { kind: 'project'; project: Project; timestamp: string; key: string }
+  | { kind: 'output'; gen: PlaygroundGeneration; outputIndex: number; timestamp: string; key: string }
+  | { kind: 'gen'; gen: PlaygroundGeneration; timestamp: string; key: string };
+
+type UnifiedGridItem =
+  | UnifiedContentItem
+  | { kind: 'divider'; label: string; key: string };
+
+function numberTimestampToIso(value?: number): string {
+  if (!value) return new Date(0).toISOString();
+  return new Date(value < 10_000_000_000 ? value * 1000 : value).toISOString();
+}
+
+export function getProjectHistoryTimestamp(project: Project): string {
+  const updated = Date.parse(project.updatedAt || '');
+  if (Number.isFinite(updated)) return new Date(updated).toISOString();
+  const created = Date.parse(project.createdAt || '');
+  if (Number.isFinite(created)) return new Date(created).toISOString();
+  const rawCreated = (project as Project & { created_at?: number }).created_at;
+  return numberTimestampToIso(rawCreated);
+}
+
+function getSeriesHistoryTimestamp(series: Series): string {
+  return numberTimestampToIso(series.updated_at || series.created_at);
+}
+
+function SeriesHistoryCard({ series, episodes }: { series: Series; episodes: Project[] }) {
+  const cover = episodes.map(deriveCover).find(Boolean);
+  const frameCount = episodes.reduce((sum, episode) => sum + (episode.frames?.length || 0), 0);
+  const updatedAt = new Date(getSeriesHistoryTimestamp(series));
+  const dateLabel = updatedAt.getTime() > 0 ? updatedAt.toLocaleDateString('zh-CN') : '';
+
+  return (
+    <article
+      role="button"
+      tabIndex={0}
+      onClick={() => { window.location.hash = `#/series/${series.id}`; }}
+      onKeyDown={(event) => {
+        if (event.key === 'Enter' || event.key === ' ') {
+          if (event.key === ' ') event.preventDefault();
+          window.location.hash = `#/series/${series.id}`;
+        }
+      }}
+      className="group cursor-pointer overflow-hidden rounded-2xl border border-glass-border bg-glass transition-all hover:-translate-y-0.5 hover:border-foreground/30"
+    >
+      <div className="relative aspect-[16/10] overflow-hidden bg-surface-inset">
+        {cover ? (
+          <img src={cover} alt={series.title} className="h-full w-full object-cover transition-transform duration-500 group-hover:scale-[1.04]" />
+        ) : (
+          <div className="absolute inset-0" style={{ background: coverGradient(series.id || series.title) }} aria-hidden="true">
+            <div className="absolute inset-0 mix-blend-overlay" style={{ backgroundImage: GRAIN_URL, opacity: 0.07 }} />
+          </div>
+        )}
+        <div className="absolute inset-0 bg-gradient-to-b from-transparent from-35% to-black/70" />
+        <span className="absolute left-3 top-3 inline-flex items-center gap-1.5 rounded-full border border-white/15 bg-black/45 px-2.5 py-1 font-mono text-[0.59375rem] uppercase tracking-wider text-white/85 backdrop-blur-md">
+          <Layers3 size={11} />
+          系列
+        </span>
+        <div className="absolute bottom-3 left-4 right-4">
+          <h3 className="truncate font-display text-[1.375rem] font-semibold leading-tight tracking-tight text-white drop-shadow-lg">
+            {series.title}
+          </h3>
+          <p className="mt-1 font-mono text-[0.5625rem] uppercase tracking-wider text-white/65">
+            {episodes.length} 集 · {frameCount} 镜头
+          </p>
+        </div>
+      </div>
+      <div className="flex items-center justify-between px-4 py-3.5">
+        <div>
+          <p className="text-xs font-medium text-foreground">进入系列工作区</p>
+          {dateLabel && <p className="mt-1 font-mono text-[0.5625rem] text-text-muted">更新于 {dateLabel}</p>}
+        </div>
+        <span className="rounded-full border border-glass-border px-2.5 py-1 text-[0.625rem] text-text-secondary">
+          {episodes.length} 集
+        </span>
+      </div>
+    </article>
+  );
+}
+
+export default function ResultGallery({
+  series = [],
+  seriesEpisodes = {},
+  projects = [],
+  onDeleteProject,
+}: ResultGalleryProps = {}) {
   const {
     history,
     startGeneration,
@@ -128,6 +240,7 @@ export default function ResultGallery() {
   );
 
   const filtered = useMemo(() => {
+    if (activeFilter === 'project') return [];
     if (activeFilter === 'all') return history;
     if (activeFilter === 'image') {
       return history.filter((g) => !VIDEO_MODES.has(g.mode));
@@ -145,35 +258,57 @@ export default function ResultGallery() {
     [filtered],
   );
 
-  // Build items with session dividers
+  const groupingNow = useMemo(() => new Date(), [history]);
+
+  const formatGroupLabel = useCallback((group: HistoryDateGroup): string => {
+    if (group.kind === 'today') return t('results.today');
+    if (group.kind === 'yesterday') return t('results.yesterday');
+    if (group.kind === 'thisWeek') return t('results.thisWeek');
+    if (group.kind === 'month' && group.month != null && group.year != null) {
+      return group.year === groupingNow.getFullYear()
+        ? t('results.month', { month: group.month })
+        : t('results.yearMonth', { year: group.year, month: group.month });
+    }
+    return t('results.earlier');
+  }, [groupingNow, t]);
+
+  // Build natural calendar sections: today, yesterday, this week, then month.
   const itemsWithDividers = useMemo(() => {
     const result: Array<
       | { type: 'generation'; data: PlaygroundGeneration }
       | { type: 'divider'; label: string; key: string }
     > = [];
 
-    for (let i = 0; i < sorted.length; i++) {
-      if (i > 0) {
-        const prevTime = new Date(sorted[i - 1].created_at).getTime();
-        const currTime = new Date(sorted[i].created_at).getTime();
-        const gap = prevTime - currTime; // prev is more recent (descending)
-        if (gap > 30 * 60 * 1000) {
-          result.push({
-            type: 'divider',
-            label: formatSessionLabel(
-              sorted[i].created_at,
-              t('results.today'),
-              t('results.yesterday'),
-            ),
-            key: `divider-${sorted[i].id}`,
-          });
-        }
+    let previousGroupKey: string | null = null;
+    for (const generation of sorted) {
+      const group = getHistoryDateGroup(generation.created_at, groupingNow);
+      if (group.key !== previousGroupKey) {
+        result.push({
+          type: 'divider',
+          label: formatGroupLabel(group),
+          key: `divider-${group.key}`,
+        });
+        previousGroupKey = group.key;
       }
-      result.push({ type: 'generation', data: sorted[i] });
+      result.push({ type: 'generation', data: generation });
     }
 
     return result;
-  }, [sorted, t]);
+  }, [formatGroupLabel, groupingNow, sorted]);
+
+  const galleryGroupLabels = useMemo(() => {
+    const labels: Record<string, string> = {};
+    let pendingLabel: string | null = null;
+    for (const item of itemsWithDividers) {
+      if (item.type === 'divider') {
+        pendingLabel = item.label;
+      } else if (pendingLabel) {
+        labels[item.data.id] = pendingLabel;
+        pendingLabel = null;
+      }
+    }
+    return labels;
+  }, [itemsWithDividers]);
 
   // Flat list of generation data items (no dividers) for GalleryView and DetailPanel
   const dataItems = useMemo(
@@ -184,66 +319,96 @@ export default function ResultGallery() {
     [itemsWithDividers],
   );
 
-  // Grid items: expand each completed generation into one tile per output (so
-  // multi-output batches show all N); keep pending/processing/failed as one card.
-  const gridItems = useMemo(() => {
-    const out: Array<
-      | { kind: 'divider'; label: string; key: string }
-      | { kind: 'output'; gen: PlaygroundGeneration; outputIndex: number }
-      | { kind: 'gen'; gen: PlaygroundGeneration }
-    > = [];
-    for (const item of itemsWithDividers) {
-      if (item.type === 'divider') {
-        out.push({ kind: 'divider', label: item.label, key: item.key });
-        continue;
-      }
-      const g = item.data;
-      if (g.status === 'completed' && g.outputs.length > 0) {
-        g.outputs.forEach((_, i) => out.push({ kind: 'output', gen: g, outputIndex: i }));
-      } else {
-        out.push({ kind: 'gen', gen: g });
-      }
+  // Project/series records and free-generation outputs share one chronological
+  // stream. They keep their original storage and routes; this is a read model,
+  // not a duplicate database.
+  const unifiedGridItems = useMemo<UnifiedGridItem[]>(() => {
+    const content: UnifiedContentItem[] = [];
+    const includeProjects = activeFilter === 'all' || activeFilter === 'project';
+
+    if (includeProjects) {
+      series.forEach((item) => {
+        content.push({
+          kind: 'series',
+          series: item,
+          episodes: seriesEpisodes[item.id] || [],
+          timestamp: getSeriesHistoryTimestamp(item),
+          key: `series-${item.id}`,
+        });
+      });
+      projects.forEach((project) => {
+        content.push({
+          kind: 'project',
+          project,
+          timestamp: getProjectHistoryTimestamp(project),
+          key: `project-${project.id}`,
+        });
+      });
     }
-    return out;
-  }, [itemsWithDividers]);
+
+    sorted.forEach((generation) => {
+      if (generation.status === 'completed' && generation.outputs.length > 0) {
+        generation.outputs.forEach((_, outputIndex) => {
+          content.push({
+            kind: 'output',
+            gen: generation,
+            outputIndex,
+            timestamp: generation.created_at,
+            key: `output-${generation.id}-${outputIndex}`,
+          });
+        });
+      } else {
+        content.push({
+          kind: 'gen',
+          gen: generation,
+          timestamp: generation.created_at,
+          key: `generation-${generation.id}`,
+        });
+      }
+    });
+
+    content.sort(
+      (a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime(),
+    );
+
+    const withDividers: UnifiedGridItem[] = [];
+    let previousGroupKey: string | null = null;
+    for (const item of content) {
+      const group = getHistoryDateGroup(item.timestamp, groupingNow);
+      if (group.key !== previousGroupKey) {
+        withDividers.push({
+          kind: 'divider',
+          label: formatGroupLabel(group),
+          key: `unified-divider-${group.key}`,
+        });
+        previousGroupKey = group.key;
+      }
+      withDividers.push(item);
+    }
+    return withDividers;
+  }, [activeFilter, formatGroupLabel, groupingNow, projects, series, seriesEpisodes, sorted]);
+
+  const unifiedContentCount = useMemo(
+    () => unifiedGridItems.filter((item) => item.kind !== 'divider').length,
+    [unifiedGridItems],
+  );
 
   const filters: { key: FilterType; label: string }[] = [
     { key: 'all', label: t('results.filterAll') },
+    { key: 'project', label: t('historyPage.filterProjects') },
     { key: 'image', label: t('results.filterImage') },
     { key: 'video', label: t('results.filterVideo') },
   ];
-
-  if (history.length === 0) {
-    return (
-      <div className="flex flex-col flex-1 overflow-hidden min-w-0 items-center justify-center">
-        <Sparkles className="w-12 h-12 text-text-muted opacity-40 mb-4" />
-        <p className="font-display atelier-display text-base text-foreground mb-1">
-          {t('results.emptyTitle')}
-        </p>
-        <p className="text-xs text-text-muted">{t('results.emptyBody')}</p>
-      </div>
-    );
-  }
+  const galleryAvailable = activeFilter === 'image' || activeFilter === 'video';
+  const showGallery = galleryAvailable && viewMode === 'gallery';
 
   return (
     <div className="flex flex-col flex-1 overflow-hidden min-w-0">
-      {/* Header */}
-      <div className="px-7 py-4 flex items-center justify-between border-b border-border-subtle shrink-0">
-        <div className="flex flex-col gap-1">
-          <span className="font-mono text-[0.6875rem] uppercase tracking-[0.18em] text-text-muted">
-            RESULTS
-          </span>
-          <div className="flex items-center gap-2">
-            <span className="text-[2.125rem] leading-[1.1] font-semibold tracking-[-0.02em] text-foreground font-display atelier-display">
-              {t('results.title')}
-            </span>
-            <span className="font-mono text-[0.625rem] bg-elevated text-text-secondary rounded px-[6px] py-[1px]">
-              {filtered.reduce((n, g) => n + g.outputs.length, 0)}
-            </span>
-          </div>
-        </div>
-
-        <div className="flex items-center gap-3">
+      {/* Compact controls; page identity already lives in the global sidebar. */}
+      <div className="flex shrink-0 flex-wrap items-center gap-3 border-b border-border-subtle px-6 py-4">
+        <span className="rounded-full border border-glass-border bg-glass px-2.5 py-1 font-mono text-[0.625rem] text-text-secondary">
+          {unifiedContentCount}
+        </span>
           <div className="flex items-center gap-[2px] bg-surface-inset rounded-full p-1 atelier-pill-tabs">
             {filters.map((f) => (
               <button
@@ -260,6 +425,7 @@ export default function ResultGallery() {
             ))}
           </div>
 
+          {galleryAvailable && (
           <div className="flex items-center gap-[2px] bg-surface-inset rounded-full p-1 atelier-pill-tabs">
             <button
               onClick={() => setViewMode('grid')}
@@ -284,16 +450,34 @@ export default function ResultGallery() {
               <GalleryHorizontal className="w-4 h-4" />
             </button>
           </div>
+          )}
 
+        <div className="ml-auto">
           <QueuePanel />
         </div>
       </div>
 
       {/* Content area */}
-      {viewMode === 'gallery' ? (
+      {unifiedContentCount === 0 ? (
+        <div className="flex flex-1 flex-col items-center justify-center overflow-hidden min-w-0">
+          <Sparkles className="mb-4 h-12 w-12 text-text-muted opacity-40" />
+          <p className="mb-1 font-display atelier-display text-base text-foreground">
+            {t('results.emptyTitle')}
+          </p>
+          <p className="text-xs text-text-muted">{t('results.emptyBody')}</p>
+          <button
+            type="button"
+            onClick={() => { window.location.hash = '#/playground'; }}
+            className="mt-5 rounded-full border border-glass-border bg-glass px-4 py-2 text-xs font-medium text-text-secondary transition-colors hover:bg-hover-bg hover:text-foreground"
+          >
+            {t('historyPage.goCreate')}
+          </button>
+        </div>
+      ) : showGallery ? (
         <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
           <GalleryView
             generations={dataItems}
+            groupLabels={galleryGroupLabels}
             onOpenDetail={handleOpenDetail}
             onRetry={handleRetry}
           />
@@ -301,18 +485,21 @@ export default function ResultGallery() {
       ) : (
         <div className="flex-1 overflow-y-auto p-6">
           <div className="grid grid-cols-[repeat(auto-fill,minmax(260px,1fr))] gap-4 content-start">
-            {gridItems.map((it) => {
+            {unifiedGridItems.map((it) => {
               if (it.kind === 'divider') {
                 return (
                   <div
                     key={it.key}
-                    className="col-span-full flex items-center gap-3 py-2"
+                    role="heading"
+                    aria-level={2}
+                    className="col-span-full flex items-center gap-4 py-4"
                   >
-                    <div className="flex-1 h-px bg-border-subtle" />
-                    <span className="font-mono text-[0.5625rem] text-text-muted uppercase tracking-wider whitespace-nowrap">
+                    <div className="h-px flex-1 bg-gradient-to-r from-transparent to-glass-border" />
+                    <span className="inline-flex min-w-[5.5rem] items-center justify-center gap-2 whitespace-nowrap rounded-full border border-primary/35 bg-primary/10 px-4 py-2 font-display text-sm font-semibold tracking-[0.08em] text-foreground shadow-sm">
+                      <span className="h-1.5 w-1.5 rounded-full bg-primary shadow-[0_0_10px_currentColor]" aria-hidden="true" />
                       {it.label}
                     </span>
-                    <div className="flex-1 h-px bg-border-subtle" />
+                    <div className="h-px flex-1 bg-gradient-to-l from-transparent to-glass-border" />
                   </div>
                 );
               }
@@ -329,9 +516,21 @@ export default function ResultGallery() {
                   />
                 );
               }
+              if (it.kind === 'series') {
+                return <SeriesHistoryCard key={it.key} series={it.series} episodes={it.episodes} />;
+              }
+              if (it.kind === 'project') {
+                return (
+                  <ProjectCard
+                    key={it.key}
+                    project={it.project}
+                    onDelete={onDeleteProject || (() => undefined)}
+                  />
+                );
+              }
               return (
                 <ResultCard
-                  key={it.gen.id}
+                  key={it.key}
                   generation={it.gen}
                   onRetry={handleRetry}
                   onDelete={handleDelete}

@@ -31,7 +31,9 @@ const SeriesDetailPage = dynamic(() => import("@/components/series/SeriesDetailP
 const ImportFileDialog = dynamic(() => import("@/components/series/ImportFileDialog"), { ssr: false });
 const SettingsPage = dynamic(() => import("@/components/settings/SettingsPage"), { ssr: false });
 const AssetLibraryPage = dynamic(() => import("@/components/library/AssetLibraryPage"), { ssr: false });
+const FreeCanvasPage = dynamic(() => import("@/components/canvas/FreeCanvasPage"), { ssr: false });
 const PlaygroundPage = dynamic(() => import("@/components/modules/playground/PlaygroundPage"), { ssr: false });
+const CreationHistoryPage = dynamic(() => import("@/components/modules/playground/CreationHistoryPage"), { ssr: false });
 const PlatformAdminPage = dynamic(() => import("@/components/admin/PlatformAdminPage"), { ssr: false });
 const WalletPage = dynamic(() => import("@/components/wallet/WalletPage"), { ssr: false });
 
@@ -468,7 +470,7 @@ function StudioApplication() {
   const [isImportDialogOpen, setIsImportDialogOpen] = useState(false);
   const [isSyncing, setIsSyncing] = useState(false);
   const [showCreateDropdown, setShowCreateDropdown] = useState(false);
-  const [currentView, setCurrentView] = useState<'home' | 'project' | 'series' | 'series-episode' | 'library' | 'settings' | 'playground' | 'wallet'>('home');
+  const [currentView, setCurrentView] = useState<'home' | 'project' | 'series' | 'series-episode' | 'canvas' | 'library' | 'settings' | 'playground' | 'history' | 'wallet'>('home');
   const [activeTab, setActiveTab] = useState<GlobalTab>("workspace");
   const [wsSearch, setWsSearch] = useState("");
   const [workspaceBrief, setWorkspaceBrief] = useState("");
@@ -631,6 +633,14 @@ function StudioApplication() {
         setEpisodeId(null);
         return;
       }
+      if (hash === '#/canvas') {
+        setCurrentView('canvas');
+        setActiveTab('canvas');
+        setProjectId(null);
+        setSeriesId(null);
+        setEpisodeId(null);
+        return;
+      }
       if (hash === '#/settings') {
         setCurrentView('settings');
         setActiveTab('settings');
@@ -642,6 +652,14 @@ function StudioApplication() {
       if (hash === '#/playground') {
         setCurrentView('playground');
         setActiveTab('playground');
+        setProjectId(null);
+        setSeriesId(null);
+        setEpisodeId(null);
+        return;
+      }
+      if (hash === '#/history') {
+        setCurrentView('history');
+        setActiveTab('history');
         setProjectId(null);
         setSeriesId(null);
         setEpisodeId(null);
@@ -692,6 +710,14 @@ function StudioApplication() {
 
   // Determine content based on activeTab
   const renderContent = () => {
+    if (currentView === 'canvas') {
+      return (
+        <FreeCanvasPage
+          key={currentWorkspaceId || "local"}
+          workspaceId={currentWorkspaceId}
+        />
+      );
+    }
     if (currentView === 'library') {
       return <AssetLibraryPage />;
     }
@@ -700,6 +726,16 @@ function StudioApplication() {
     }
     if (currentView === 'playground') {
       return <PlaygroundPage />;
+    }
+    if (currentView === 'history') {
+      return (
+        <CreationHistoryPage
+          series={seriesList}
+          seriesEpisodes={seriesEpisodes}
+          projects={standaloneProjects}
+          onDeleteProject={deleteProject}
+        />
+      );
     }
     if (currentView === 'wallet') {
       return <WalletPage />;
@@ -740,9 +776,13 @@ function StudioApplication() {
     const wsVisibleStandalone = standaloneProjects.filter((p) => wsMatch(p));
     const wsVisibleCount =
       wsVisibleStandalone.length + wsSeriesGroups.reduce((n, g) => n + g.eps.length, 0);
+    // Project browsing now lives in the unified Creation History page. Keep
+    // the legacy browser mounted behind this switch while its data selectors
+    // continue to feed that centralized view.
+    const showWorkspaceProjectBrowser = false;
     return (
       <div className="xyq-workspace flex h-full flex-col overflow-hidden">
-        <section className="xyq-workspace-hero relative shrink-0 overflow-hidden px-5 pb-8 pt-9 text-center md:px-10 md:pb-10 md:pt-12">
+        <section className="xyq-workspace-hero relative flex flex-1 flex-col justify-center overflow-hidden px-5 py-10 text-center md:px-10 md:py-12">
           <div className="xyq-orbit xyq-orbit-left" aria-hidden="true" />
           <div className="xyq-orbit xyq-orbit-right" aria-hidden="true" />
           <div className="relative z-[1] mx-auto max-w-4xl">
@@ -787,18 +827,40 @@ function StudioApplication() {
               <span className="xyq-capability-pill">多镜头 R2V</span>
               <span className="xyq-capability-pill">自动成片</span>
             </div>
+            <div className="mt-5 flex flex-wrap items-center justify-center gap-2">
+              <button
+                type="button"
+                onClick={() => setIsSeriesDialogOpen(true)}
+                disabled={!online}
+                className="inline-flex h-9 items-center gap-2 rounded-full border border-glass-border bg-glass px-3.5 text-xs font-medium text-text-secondary transition-colors hover:bg-hover-bg hover:text-foreground disabled:opacity-50"
+              >
+                <Library size={14} />
+                {t("newSeries")}
+              </button>
+              <button
+                type="button"
+                onClick={() => setIsImportDialogOpen(true)}
+                disabled={!online}
+                className="inline-flex h-9 items-center gap-2 rounded-full border border-glass-border bg-glass px-3.5 text-xs font-medium text-text-secondary transition-colors hover:bg-hover-bg hover:text-foreground disabled:opacity-50"
+              >
+                <FileUp size={14} />
+                {t("importFile")}
+              </button>
+              <button
+                type="button"
+                onClick={() => { window.location.hash = '#/history'; }}
+                className="inline-flex h-9 items-center gap-2 rounded-full border border-glass-border bg-glass px-3.5 text-xs font-medium text-text-secondary transition-colors hover:bg-hover-bg hover:text-foreground"
+              >
+                <Clock size={14} />
+                创作历史
+              </button>
+            </div>
           </div>
         </section>
 
-        <header className="flex flex-col gap-3 px-5 pb-3 pt-5 md:flex-row md:items-end md:gap-5 md:px-8">
-          <div className="min-w-0 flex-1">
-            <div className="font-mono text-[0.59375rem] font-medium uppercase tracking-[0.2em] text-text-muted">
-              Your stories
-            </div>
-            <h2 className="mt-1 font-display text-[1.45rem] font-semibold leading-tight tracking-[-0.025em] text-foreground md:text-[1.8rem]">
-              {t("title")}
-            </h2>
-          </div>
+        {showWorkspaceProjectBrowser && (
+        <>
+        <div className="flex flex-wrap items-center justify-end gap-2.5 px-5 pb-3 pt-5 md:px-8">
           <div className="flex flex-wrap items-center gap-2.5 md:pb-1">
             <button
               onClick={syncAll}
@@ -861,7 +923,7 @@ function StudioApplication() {
               )}
             </div>
           </div>
-        </header>
+        </div>
 
         {/* Toolbar — 状态横向筛选 + 搜索 + 视图切换 */}
         <div className="flex flex-wrap items-center gap-3 px-5 pb-2 md:px-8">
@@ -1104,6 +1166,8 @@ function StudioApplication() {
             </div>
           )}
         </div>
+        </>
+        )}
       </div>
     );
   };

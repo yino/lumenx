@@ -68,6 +68,41 @@ class ArkSeedanceVideoModel(VideoGenModel):
         }
 
     @staticmethod
+    def _request_with_retry(
+        request_callable,
+        *,
+        operation: str,
+        max_attempts: int = 4,
+        **kwargs,
+    ):
+        """Retry transient Ark submission failures without hiding hard 4xx errors."""
+        retryable_statuses = {429, 500, 502, 503, 504}
+        for attempt in range(1, max_attempts + 1):
+            try:
+                response = request_callable(**kwargs)
+                if response.status_code not in retryable_statuses or attempt == max_attempts:
+                    return response
+                logger.warning(
+                    "[Ark/Seedance] %s returned HTTP %s; retrying (%s/%s)",
+                    operation,
+                    response.status_code,
+                    attempt,
+                    max_attempts,
+                )
+            except requests.RequestException as exc:
+                if attempt == max_attempts:
+                    raise
+                logger.warning(
+                    "[Ark/Seedance] %s connection interrupted; retrying (%s/%s): %s",
+                    operation,
+                    attempt,
+                    max_attempts,
+                    exc,
+                )
+            time.sleep(min(2 ** (attempt - 1), 8))
+        raise RuntimeError(f"Ark Seedance {operation} failed without a response")
+
+    @staticmethod
     def _response_json(response, *, action: str) -> Dict[str, Any]:
         try:
             payload = response.json()
@@ -312,7 +347,14 @@ class ArkSeedanceVideoModel(VideoGenModel):
             self.model_name,
             self.base_url,
         )
-        response = requests.post(tasks_url, headers=self._headers(), json=body, timeout=60)
+        response = self._request_with_retry(
+            requests.post,
+            operation="task creation",
+            url=tasks_url,
+            headers=self._headers(),
+            json=body,
+            timeout=60,
+        )
         result = self._response_json(response, action="task creation")
         task_id = result.get("id")
         if not task_id:
@@ -328,8 +370,38 @@ class ArkSeedanceVideoModel(VideoGenModel):
 
         poll_url = f"{tasks_url}/{task_id}"
         deadline = time.monotonic() + self.max_wait
+        consecutive_connection_errors = 0
+        retryable_poll_statuses = {404, 408, 409, 425, 429, 500, 502, 503, 504}
         while time.monotonic() < deadline:
-            poll_response = requests.get(poll_url, headers=self._headers(), timeout=60)
+            try:
+                poll_response = requests.get(poll_url, headers=self._headers(), timeout=60)
+                consecutive_connection_errors = 0
+            except requests.RequestException as exc:
+                consecutive_connection_errors += 1
+                retry_delay = min(
+                    max(self.poll_interval, 1.0) * (2 ** min(consecutive_connection_errors, 4)),
+                    60.0,
+                )
+                logger.warning(
+                    "[Ark/Seedance] Task %s polling connection interrupted; "
+                    "remote task is retained and will be queried again in %.1fs: %s",
+                    task_id,
+                    retry_delay,
+                    exc,
+                )
+                time.sleep(retry_delay)
+                continue
+
+            if poll_response.status_code in retryable_poll_statuses:
+                logger.warning(
+                    "[Ark/Seedance] Task %s poll returned HTTP %s; "
+                    "retaining remote task and retrying",
+                    task_id,
+                    poll_response.status_code,
+                )
+                time.sleep(max(self.poll_interval, 1.0))
+                continue
+
             task = self._response_json(poll_response, action="task query")
             status = str(task.get("status") or "").lower()
             logger.info("[Ark/Seedance] Task %s status: %s", task_id, status or "unknown")
@@ -355,19 +427,51 @@ class ArkSeedanceVideoModel(VideoGenModel):
 
             time.sleep(self.poll_interval)
 
-        raise RuntimeError(f"Ark Seedance task timed out after {self.max_wait}s (task_id={task_id})")
+        raise RuntimeError(
+            f"Ark Seedance remote task {task_id} is still unresolved after {self.max_wait}s; "
+            "the task id has been retained for later recovery"
+        )
 
     @staticmethod
     def _download_video(url: str, output_path: str) -> None:
-        response = requests.get(url, stream=True, timeout=300)
-        if response.status_code >= 400:
-            raise RuntimeError(
-                f"Ark Seedance video download failed (HTTP {response.status_code})"
-            )
         output_dir = os.path.dirname(output_path)
         if output_dir:
             os.makedirs(output_dir, exist_ok=True)
-        with open(output_path, "wb") as file_obj:
-            for chunk in response.iter_content(chunk_size=65536):
-                if chunk:
-                    file_obj.write(chunk)
+        temp_path = f"{output_path}.part"
+        attempts = 4
+
+        for attempt in range(1, attempts + 1):
+            try:
+                response = requests.get(url, stream=True, timeout=300)
+                if response.status_code >= 500:
+                    raise requests.HTTPError(
+                        f"Ark Seedance video download failed (HTTP {response.status_code})"
+                    )
+                if response.status_code >= 400:
+                    raise RuntimeError(
+                        f"Ark Seedance video download failed (HTTP {response.status_code})"
+                    )
+
+                with open(temp_path, "wb") as file_obj:
+                    for chunk in response.iter_content(chunk_size=65536):
+                        if chunk:
+                            file_obj.write(chunk)
+                os.replace(temp_path, output_path)
+                return
+            except requests.RequestException as exc:
+                if attempt >= attempts:
+                    if os.path.exists(temp_path):
+                        os.remove(temp_path)
+                    raise RuntimeError(
+                        f"Ark Seedance video download failed after {attempts} attempts: {exc}"
+                    ) from exc
+                delay = min(2 ** (attempt - 1), 8)
+                logger.warning(
+                    "[Ark/Seedance] Video download interrupted; retrying in %ss "
+                    "(attempt %s/%s, error=%s)",
+                    delay,
+                    attempt,
+                    attempts,
+                    type(exc).__name__,
+                )
+                time.sleep(delay)

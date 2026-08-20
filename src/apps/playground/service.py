@@ -235,6 +235,16 @@ class PlaygroundService:
         if ref_paths:
             kwargs["ref_image_paths"] = ref_paths
 
+        def persist_provider_ids(provider: str, task_id: str, request_id: str | None) -> None:
+            gen.provider_name = provider
+            gen.provider_task_id = task_id
+            gen.provider_request_id = request_id
+            # Persist before the first poll. If this write fails, the adapter
+            # intentionally stops instead of starting an untraceable remote job.
+            self.storage.update_generation(gen)
+
+        kwargs["on_provider_ids"] = persist_provider_ids
+
         self._wanx_image_model.generate(
             prompt=gen.prompt,
             output_path=out_path,
@@ -402,6 +412,14 @@ class PlaygroundService:
         }
         if gen.mode == PlaygroundMode.R2V and gen.input_media:
             kwargs["ref_image_urls"] = list(gen.input_media)
+
+        def persist_provider_ids(provider: str, task_id: str, request_id: str | None) -> None:
+            gen.provider_name = provider
+            gen.provider_task_id = task_id
+            gen.provider_request_id = request_id
+            self.storage.update_generation(gen)
+
+        kwargs["on_provider_ids"] = persist_provider_ids
 
         self._ark_seedance_video_model.generate(
             prompt=gen.prompt,

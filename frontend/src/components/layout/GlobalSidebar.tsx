@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import {
   LayoutGrid,
+  History,
   Layers,
   LogOut,
   Moon,
@@ -12,6 +13,7 @@ import {
   Sun,
   WalletCards,
   Wand2,
+  Workflow,
 } from "lucide-react";
 import { useTranslations } from "next-intl";
 import clsx from "clsx";
@@ -23,7 +25,7 @@ import { useSettingsStore } from "@/store/settingsStore";
 import { toast } from "@/store/toastStore";
 import WorkspaceSwitcher from "@/components/workspace/WorkspaceSwitcher";
 
-export type GlobalTab = "workspace" | "library" | "playground" | "wallet" | "settings";
+export type GlobalTab = "workspace" | "canvas" | "library" | "playground" | "history" | "wallet" | "settings";
 
 interface GlobalSidebarProps {
   activeTab: GlobalTab;
@@ -31,9 +33,11 @@ interface GlobalSidebarProps {
 }
 
 const ALL_GLOBAL_NAV_ITEMS: { id: GlobalTab; icon: typeof LayoutGrid; hash: string }[] = [
-  { id: "workspace", icon: LayoutGrid, hash: "#/" },
-  { id: "library", icon: Layers, hash: "#/library" },
   { id: "playground", icon: Wand2, hash: "#/playground" },
+  { id: "workspace", icon: LayoutGrid, hash: "#/" },
+  { id: "canvas", icon: Workflow, hash: "#/canvas" },
+  { id: "library", icon: Layers, hash: "#/library" },
+  { id: "history", icon: History, hash: "#/history" },
   { id: "wallet", icon: WalletCards, hash: "#/wallet" },
   { id: "settings", icon: Settings, hash: "#/settings" },
 ];
@@ -87,7 +91,7 @@ function NavButton({
 }
 
 /**
- * Desktop global navigation. The three creator destinations live in a calm,
+ * Desktop global navigation. Creator destinations live in a calm,
  * collapsible left rail; device-local collapse state and the day/night choice
  * are persisted without affecting project data.
  */
@@ -201,15 +205,15 @@ export default function GlobalSidebar({ activeTab, onTabChange }: GlobalSidebarP
         <button
           type="button"
           onClick={toggleDayNight}
-          aria-label={isLight ? "切换到黑夜模式" : "切换到白天模式"}
-          title={isLight ? "切换到黑夜模式" : "切换到白天模式"}
+          aria-label={isLight ? "切换到极夜模式" : "切换到极昼模式"}
+          title={isLight ? "切换到极夜模式" : "切换到极昼模式"}
           className={clsx(
             "mb-1 flex h-11 w-full items-center rounded-xl border border-glass-border bg-surface/55 text-text-secondary transition-colors hover:bg-hover-bg hover:text-foreground",
             collapsed ? "justify-center px-2" : "justify-start gap-3 px-3.5",
           )}
         >
           {isLight ? <Moon size={18} /> : <Sun size={18} />}
-          {!collapsed && <span className="text-[0.75rem] font-medium">{isLight ? "黑夜模式" : "白天模式"}</span>}
+          {!collapsed && <span className="text-[0.75rem] font-medium">{isLight ? "极夜模式" : "极昼模式"}</span>}
         </button>
 
         {IS_CLOUD_DEPLOYMENT && user && !collapsed && (

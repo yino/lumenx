@@ -1196,6 +1196,97 @@ Return a JSON object with ALL fields below. null is acceptable for optional fiel
         except Exception as e:
             logger.error(f"Error polishing prompt: {e}", exc_info=True)
             return fallback_result
+
+    def compose_canvas_prompt(
+        self,
+        inputs: List[Dict[str, str]],
+        target: str = "image",
+        instruction: str = "",
+    ) -> Dict[str, str]:
+        """Merge connected canvas text nodes into one production prompt.
+
+        The canvas owns graph traversal and sends only connected inputs here.
+        This method preserves all explicit facts and constraints while removing
+        duplication and shaping the result for either image or video generation.
+        """
+        if not self.is_configured:
+            raise PolishError(
+                reason="is_configured_false",
+                message_zh="LLM 未配置（缺少 DASHSCOPE_API_KEY），请到设置中检查。",
+                message_en="LLM not configured (missing DASHSCOPE_API_KEY). Please check settings.",
+            )
+
+        normalized_inputs = []
+        for index, item in enumerate(inputs, start=1):
+            content = str(item.get("content", "")).strip()
+            if not content:
+                continue
+            title = str(item.get("title", "")).strip() or f"输入 {index}"
+            normalized_inputs.append(f"[输入 {index} · {title}]\n{content}")
+        if not normalized_inputs:
+            raise PolishError(
+                reason="missing_inputs",
+                message_zh="没有可合成的上游文本，请先连接至少一个有内容的文本或提示词节点。",
+                message_en="No usable upstream text. Connect at least one non-empty text or prompt node.",
+            )
+
+        target_guidance = (
+            "面向视频生成：明确主体动作、镜头运动、时间推进、空间关系与连续性；"
+            "若输入包含分段时间线，应保留其节奏。"
+            if target == "video"
+            else
+            "面向图像生成：明确主体、场景、构图、镜头、光影、材质、色彩和风格；"
+            "不要添加时间线或互相冲突的动作。"
+        )
+        system_prompt = f"""你是一名专业的生成式视觉提示词编辑器。
+请把多段彼此相连的创作输入整理、去重、合并并润色为一个可直接提交给生成模型的完整提示词。
+
+要求：
+1. 保留输入中的人物身份、服装、道具、场景、动作、镜头、时长和负面约束，不得遗漏关键事实。
+2. 合并重复信息，解决措辞重复；若存在轻微歧义，采用最保守且不改变创作意图的表达。
+3. 不虚构新的角色、品牌、情节或敏感身份，不输出解释、标题、Markdown 或输入编号。
+4. {target_guidance}
+5. 返回严格 JSON，且只包含 prompt_cn 与 prompt_en。两种语言必须语义一致、都可直接用于生成。
+"""
+        user_text = "\n\n".join(normalized_inputs)
+        if instruction.strip():
+            user_text += f"\n\n[本次合成要求]\n{instruction.strip()}"
+
+        try:
+            content = self.llm.chat(
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_text},
+                ],
+                response_format={"type": "json_object"},
+            ).strip()
+        except Exception as e:
+            logger.exception("Canvas prompt composition: LLM API error")
+            raise PolishError(
+                reason="api_error",
+                message_zh=f"提示词合成调用失败：{e}",
+                message_en=f"Prompt composition call failed: {e}",
+            ) from e
+
+        try:
+            result = json.loads(_strip_markdown_json(content))
+        except json.JSONDecodeError as e:
+            raise PolishError(
+                reason="json_parse_error",
+                message_zh="模型返回了无效的合成结果，请重试。",
+                message_en="Model returned an invalid composition result. Please retry.",
+            ) from e
+
+        prompt_cn = result.get("prompt_cn")
+        prompt_en = result.get("prompt_en")
+        if not isinstance(prompt_cn, str) or not prompt_cn.strip() or not isinstance(prompt_en, str) or not prompt_en.strip():
+            raise PolishError(
+                reason="missing_keys",
+                message_zh="模型返回的双语合成结果不完整，请重试。",
+                message_en="Model returned an incomplete bilingual composition. Please retry.",
+            )
+        return {"prompt_cn": prompt_cn.strip(), "prompt_en": prompt_en.strip()}
+
     def polish_video_prompt(
         self,
         draft_prompt: str,

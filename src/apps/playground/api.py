@@ -68,6 +68,9 @@ def get_generation_status(generation_id: str):
         "status": gen.status,
         "outputs": gen.outputs,
         "error": gen.error,
+        "provider_name": gen.provider_name,
+        "provider_task_id": gen.provider_task_id,
+        "provider_request_id": gen.provider_request_id,
     }
 
 

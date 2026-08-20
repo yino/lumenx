@@ -76,6 +76,50 @@ class WanxImageModel(ImageGenModel):
             logger.warning("Dashscope API Key not found in config or environment variables.")
         return api_key
 
+    @staticmethod
+    def _request_with_retry(
+        request_callable,
+        *,
+        operation: str,
+        max_attempts: int = 4,
+        **kwargs,
+    ):
+        """Run a DashScope HTTP request with bounded transient retries.
+
+        This covers TLS resets, connection errors, timeouts, rate limits and
+        temporary 5xx responses. Permanent 4xx responses are returned to the
+        caller immediately so authentication or validation errors stay clear.
+        """
+        retryable_statuses = {429, 500, 502, 503, 504}
+        last_error = None
+        for attempt in range(1, max_attempts + 1):
+            try:
+                response = request_callable(**kwargs)
+                if response.status_code not in retryable_statuses or attempt == max_attempts:
+                    return response
+                logger.warning(
+                    "DashScope %s returned HTTP %s; retrying (%s/%s)",
+                    operation,
+                    response.status_code,
+                    attempt,
+                    max_attempts,
+                )
+            except requests.RequestException as exc:
+                last_error = exc
+                if attempt == max_attempts:
+                    raise
+                logger.warning(
+                    "DashScope %s connection interrupted; retrying (%s/%s): %s",
+                    operation,
+                    attempt,
+                    max_attempts,
+                    exc,
+                )
+            time.sleep(min(2 ** (attempt - 1), 8))
+        if last_error:
+            raise last_error
+        raise RuntimeError(f"DashScope {operation} failed without a response")
+
     def generate(self, prompt: str, output_path: str, ref_image_path: str = None, ref_image_paths: list = None, model_name: str = None, **kwargs) -> Tuple[str, float]:
         # Determine model based on whether reference image is provided
         # Support both single path (legacy) and list of paths
@@ -240,7 +284,14 @@ class WanxImageModel(ImageGenModel):
         logger.info(f"Payload: {payload}")
 
         # Step 1: Create task
-        response = requests.post(create_url, headers=headers, json=payload, timeout=120)
+        response = self._request_with_retry(
+            requests.post,
+            operation="image task submission",
+            url=create_url,
+            headers=headers,
+            json=payload,
+            timeout=120,
+        )
 
         logger.info(f"Create task response status: {response.status_code}")
         logger.info(f"Create task response body: {response.text[:500]}")
@@ -268,21 +319,51 @@ class WanxImageModel(ImageGenModel):
 
         max_wait_time = 600
         poll_interval = 10
-        elapsed = 0
+        started_at = time.monotonic()
+        next_delay = poll_interval
+        consecutive_connection_errors = 0
 
-        while elapsed < max_wait_time:
-            time.sleep(poll_interval)
-            elapsed += poll_interval
+        while time.monotonic() - started_at < max_wait_time:
+            time.sleep(next_delay)
 
-            poll_response = requests.get(poll_url, headers=poll_headers, timeout=30)
+            try:
+                poll_response = requests.get(poll_url, headers=poll_headers, timeout=30)
+                consecutive_connection_errors = 0
+                next_delay = poll_interval
+            except requests.RequestException as exc:
+                consecutive_connection_errors += 1
+                next_delay = min(poll_interval * (2 ** min(consecutive_connection_errors, 3)), 60)
+                logger.warning(
+                    "DashScope image task %s polling connection interrupted; "
+                    "remote task is retained and will be queried again in %ss: %s",
+                    task_id,
+                    next_delay,
+                    exc,
+                )
+                continue
 
             if poll_response.status_code != 200:
-                logger.warning(f"Poll request failed: {poll_response.status_code}")
+                if poll_response.status_code in {401, 403}:
+                    raise RuntimeError(
+                        f"{model_name} task {task_id} polling authorization failed: "
+                        f"HTTP {poll_response.status_code}"
+                    )
+                if poll_response.status_code not in {404, 408, 409, 425, 429, 500, 502, 503, 504}:
+                    raise RuntimeError(
+                        f"{model_name} task {task_id} polling failed: "
+                        f"HTTP {poll_response.status_code} {poll_response.text[:300]}"
+                    )
+                logger.warning(
+                    "DashScope image task %s poll returned HTTP %s; retaining remote task and retrying",
+                    task_id,
+                    poll_response.status_code,
+                )
                 continue
 
             poll_result = poll_response.json()
             task_status = poll_result.get('output', {}).get('task_status')
 
+            elapsed = int(time.monotonic() - started_at)
             logger.info(f"Task {task_id} status: {task_status} (elapsed: {elapsed}s)")
 
             if task_status == 'SUCCEEDED':
@@ -315,7 +396,10 @@ class WanxImageModel(ImageGenModel):
             elif task_status in ['CANCELED', 'UNKNOWN']:
                 raise RuntimeError(f"{model_name} task {task_status}: {poll_result}")
 
-        raise RuntimeError(f"{model_name} task timed out after {max_wait_time}s")
+        raise RuntimeError(
+            f"{model_name} remote task {task_id} is still unresolved after {max_wait_time}s; "
+            "the task id has been retained for later recovery"
+        )
 
     def _generate_wan26_http(self, prompt: str, size: str, n: int, negative_prompt: str = None) -> str:
         """Generate image using Wan 2.6 T2I via HTTP API (synchronous)."""

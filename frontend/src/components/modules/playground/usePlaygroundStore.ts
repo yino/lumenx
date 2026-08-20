@@ -86,6 +86,9 @@ export interface PlaygroundGeneration {
   support_review?: boolean;
   support_review_reason?: string | null;
   error?: string;
+  provider_name?: string | null;
+  provider_task_id?: string | null;
+  provider_request_id?: string | null;
   created_at: string;
   quoted_microtickets?: string;
   quoted_tickets?: string;

@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { Fragment, useState, useEffect, useRef, useCallback } from 'react';
 import { Video, AlertCircle } from 'lucide-react';
 import { useTranslations } from 'next-intl';
 import { getAssetUrl } from '@/lib/utils';
@@ -12,6 +12,7 @@ import type { PlaygroundGeneration } from './usePlaygroundStore';
 
 interface GalleryViewProps {
   generations: PlaygroundGeneration[];
+  groupLabels?: Record<string, string>;
   onOpenDetail: (gen: PlaygroundGeneration) => void;
   onRetry?: (gen: PlaygroundGeneration) => void;
 }
@@ -35,6 +36,7 @@ const VIDEO_MODES = new Set(['t2v', 'i2v', 'r2v', 'v2v']);
 
 export default function GalleryView({
   generations,
+  groupLabels = {},
   onOpenDetail,
   onRetry,
 }: GalleryViewProps) {
@@ -72,7 +74,9 @@ export default function GalleryView({
   useEffect(() => {
     const strip = thumbnailStripRef.current;
     if (!strip) return;
-    const thumb = strip.children[selectedIndex] as HTMLElement | undefined;
+    const thumb = strip.querySelector<HTMLElement>(
+      `[data-gallery-index="${selectedIndex}"]`,
+    );
     if (thumb) {
       thumb.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'center' });
     }
@@ -191,8 +195,17 @@ export default function GalleryView({
             const isFailed = gen.status === 'failed';
 
             return (
+              <Fragment key={gen.id}>
+                {groupLabels[gen.id] && (
+                  <div className="flex h-14 shrink-0 items-center border-l border-glass-border pl-3 pr-1 first:border-l-0 first:pl-0">
+                    <span className="inline-flex items-center gap-1.5 whitespace-nowrap rounded-full border border-primary/30 bg-primary/10 px-3 py-1.5 font-display text-[0.6875rem] font-semibold text-foreground shadow-sm">
+                      <span className="h-1.5 w-1.5 rounded-full bg-primary" aria-hidden="true" />
+                      {groupLabels[gen.id]}
+                    </span>
+                  </div>
+                )}
               <button
-                key={gen.id}
+                data-gallery-index={idx}
                 onClick={() => setSelectedIndex(idx)}
                 className={`w-14 h-14 rounded-md overflow-hidden border-2 cursor-pointer shrink-0 transition-colors ${
                   isSelected
@@ -220,6 +233,7 @@ export default function GalleryView({
                   </div>
                 )}
               </button>
+              </Fragment>
             );
           })}
         </div>

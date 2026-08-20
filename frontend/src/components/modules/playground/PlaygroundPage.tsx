@@ -2,19 +2,30 @@
 
 import { useEffect, useCallback, useRef, useState } from 'react';
 import { useTranslations } from 'next-intl';
-import { AlertCircle, Clock3, Coins, Sparkles } from 'lucide-react';
+import {
+  AlertCircle,
+  ChevronDown,
+  Clapperboard,
+  Clock3,
+  Coins,
+  ImageIcon,
+  Layers3,
+  Paperclip,
+  SlidersHorizontal,
+  Sparkles,
+} from 'lucide-react';
 import ModeSelector from './ModeSelector';
 import ModelSelector from './ModelSelector';
 import MediaInput from './MediaInput';
 import PromptInput from './PromptInput';
 import ParameterBar from './ParameterBar';
-import ResultGallery from './ResultGallery';
-import { usePlaygroundStore, type PlaygroundMode, type PlaygroundGeneration, type QueuedRequest } from './usePlaygroundStore';
+import QueuePanel from './QueuePanel';
+import { usePlaygroundStore, type PlaygroundMode, type QueuedRequest } from './usePlaygroundStore';
+import { toPlaygroundGeneration } from './playgroundGeneration';
 import {
   getSafeApiError,
   playgroundApi,
   userTicketApi,
-  type PlaygroundGenerationResponse,
   type UserTicketWallet,
 } from '@/lib/api';
 import { IS_CLOUD_DEPLOYMENT } from '@/lib/deployment';
@@ -35,50 +46,9 @@ const MODE_LABELS: Record<PlaygroundMode, string> = {
 /** Modes that require media input (image or video source).
  *  t2i also shows optional media input — when provided, it auto-becomes i2i. */
 const MODES_WITH_MEDIA: PlaygroundMode[] = ['i2i', 'i2v', 'r2v', 'v2v'];
-const MODES_WITH_OPTIONAL_MEDIA: PlaygroundMode[] = ['t2i'];
 
 /** Polling interval for generation status (ms) */
 const POLL_INTERVAL = 2000;
-
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
-/** Convert API response to store-compatible PlaygroundGeneration */
-function toGeneration(resp: PlaygroundGenerationResponse): PlaygroundGeneration {
-  return {
-    id: resp.id,
-    mode: resp.mode as PlaygroundMode,
-    model_id: resp.model_id,
-    actual_model_name: resp.actual_model_name,
-    actual_model_id: resp.actual_model_id,
-    prompt: resp.prompt,
-    negative_prompt: resp.negative_prompt,
-    input_media: resp.input_media,
-    parameters: resp.parameters,
-    batch_size: resp.batch_size,
-    outputs: resp.outputs.map((o) => ({
-      id: o.id,
-      media_reference: o.media_reference,
-      media_id: o.media_id,
-      media_url: o.media_url,
-      media_type: o.media_type as 'image' | 'video',
-      thumbnail_path: o.thumbnail_path,
-      saved_to_library: o.saved_to_library,
-    })),
-    status: resp.status as PlaygroundGeneration['status'],
-    raw_status: resp.raw_status,
-    status_zh: resp.status_zh,
-    cancellation_requested: resp.cancellation_requested,
-    support_review: resp.support_review,
-    support_review_reason: resp.support_review_reason,
-    error: resp.error,
-    created_at: resp.created_at,
-    quoted_microtickets: resp.quoted_microtickets,
-    quoted_tickets: resp.quoted_tickets,
-    tokens_per_ticket: resp.tokens_per_ticket,
-  };
-}
 
 // ---------------------------------------------------------------------------
 // Component
@@ -94,7 +64,7 @@ export default function PlaygroundPage() {
   const inputMedia = usePlaygroundStore((s) => s.inputMedia);
   const parameters = usePlaygroundStore((s) => s.parameters);
   const batchSize = usePlaygroundStore((s) => s.batchSize);
-  const history = usePlaygroundStore((s) => s.history);
+  const setMode = usePlaygroundStore((s) => s.setMode);
   const setHistory = usePlaygroundStore((s) => s.setHistory);
   const setTemplates = usePlaygroundStore((s) => s.setTemplates);
   const startGeneration = usePlaygroundStore((s) => s.startGeneration);
@@ -109,6 +79,8 @@ export default function PlaygroundPage() {
   const pollTimers = useRef<Map<string, ReturnType<typeof setInterval>>>(new Map());
   const [wallet, setWallet] = useState<UserTicketWallet | null>(null);
   const [submitError, setSubmitError] = useState<string | null>(null);
+  const [showMediaPanel, setShowMediaPanel] = useState(false);
+  const [showControls, setShowControls] = useState(false);
 
   const refreshWallet = useCallback(async () => {
     if (!IS_CLOUD_DEPLOYMENT) return;
@@ -124,7 +96,7 @@ export default function PlaygroundPage() {
   useEffect(() => {
     void refreshWallet();
     playgroundApi.getHistory().then((items) => {
-      setHistory(items.map(toGeneration));
+      setHistory(items.map(toPlaygroundGeneration));
     }).catch((err) => {
       console.error('[Playground] Failed to fetch history:', err);
     });
@@ -160,6 +132,14 @@ export default function PlaygroundPage() {
     };
   }, []);
 
+  useEffect(() => {
+    if (MODES_WITH_MEDIA.includes(mode)) {
+      setShowMediaPanel(true);
+    } else if (inputMedia.length === 0) {
+      setShowMediaPanel(false);
+    }
+  }, [inputMedia.length, mode]);
+
   // ─── Status poller ─────────────────────────────────────────────────────────
 
   const startPolling = useCallback((generationId: string) => {
@@ -173,7 +153,7 @@ export default function PlaygroundPage() {
 
         // Fetch full generation data for complete update
         const fullResp = await playgroundApi.getGeneration(generationId);
-        updateGeneration(toGeneration(fullResp));
+        updateGeneration(toPlaygroundGeneration(fullResp));
 
         if (isTerminal) {
           clearInterval(timer);
@@ -221,7 +201,7 @@ export default function PlaygroundPage() {
         parameters: Object.keys(req.parameters).length > 0 ? req.parameters : undefined,
         batch_size: req.batchSize > 1 ? req.batchSize : undefined,
       });
-      const gen = toGeneration(resp);
+      const gen = toPlaygroundGeneration(resp);
       startGeneration(gen);
       removeFromQueue(req.id);
       void refreshWallet();
@@ -257,145 +237,212 @@ export default function PlaygroundPage() {
 
   // ─── Derived values ────────────────────────────────────────────────────────
 
-  const resultCount = history.reduce((n, g) => n + g.outputs.length, 0);
-  const showMediaInput = MODES_WITH_MEDIA.includes(mode) || MODES_WITH_OPTIONAL_MEDIA.includes(mode);
+  const supportsMediaInput = MODES_WITH_MEDIA.includes(mode) || mode === 't2i';
+  const mediaPanelVisible = supportsMediaInput && (showMediaPanel || inputMedia.length > 0);
   const canGenerate = prompt.trim().length > 0;
 
   // ─── Render ────────────────────────────────────────────────────────────────
 
   return (
     <div className="flex h-full flex-col overflow-hidden text-foreground">
-      {/* ═══ PAGE HEADER ═══ */}
-      <header className="flex shrink-0 items-center justify-between border-b border-border-subtle px-7 py-5">
-        <div className="flex flex-col gap-1">
-          <span className="font-mono text-[0.625rem] font-medium uppercase tracking-[0.2em] text-text-muted">
-            自由创作台
-            <span className="text-primary font-semibold"> · {t('header.eyebrowAccent')}</span>
-          </span>
-          <div className="flex items-baseline gap-[10px]">
-            <h1 className="font-display text-[1.625rem] md:text-[2.125rem] font-semibold tracking-tight text-foreground atelier-display">
-              {t('header.title')}
-            </h1>
-            <span className="font-mono text-[0.6875rem] uppercase tracking-[0.1em] text-text-muted">
-              {t('header.resultsCount', { count: resultCount })}
-            </span>
-          </div>
-          <p className="font-mono text-text-muted text-[0.6875rem] tracking-[0.06em]">
-            {t('header.subtitle')}
-          </p>
-        </div>
-        <div className="flex items-center gap-3">
-          {IS_CLOUD_DEPLOYMENT && wallet && (
-            <div className="hidden items-center gap-3 rounded-md border border-glass-border bg-glass px-3 py-2 text-xs text-text-secondary sm:flex">
-              <span className="inline-flex items-center gap-1.5">
-                <Coins size={14} className="text-primary" />
-                可用 <strong className="font-mono font-semibold text-foreground">{wallet.available_tickets}</strong>
-              </span>
-              <span className="h-4 w-px bg-border-subtle" />
-              <span className="inline-flex items-center gap-1.5">
-                <Clock3 size={14} className="text-amber-300" />
-                预扣 <strong className="font-mono font-semibold text-foreground">{wallet.held_tickets}</strong>
-              </span>
+      {/* ═══ PROMPT-FIRST COMPOSER ═══ */}
+      <div className="flex min-h-0 flex-1 justify-center overflow-y-auto scrollbar-thin">
+        <main className="flex w-full max-w-[1040px] flex-col px-5 pb-10 pt-7 md:px-8 lg:pt-10">
+          <section className="mx-auto mb-6 flex w-full max-w-[900px] flex-col items-center text-center">
+            <div className="mb-2 inline-flex items-center gap-2 rounded-full border border-glass-border bg-glass px-3 py-1.5 font-mono text-[0.625rem] uppercase tracking-[0.16em] text-text-muted">
+              <Sparkles size={12} className="text-accent" />
+              {t('compose.eyebrow')}
             </div>
-          )}
-          <span className="atelier-badge rounded border border-glass-border bg-glass px-2 py-1 text-[0.625rem] uppercase tracking-[0.18em] text-text-muted">
-            {MODE_LABELS[mode]}
-          </span>
-        </div>
-      </header>
-
-      {/* ═══ SPLIT LAYOUT ═══ */}
-      <div className="flex flex-1 overflow-hidden min-h-0">
-        {/* ─── LEFT: INPUT PANEL ─── */}
-        <aside className="flex w-[420px] shrink-0 flex-col gap-3 overflow-y-auto border-r border-glass-border px-4 py-4 scrollbar-thin">
-          {/* Mode */}
-          <section className="glass-panel atelier-card rounded-[20px] px-5 py-5">
-            <div className="mb-3 font-mono text-[0.625rem] font-semibold uppercase tracking-[0.16em] text-text-secondary">
-              {t('compose.modeLabel')}
+            <h2 className="font-display text-2xl font-semibold tracking-tight text-foreground md:text-[2rem]">
+              {t('compose.heroTitle')}
+            </h2>
+            <p className="mt-2 max-w-2xl text-sm leading-6 text-text-muted">
+              {t('compose.heroSubtitle')}
+            </p>
+            <div className="mt-5 max-w-full">
+              <ModeSelector compact />
             </div>
-            <ModeSelector />
           </section>
 
-          {/* Prompt — first, the primary input */}
-          <section className="glass-panel atelier-card rounded-[20px] px-5 py-5">
-            <div className="mb-3 font-mono text-[0.625rem] font-semibold uppercase tracking-[0.16em] text-text-secondary">
-              {t('compose.promptLabel')}
-            </div>
-            <PromptInput />
-          </section>
-
-          {/* Media Input (conditional) */}
-          {showMediaInput && (
-            <section className="glass-panel atelier-card rounded-[20px] px-5 py-5">
-              <div className="mb-3 font-mono text-[0.625rem] font-semibold uppercase tracking-[0.16em] text-text-secondary">
-                {t(
-                  mode === 'v2v'
-                    ? 'compose.mediaSourceVideo'
-                    : mode === 'r2v'
-                      ? 'compose.mediaRefMaterial'
-                      : mode === 'i2v'
-                        ? 'compose.mediaFirstFrame'
-                        : 'compose.mediaReference'
-                )}
+          <section
+            data-testid="playground-composer"
+            className="relative z-20 mx-auto w-full max-w-[900px] overflow-visible rounded-[28px] border border-glass-border bg-surface/88 shadow-[0_26px_80px_-48px_rgba(0,0,0,0.8)] backdrop-blur-2xl"
+          >
+            <div className="px-6 pb-3 pt-6 md:px-8 md:pt-7">
+              <div className="mb-3 flex items-center justify-between">
+                <span className="font-mono text-[0.625rem] font-semibold uppercase tracking-[0.16em] text-text-secondary">
+                  {t('compose.promptLabel')}
+                </span>
+                <span className="atelier-badge rounded-full border border-glass-border bg-glass px-2.5 py-1 font-mono text-[0.625rem] tracking-[0.12em] text-text-muted">
+                  {MODE_LABELS[mode]}
+                </span>
               </div>
-              <MediaInput />
-            </section>
-          )}
-
-          {/* Cloud routing is server-owned; only desktop exposes a model picker. */}
-          <section className="glass-panel atelier-card rounded-[20px] px-5 py-5 relative z-30">
-            {!IS_CLOUD_DEPLOYMENT && (
-              <>
-                <div className="mb-3 font-mono text-[0.625rem] font-semibold uppercase tracking-[0.16em] text-text-secondary">
-                  {t('compose.modelLabel')}
-                </div>
-                <ModelSelector />
-                <div className="my-4 h-px bg-border-subtle" />
-              </>
-            )}
-            <div className="mb-3 font-mono text-[0.625rem] font-semibold uppercase tracking-[0.16em] text-text-secondary">
-              {t('compose.parametersLabel')}
+              <PromptInput />
             </div>
-            <ParameterBar />
-          </section>
 
-          {/* Spacer to push generate button to bottom */}
-          <div className="flex-1" />
+            {mediaPanelVisible && (
+              <div className="border-t border-border-subtle bg-surface-inset/35 px-6 py-5 md:px-8">
+                <div className="mb-3 flex items-center justify-between">
+                  <span className="font-mono text-[0.625rem] font-semibold uppercase tracking-[0.16em] text-text-secondary">
+                    {t(
+                      mode === 'v2v'
+                        ? 'compose.mediaSourceVideo'
+                        : mode === 'r2v'
+                          ? 'compose.mediaRefMaterial'
+                          : mode === 'i2v'
+                            ? 'compose.mediaFirstFrame'
+                            : 'compose.mediaReference'
+                    )}
+                  </span>
+                  {!MODES_WITH_MEDIA.includes(mode) && inputMedia.length === 0 && (
+                    <button
+                      type="button"
+                      onClick={() => setShowMediaPanel(false)}
+                      className="text-xs text-text-muted transition-colors hover:text-foreground"
+                    >
+                      {t('compose.collapse')}
+                    </button>
+                  )}
+                </div>
+                <MediaInput />
+              </div>
+            )}
 
-          {/* Generate CTA (sticky) */}
-          <div className="sticky bottom-0 -mx-4 -mb-4 border-t border-glass-border bg-transparent backdrop-blur-md px-4 pb-4 pt-4">
+            {showControls && (
+              <div className="relative z-30 border-t border-border-subtle bg-surface-inset/45 px-6 py-5 md:px-8">
+                <div className={IS_CLOUD_DEPLOYMENT ? '' : 'grid gap-5 md:grid-cols-[minmax(220px,0.72fr)_minmax(0,1.28fr)]'}>
+                  {!IS_CLOUD_DEPLOYMENT && (
+                    <div>
+                      <div className="mb-3 font-mono text-[0.625rem] font-semibold uppercase tracking-[0.16em] text-text-secondary">
+                        {t('compose.modelLabel')}
+                      </div>
+                      <ModelSelector />
+                    </div>
+                  )}
+                  <div>
+                    <div className="mb-3 font-mono text-[0.625rem] font-semibold uppercase tracking-[0.16em] text-text-secondary">
+                      {t('compose.parametersLabel')}
+                    </div>
+                    <ParameterBar />
+                  </div>
+                </div>
+              </div>
+            )}
+
             {submitError && (
-              <div className="mb-3 flex items-start gap-2 rounded-md border border-red-400/25 bg-red-400/10 px-3 py-2 text-xs leading-5 text-red-200">
+              <div className="mx-6 mt-3 flex items-start gap-2 rounded-xl border border-red-400/25 bg-red-400/10 px-3 py-2 text-xs leading-5 text-red-200 md:mx-8">
                 <AlertCircle size={14} className="mt-0.5 shrink-0" />
                 <span>{submitError}</span>
               </div>
             )}
-            <button
-              type="button"
-              onClick={handleGenerate}
-              disabled={!canGenerate}
-              className={[
-                'inline-flex w-full items-center justify-center gap-[7px] rounded-full px-6 py-[13px]',
-                "font-['Space_Grotesk',sans-serif] text-sm font-semibold",
-                'bg-primary text-on-accent shadow-[var(--glow-primary)] transition-all duration-150 disabled:opacity-40 disabled:shadow-none',
-                canGenerate
-                  ? 'hover:bg-primary-hover hover:-translate-y-px cursor-pointer'
-                  : 'cursor-not-allowed',
-              ].join(' ')}
-            >
-              <Sparkles size={16} aria-hidden="true" />
-              <span>
-                {batchSize > 1
-                  ? t('compose.generateBatch', { count: batchSize })
-                  : t('compose.generate')}
-              </span>
-            </button>
-          </div>
-        </aside>
 
-        {/* ─── RIGHT: RESULT GALLERY ─── */}
-        <main className="flex flex-1 flex-col overflow-hidden min-w-0">
-          <ResultGallery />
+            <div className="flex flex-wrap items-center gap-2 border-t border-border-subtle px-4 py-3 md:px-5">
+              {supportsMediaInput && (
+                <button
+                  type="button"
+                  aria-expanded={mediaPanelVisible}
+                  onClick={() => setShowMediaPanel((current) => !current)}
+                  className={`inline-flex h-10 items-center gap-2 rounded-full border px-3.5 text-xs font-medium transition-colors ${
+                    mediaPanelVisible
+                      ? 'border-primary/35 bg-primary/10 text-foreground'
+                      : 'border-glass-border bg-glass text-text-secondary hover:bg-hover-bg hover:text-foreground'
+                  }`}
+                >
+                  <Paperclip size={14} />
+                  {t('compose.addMaterial')}
+                  {inputMedia.length > 0 && (
+                    <span className="rounded-full bg-primary px-1.5 py-0.5 font-mono text-[0.5625rem] text-on-accent">
+                      {inputMedia.length}
+                    </span>
+                  )}
+                </button>
+              )}
+              <button
+                type="button"
+                aria-expanded={showControls}
+                onClick={() => setShowControls((current) => !current)}
+                className={`inline-flex h-10 items-center gap-2 rounded-full border px-3.5 text-xs font-medium transition-colors ${
+                  showControls
+                    ? 'border-primary/35 bg-primary/10 text-foreground'
+                    : 'border-glass-border bg-glass text-text-secondary hover:bg-hover-bg hover:text-foreground'
+                }`}
+              >
+                <SlidersHorizontal size={14} />
+                {t('compose.modelAndParams')}
+                <ChevronDown size={13} className={`transition-transform ${showControls ? 'rotate-180' : ''}`} />
+              </button>
+
+              <div className="ml-auto flex items-center gap-2">
+                {IS_CLOUD_DEPLOYMENT && wallet && (
+                  <div className="hidden items-center gap-2 rounded-full border border-glass-border bg-glass px-3 py-2 text-[0.6875rem] text-text-secondary lg:flex">
+                    <span className="inline-flex items-center gap-1">
+                      <Coins size={13} className="text-primary" />
+                      <strong className="font-mono font-semibold text-foreground">{wallet.available_tickets}</strong>
+                    </span>
+                    <span className="h-3.5 w-px bg-border-subtle" />
+                    <span className="inline-flex items-center gap-1">
+                      <Clock3 size={13} className="text-amber-300" />
+                      <strong className="font-mono font-semibold text-foreground">{wallet.held_tickets}</strong>
+                    </span>
+                  </div>
+                )}
+                <QueuePanel />
+              </div>
+
+              <button
+                type="button"
+                onClick={handleGenerate}
+                disabled={!canGenerate}
+                className={[
+                  'inline-flex h-11 min-w-[132px] items-center justify-center gap-2 rounded-full px-6',
+                  "font-['Space_Grotesk',sans-serif] text-sm font-semibold",
+                  'bg-primary text-on-accent shadow-[var(--glow-primary)] transition-all duration-150 disabled:cursor-not-allowed disabled:opacity-35 disabled:shadow-none',
+                  canGenerate ? 'hover:-translate-y-px hover:bg-primary-hover' : '',
+                ].join(' ')}
+              >
+                <Sparkles size={16} aria-hidden="true" />
+                <span>
+                  {batchSize > 1
+                    ? t('compose.generateBatch', { count: batchSize })
+                    : t('compose.generate')}
+                </span>
+              </button>
+            </div>
+          </section>
+
+          <section className="mx-auto mt-8 w-full max-w-[900px]">
+            <div className="mb-3 flex items-center justify-between">
+              <h3 className="font-display text-sm font-semibold text-foreground">
+                {t('compose.quickTitle')}
+              </h3>
+              <span className="font-mono text-[0.625rem] text-text-muted">WORKFLOWS</span>
+            </div>
+            <div className="grid gap-3 md:grid-cols-3">
+              {([
+                { targetMode: 't2i' as const, icon: ImageIcon, title: t('compose.quickT2i'), body: t('compose.quickT2iDesc') },
+                { targetMode: 'i2v' as const, icon: Clapperboard, title: t('compose.quickI2v'), body: t('compose.quickI2vDesc') },
+                { targetMode: 'r2v' as const, icon: Layers3, title: t('compose.quickR2v'), body: t('compose.quickR2vDesc') },
+              ]).map(({ targetMode, icon: Icon, title: quickTitle, body }) => (
+                <button
+                  key={targetMode}
+                  type="button"
+                  onClick={() => {
+                    setMode(targetMode);
+                    setShowMediaPanel(targetMode !== 't2i');
+                  }}
+                  className="group flex items-start gap-3 rounded-2xl border border-glass-border bg-glass px-4 py-4 text-left transition-all hover:-translate-y-0.5 hover:border-foreground/25 hover:bg-hover-bg"
+                >
+                  <span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl border border-glass-border bg-surface-inset text-text-secondary transition-colors group-hover:text-foreground">
+                    <Icon size={17} />
+                  </span>
+                  <span className="min-w-0">
+                    <span className="block text-sm font-semibold text-foreground">{quickTitle}</span>
+                    <span className="mt-1 block text-xs leading-5 text-text-muted">{body}</span>
+                  </span>
+                </button>
+              ))}
+            </div>
+          </section>
         </main>
       </div>
     </div>

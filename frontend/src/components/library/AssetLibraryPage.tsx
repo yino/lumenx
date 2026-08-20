@@ -348,33 +348,8 @@ export default function AssetLibraryPage() {
 
   return (
     <div className="flex flex-col h-full overflow-hidden">
-      {/* Header */}
-      <header className="px-4 md:px-7 pt-5 md:pt-6 pb-3 flex items-end gap-5">
-        <div className="flex-1 min-w-0">
-          <div className="font-mono text-[0.625rem] font-medium uppercase tracking-[0.2em] text-text-muted">
-            资产库 · <span className="text-primary font-semibold">{t("gallery") || "画廊"}</span>
-          </div>
-          <h1 className="text-[1.625rem] md:text-[2.125rem] font-display atelier-display font-semibold text-foreground leading-tight tracking-tight mt-1">
-            {t("title")}
-          </h1>
-        </div>
-        <div className="flex items-center gap-2.5 pb-1">
-          <span className="font-mono text-[0.6875rem] text-text-muted tracking-[0.1em] uppercase">
-            {t("assetCount", { count: visibleCount })}
-          </span>
-          <button
-            type="button"
-            onClick={() => setNewAssetOpen(true)}
-            className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-full bg-primary text-on-accent text-[0.875rem] font-semibold hover:bg-primary-hover transition-colors"
-          >
-            <Plus size={14} />
-            {t("newAsset")}
-          </button>
-        </div>
-      </header>
-
       {/* Toolbar: 视图切换 + 类型 pills（带计数）+ ★ + 搜索 + 排序 */}
-      <div className="px-4 md:px-7 pb-2 flex flex-wrap items-center gap-3">
+      <div className="flex flex-wrap items-center gap-3 border-b border-border-subtle px-4 py-4 md:px-7">
         {/* 视图切换：按类型 ↔ 按项目 */}
         <div
           className="inline-flex p-[3px] rounded-full bg-surface-inset atelier-pill-tabs"
@@ -518,6 +493,20 @@ export default function AssetLibraryPage() {
               </div>
             </>
           )}
+        </div>
+
+        <div className="ml-auto flex items-center gap-2.5">
+          <span className="font-mono text-[0.6875rem] uppercase tracking-[0.1em] text-text-muted">
+            {t("assetCount", { count: visibleCount })}
+          </span>
+          <button
+            type="button"
+            onClick={() => setNewAssetOpen(true)}
+            className="inline-flex items-center gap-1.5 rounded-full bg-primary px-3.5 py-2 text-[0.8125rem] font-semibold text-on-accent transition-colors hover:bg-primary-hover"
+          >
+            <Plus size={14} />
+            {t("newAsset")}
+          </button>
         </div>
       </div>
 

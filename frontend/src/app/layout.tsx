@@ -1,4 +1,5 @@
 import "./globals.css";
+import "@xyflow/react/dist/style.css";
 import EnvConfigChecker from "@/components/EnvConfigChecker";
 import { Providers } from "@/components/Providers";
 

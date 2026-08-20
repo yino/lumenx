@@ -112,6 +112,44 @@ class TestPolishVideoPromptErrors:
         assert "Cinematic" in result["prompt_en"]
 
 
+class TestCanvasPromptComposition:
+    def test_merges_multiple_labeled_inputs_and_returns_bilingual_prompt(self):
+        sp = ScriptProcessor.__new__(ScriptProcessor)
+        sp.llm = MagicMock()
+        sp.llm.is_configured = True
+        sp.llm.chat.return_value = json.dumps({
+            "prompt_cn": "锦衣卫在雨夜巷战，低机位跟拍，冷蓝月光。",
+            "prompt_en": "A Jinyiwei fights in a rainy alley, low-angle tracking shot, cold moonlight.",
+        })
+
+        result = sp.compose_canvas_prompt(
+            inputs=[
+                {"title": "人物设定", "content": "成年锦衣卫，黑色飞鱼服"},
+                {"title": "场景", "content": "明代雨夜巷道，冷蓝月光"},
+            ],
+            target="video",
+            instruction="突出刀法与镜头连续性",
+        )
+
+        assert result["prompt_cn"].startswith("锦衣卫")
+        messages = sp.llm.chat.call_args.kwargs["messages"]
+        assert "人物设定" in messages[-1]["content"]
+        assert "场景" in messages[-1]["content"]
+        assert "突出刀法" in messages[-1]["content"]
+        assert "面向视频生成" in messages[0]["content"]
+
+    def test_rejects_empty_inputs_before_calling_model(self):
+        sp = ScriptProcessor.__new__(ScriptProcessor)
+        sp.llm = MagicMock()
+        sp.llm.is_configured = True
+
+        with pytest.raises(PolishError) as exc_info:
+            sp.compose_canvas_prompt([{"title": "空白", "content": "  "}])
+
+        assert exc_info.value.reason == "missing_inputs"
+        sp.llm.chat.assert_not_called()
+
+
 # ---------------------------------------------------------------------------
 # 双语锚点迭代 (#119)
 # ---------------------------------------------------------------------------

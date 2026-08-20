@@ -142,6 +142,57 @@ def test_dashscope_image_persistence_failure_stops_before_polling(monkeypatch) -
     assert polls == []
 
 
+def test_dashscope_image_submission_and_polling_recover_from_ssl_interruptions(monkeypatch) -> None:
+    submission_attempts = []
+    poll_attempts = []
+
+    def submit(*_args, **_kwargs):
+        submission_attempts.append(True)
+        if len(submission_attempts) == 1:
+            raise __import__("requests").exceptions.SSLError("unexpected EOF")
+        return FakeResponse({
+            "request_id": "request-image-retry",
+            "output": {"task_id": "task-image-retry"},
+        })
+
+    def poll(*_args, **_kwargs):
+        poll_attempts.append(True)
+        if len(poll_attempts) == 1:
+            raise __import__("requests").exceptions.SSLError("connection reset")
+        return FakeResponse({
+            "output": {
+                "task_status": "SUCCEEDED",
+                "choices": [{
+                    "message": {"content": [{"image": "https://example.com/result.png"}]},
+                }],
+            },
+        })
+
+    monkeypatch.setattr("src.models.image.requests.post", submit)
+    monkeypatch.setattr("src.models.image.requests.get", poll)
+    monkeypatch.setattr("src.models.image.time.sleep", lambda *_args: None)
+    captured = {}
+
+    image_url = WanxImageModel({"api_key": "test-key"})._generate_dashscope_image_http(
+        "雨夜巷战",
+        "wan2.7-image-pro",
+        on_provider_ids=lambda provider, provider_task_id, request_id: captured.update(
+            provider=provider,
+            task_id=provider_task_id,
+            request_id=request_id,
+        ),
+    )
+
+    assert image_url == "https://example.com/result.png"
+    assert len(submission_attempts) == 2
+    assert len(poll_attempts) == 2
+    assert captured == {
+        "provider": "dashscope",
+        "task_id": "task-image-retry",
+        "request_id": "request-image-retry",
+    }
+
+
 def test_dashscope_video_persistence_failure_stops_before_polling(monkeypatch) -> None:
     polls = []
     monkeypatch.setattr(
