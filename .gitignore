@@ -87,6 +87,7 @@ logs/
 # Secrets (extra safety)
 *secret*
 *credential*
+!src/platform/credentials.py
 *.pem
 *.key
 !*.pub.key

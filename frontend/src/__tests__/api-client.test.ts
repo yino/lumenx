@@ -12,6 +12,7 @@ interface CapturedRequest {
   workspaceId?: string;
   ifMatch?: string;
   idempotencyKey?: string;
+  timeout?: number;
   data: unknown;
 }
 
@@ -27,6 +28,7 @@ function captureAdapter(target: CapturedRequest[]) {
       workspaceId: config.headers.get("X-Workspace-ID") as string | undefined,
       ifMatch: config.headers.get("If-Match") as string | undefined,
       idempotencyKey: config.headers.get("Idempotency-Key") as string | undefined,
+      timeout: config.timeout,
       data,
     });
     return {
@@ -280,6 +282,55 @@ describe("云端 API 客户端", () => {
       prompt: "镜头推进",
       duration: 5,
       media_ids: [mediaId],
+    });
+  });
+
+  it("剧本分析使用长任务超时，不继承全局六十秒限制", async () => {
+    const { api, apiClient } = await import("@/lib/api");
+    const captured: CapturedRequest[] = [];
+    apiClient.defaults.adapter = captureAdapter(captured);
+
+    await api.extractPreview("project-1", "第一幕：矿区停电。");
+
+    expect(captured[0]).toMatchObject({
+      url: expect.stringContaining("/projects/project-1/extract_preview"),
+      timeout: 300_000,
+      data: { text: "第一幕：矿区停电。" },
+    });
+  });
+
+  it("风格分析使用长任务超时，不继承全局六十秒限制", async () => {
+    const { api, apiClient } = await import("@/lib/api");
+    const captured: CapturedRequest[] = [];
+    apiClient.defaults.adapter = captureAdapter(captured);
+
+    await api.analyzeScriptForStyles("project-1", "第一幕：矿区停电。");
+
+    expect(captured[0]).toMatchObject({
+      url: expect.stringContaining("/projects/project-1/art_direction/analyze"),
+      timeout: 300_000,
+      data: { script_text: "第一幕：矿区停电。" },
+    });
+  });
+
+  it("确认实体提取时提交完整预览结果", async () => {
+    const { api, apiClient } = await import("@/lib/api");
+    const captured: CapturedRequest[] = [];
+    apiClient.defaults.adapter = captureAdapter(captured);
+    const extraction = {
+      characters: [{ id: "character-1", name: "沈砚", description: "黑色工装" }],
+      scenes: [{ id: "scene-1", name: "昆仑轨道港", description: "冷白色大厅" }],
+      props: [{ id: "prop-1", name: "黑色主螺栓", description: "磨损的关键零件" }],
+    };
+
+    await api.applyExtraction("project-1", "第一幕：矿区停电。", extraction);
+
+    expect(captured[0]).toMatchObject({
+      url: expect.stringContaining("/projects/project-1/extraction"),
+      data: {
+        text: "第一幕：矿区停电。",
+        ...extraction,
+      },
     });
   });
 

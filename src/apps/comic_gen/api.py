@@ -578,6 +578,13 @@ class ReparseProjectRequest(BaseModel):
     text: str
 
 
+class ApplyExtractionRequest(BaseModel):
+    text: str
+    characters: List[Dict[str, Any]] = Field(default_factory=list)
+    scenes: List[Dict[str, Any]] = Field(default_factory=list)
+    props: List[Dict[str, Any]] = Field(default_factory=list)
+
+
 class UpdateScriptTextRequest(BaseModel):
     text: str
 
@@ -634,6 +641,27 @@ async def extract_preview(script_id: str, request: ReparseProjectRequest):
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
     except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.put("/projects/{script_id}/extraction", response_model=Script)
+def apply_extraction(script_id: str, request: ApplyExtractionRequest):
+    """Apply a confirmed extraction preview without another LLM call."""
+    try:
+        result = pipeline.apply_extraction(
+            script_id,
+            request.text,
+            {
+                "characters": request.characters,
+                "scenes": request.scenes,
+                "props": request.props,
+            },
+        )
+        return signed_response(result)
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        logger.exception("Failed to apply extraction for project %s", script_id)
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -2774,6 +2802,41 @@ class SelectVariantRequest(BaseModel):
     asset_type: str
     variant_id: str
     generation_type: str = None  # For character: "full_body", "three_view", "headshot"
+
+
+class BindProviderAssetRequest(BaseModel):
+    asset_id: str
+    asset_type: str
+    variant_id: str
+    provider: str = "volcengine_ark"
+    provider_asset_id: Optional[str] = None
+
+
+@app.put("/projects/{script_id}/assets/variant/provider-binding", response_model=Script)
+def bind_asset_variant_provider_id(
+    script_id: str, request: BindProviderAssetRequest
+):
+    """Bind an existing provider trusted-material ID to a local image variant.
+
+    This endpoint does not certify or upload the image. The Asset ID must first
+    be created and approved in the provider's trusted-material library.
+    Passing an empty/null provider_asset_id clears the binding.
+    """
+    try:
+        updated_script = pipeline.bind_asset_variant_provider_id(
+            script_id,
+            request.asset_id,
+            request.asset_type,
+            request.variant_id,
+            request.provider,
+            request.provider_asset_id,
+        )
+        return signed_response(updated_script)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.exception("Failed to bind provider asset ID")
+        raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/projects/{script_id}/assets/variant/select", response_model=Script)
 def select_asset_variant(script_id: str, request: SelectVariantRequest):

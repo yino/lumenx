@@ -87,16 +87,18 @@ export default function StoryboardR2V() {
         }
 
         // R2V preference order:
-        //   1. localStorage (user's last explicit pick — survives reloads)
-        //   2. project.model_settings.r2v_model (project-level default,
-        //      set in 生成设置 — Plan B "specialize" hierarchy)
+        //   1. project.model_settings.r2v_model (authoritative project value)
+        //   2. localStorage (recovery fallback for older projects)
         //   3. derived from i2v family (initial coherence on first mount)
         //   4. catalog DEFAULT_R2V_MODEL_ID
         // Each candidate is validated against VIDEO_R2V_MODELS so a
-        // hidden id from any layer falls through cleanly.
+        // hidden id from any layer falls through cleanly. Project settings
+        // must win over localStorage; otherwise changing the model in Settings
+        // or through the API appears to succeed but the workbench keeps
+        // submitting the stale browser-cached provider.
         const projectR2v = IS_CLOUD_DEPLOYMENT ? undefined : currentProject?.model_settings?.r2v_model;
         const r2vDerived = getR2vRouteModelId(i2vModelId);
-        const r2vCandidate = savedR2v || projectR2v || r2vDerived || DEFAULT_R2V_MODEL_ID;
+        const r2vCandidate = projectR2v || savedR2v || r2vDerived || DEFAULT_R2V_MODEL_ID;
         const r2vOk = VIDEO_R2V_MODELS.find(m => m.id === r2vCandidate);
         const r2vModelId = r2vOk ? r2vCandidate : (VIDEO_R2V_MODELS[0]?.id ?? DEFAULT_R2V_MODEL_ID);
         if (!r2vOk && ls && savedR2v) {
@@ -119,6 +121,23 @@ export default function StoryboardR2V() {
         window.localStorage.removeItem("storyboard-r2v-model");
         window.localStorage.removeItem("storyboard-r2v-r2v-model");
     }, []);
+
+    // Keep an already-open desktop workbench aligned when project settings
+    // arrive after hydration or are changed elsewhere. The effect only runs
+    // when the authoritative project value changes, so an in-page temporary
+    // picker choice remains usable until the next project-level update.
+    useEffect(() => {
+        if (IS_CLOUD_DEPLOYMENT) return;
+        const projectR2v = currentProject?.model_settings?.r2v_model;
+        if (!projectR2v || !VIDEO_R2V_MODELS.some((model) => model.id === projectR2v)) return;
+
+        setVideoConfig((previous) => (
+            previous.r2vModel === projectR2v
+                ? previous
+                : { ...previous, r2vModel: projectR2v }
+        ));
+        window.localStorage.setItem("storyboard-r2v-r2v-model", projectR2v);
+    }, [currentProject?.model_settings?.r2v_model]);
 
     // Modal & drawer state (configModalOpen retired with the gear; the
     // old VideoConfigModal mount is gone, replaced by per-shot

@@ -1,6 +1,6 @@
 # Volcengine Ark Seedance 2.0 Video API
 
-> Capture date: 2026-08-09
+> Capture date: 2026-08-20
 > Provider: Volcengine Ark (China, cn-beijing)
 > Scope: Doubao Seedance 2.0, Agent Plan and standard pay-as-you-go API
 
@@ -12,6 +12,8 @@
 - Query video task: https://www.volcengine.com/docs/82379/1521309
 - Seedance 2.0 tutorial: https://www.volcengine.com/docs/82379/2291680
 - General video generation tutorial: https://www.volcengine.com/docs/82379/2298881
+- Trusted human materials: https://www.volcengine.com/docs/82379/2315856?lang=zh
+- Advanced creator package and Assets API entitlement: https://www.volcengine.com/docs/82379/2377608?lang=zh
 
 ## Authentication and endpoints
 
@@ -79,6 +81,33 @@ Reference-to-video adds up to nine images with `role: reference_image`:
 Images can be supplied through a public URL or Base64 data URL. Seedance 2.0
 reference generation accepts at most nine images. A first/last-frame request
 uses explicit `first_frame` and `last_frame` roles.
+
+### Trusted human and virtual-person materials
+
+A normal HTTPS URL carries image bytes but no Ark trusted-material identity.
+For a real-person-like or certified virtual-person reference, first complete
+the applicable authorization/certification flow in Ark's trusted-material
+library, then submit the returned Asset ID as an `asset://` URI:
+
+```json
+{
+  "type": "image_url",
+  "image_url": {"url": "asset://asset-202602..."},
+  "role": "reference_image"
+}
+```
+
+LumenX stores this provider Asset ID alongside the image variant rather than
+replacing its normal URL: the normal URL remains available for local preview,
+while the Ark Seedance adapter prefers the bound `asset://` URI at generation
+time. A binding does not itself certify the image; Ark still verifies that the
+Asset ID exists, belongs to the calling account, and has the required status.
+
+Programmatic ingestion through the Assets API is entitlement-gated. The
+official advanced creator package table lists API-based real/virtual-person
+material ingestion under advanced rights rather than base creation rights.
+Do not invent an upload endpoint or silently treat an OSS/HTTPS upload as a
+trusted material when the account lacks that entitlement.
 
 ## Async result
 

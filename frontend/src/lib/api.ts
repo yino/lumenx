@@ -2470,7 +2470,14 @@ export const api = {
     extractPreview: async (scriptId: string, text: string) => {
         const res = await apiClient.post<
             ScriptAnalysisPreview | SubmittedAITaskResponse
-        >(`${API_URL}/projects/${scriptId}/extract_preview`, { text });
+        >(
+            `${API_URL}/projects/${scriptId}/extract_preview`,
+            { text },
+            // Entity extraction is a synchronous desktop LLM call. Qwen can
+            // legitimately take longer than the client's global 60s timeout
+            // for long scripts, so keep the progress UI alive while it runs.
+            { timeout: 300_000 },
+        );
         if ("task_id" in res.data) {
             return waitForScriptAnalysisPreview(res.data.task_id);
         }
@@ -2939,6 +2946,23 @@ export const api = {
         return res.data;
     },
 
+    bindAssetVariantProviderId: async (
+        scriptId: string,
+        assetId: string,
+        assetType: string,
+        variantId: string,
+        providerAssetId?: string,
+    ) => {
+        const res = await apiClient.put(`${API_URL}/projects/${scriptId}/assets/variant/provider-binding`, {
+            asset_id: assetId,
+            asset_type: assetType,
+            variant_id: variantId,
+            provider: "volcengine_ark",
+            provider_asset_id: providerAssetId?.trim() || null,
+        });
+        return res.data;
+    },
+
     deleteAssetVariant: async (scriptId: string, assetId: string, assetType: string, variantId: string) => {
         const res = await apiClient.post(`${API_URL}/projects/${scriptId}/assets/variant/delete`, {
             asset_id: assetId,
@@ -3045,6 +3069,12 @@ export const api = {
             ai_task?: SubmittedAITaskResponse;
         }>(`${API_URL}/projects/${scriptId}/art_direction/analyze`, {
             script_text: scriptText
+        }, {
+            // Desktop style analysis is a synchronous LLM call and can exceed
+            // the client's global 60s timeout when DashScope is under load.
+            // Cloud mode normally returns a submitted task immediately, so
+            // this larger ceiling is harmless there as well.
+            timeout: 300_000,
         });
         if (res.data.ai_task?.task_id) {
             const result = await waitForStructuredAITaskResult(

@@ -7,6 +7,7 @@ task protocol; only the base URL, API key, and model identifier differ.
 
 import logging
 import os
+import re
 import time
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -134,7 +135,8 @@ class ArkSeedanceVideoModel(VideoGenModel):
                     provider_code=str(code),
                     safe_error_code="PROVIDER_INPUT_SENSITIVE_CONTENT",
                     safe_error_message=(
-                        "参考图片可能包含真人或隐私信息，请更换为插画/动漫图片后重试"
+                        "参考图片可能包含真人或隐私信息；请绑定已完成授权或虚拟人认证的"
+                        "火山可信素材 Asset ID，或更换图片后重试"
                     ),
                 )
             raise RuntimeError(
@@ -146,6 +148,10 @@ class ArkSeedanceVideoModel(VideoGenModel):
         return payload
 
     def _resolve_image(self, ref: str, *, model_name: str) -> str:
+        if ref.startswith("asset://"):
+            if not re.fullmatch(r"asset://asset-[A-Za-z0-9_-]{3,128}", ref):
+                raise ValueError("Invalid Volcengine trusted-material asset URI")
+            return ref
         if ref.startswith(("http://", "https://", "data:")):
             return ref
         return resolve_media_input(
@@ -166,7 +172,7 @@ class ArkSeedanceVideoModel(VideoGenModel):
     ) -> List[str]:
         refs: List[str] = []
         has_provider_ready_url = isinstance(img_url, str) and img_url.startswith(
-            ("http://", "https://", "data:")
+            ("http://", "https://", "data:", "asset://")
         )
         primary = img_url if has_provider_ready_url else (img_path or img_url)
         if primary:

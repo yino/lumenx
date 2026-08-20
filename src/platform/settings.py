@@ -63,7 +63,10 @@ class DeploymentSettings(BaseSettings):
     local_import_root: Path = Path("imports")
     local_import_max_bytes: int = 10 * 1024 * 1024 * 1024
 
-    allowed_origins: str = "http://localhost:3000,http://localhost:3008"
+    allowed_origins: str = (
+        "http://localhost:3000,http://localhost:3008,"
+        "http://127.0.0.1:3000,http://127.0.0.1:3008"
+    )
     auth_rate_window_seconds: int = 15 * 60
     auth_registration_limit: int = 5
     auth_login_limit: int = 10

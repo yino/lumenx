@@ -22,6 +22,7 @@ export interface ImageVariant {
     url: string;
     created_at: number;
     prompt_used?: string;
+    provider_asset_ids?: Record<string, string>;
 }
 
 export interface ImageAsset {

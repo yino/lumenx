@@ -32,6 +32,8 @@ logger = get_logger(__name__)
 
 # Allowed pattern for IDs used in file paths (UUID hex + hyphens)
 _SAFE_ID_RE = re.compile(r'^[a-zA-Z0-9_\-]+$')
+_ARK_ASSET_ID_RE = re.compile(r"^asset-[A-Za-z0-9_-]{3,128}$")
+_ARK_PROVIDER_ASSET_KEY = "volcengine_ark"
 
 
 def _validate_safe_id(value: str, label: str = "id") -> str:
@@ -39,6 +41,23 @@ def _validate_safe_id(value: str, label: str = "id") -> str:
     if not value or not _SAFE_ID_RE.match(value):
         raise ValueError(f"Invalid {label}: contains unsafe characters")
     return value
+
+
+def _normalize_ark_asset_id(value: str) -> str:
+    """Normalize a Volcengine trusted-material ID without claiming ownership.
+
+    The binding endpoint accepts either the console's bare ``asset-...`` ID or
+    the request-ready ``asset://asset-...`` URI. Provider access and material
+    certification are still verified by Ark when a generation task is created.
+    """
+    normalized = (value or "").strip()
+    if normalized.startswith("asset://"):
+        normalized = normalized.removeprefix("asset://")
+    if not _ARK_ASSET_ID_RE.fullmatch(normalized):
+        raise ValueError(
+            "Invalid Volcengine Asset ID. Expected asset-... (not an HTTPS URL or API key)."
+        )
+    return normalized
 
 
 def _safe_resolve_path(base_dir: str, untrusted_rel: str) -> str:
@@ -508,7 +527,49 @@ class ComicGenPipeline:
         else:
             custom_extraction = getattr(getattr(existing_script, "prompt_config", None), "entity_extraction", "")
             new_script = self.script_processor.parse_novel(existing_script.title, text, custom_extraction)
-        
+
+        return self._commit_extraction(script_id, existing_script, new_script)
+
+    def apply_extraction(
+        self,
+        script_id: str,
+        text: str,
+        extraction: Dict[str, List[Dict[str, Any]]],
+    ) -> Script:
+        """Apply a completed extraction preview without another LLM request.
+
+        ``extract_preview`` keeps the parsed Script briefly in memory for the
+        normal confirm flow.  The submitted entities are also accepted as a
+        fallback because a development reload or desktop backend restart can
+        clear that cache while the confirmation modal remains open.
+        """
+        existing_script = self.scripts.get(script_id)
+        if not existing_script:
+            raise ValueError("Script not found")
+
+        cached = self._extraction_cache.pop(script_id, None)
+        if (
+            cached
+            and (time.time() - cached[0]) < 300
+            and cached[1].original_text == text
+        ):
+            new_script = cached[1]
+        else:
+            new_script = self.script_processor.create_script_from_extraction(
+                existing_script.title,
+                text,
+                extraction,
+            )
+
+        return self._commit_extraction(script_id, existing_script, new_script)
+
+    def _commit_extraction(
+        self,
+        script_id: str,
+        existing_script: Script,
+        new_script: Script,
+    ) -> Script:
+        """Persist extracted entities while retaining project-level settings."""
         # Preserve the original script ID and timestamps
         new_script.id = existing_script.id
         new_script.created_at = existing_script.created_at
@@ -534,6 +595,7 @@ class ComicGenPipeline:
         new_script.default_generation_mode = existing_script.default_generation_mode
         new_script.bgm_url = existing_script.bgm_url
         new_script.mix_settings = existing_script.mix_settings
+        new_script.starred = existing_script.starred
         
         # Replace the script in memory
         self.scripts[script_id] = new_script
@@ -3321,6 +3383,19 @@ class ComicGenPipeline:
                     from ...models.ark_seedance import ArkSeedanceVideoModel
                     self._ark_seedance_video_model = ArkSeedanceVideoModel({})
 
+                ark_img_url = img_url
+                if img_url:
+                    ark_img_url = self._provider_ready_image_references(
+                        script,
+                        [img_url],
+                        provider=_ARK_PROVIDER_ASSET_KEY,
+                    )[0]
+                ark_reference_image_urls = self._provider_ready_image_references(
+                    script,
+                    task.reference_image_urls,
+                    provider=_ARK_PROVIDER_ASSET_KEY,
+                )
+
                 def _capture_ark_provider_ids(
                     provider_name: str,
                     provider_task_id: Optional[str],
@@ -3337,7 +3412,7 @@ class ComicGenPipeline:
                 video_path, _ = self._ark_seedance_video_model.generate(
                     prompt=task.prompt,
                     output_path=output_path,
-                    img_url=img_url,
+                    img_url=ark_img_url,
                     img_path=img_path,
                     duration=task.duration,
                     resolution=task.resolution,
@@ -3346,7 +3421,11 @@ class ComicGenPipeline:
                     watermark=bool(task.watermark) if task.watermark is not None else False,
                     generate_audio=final_generate_audio,
                     generation_mode=task.generation_mode,
-                    ref_image_urls=task.reference_image_urls if task.generation_mode == "r2v" else None,
+                    ref_image_urls=(
+                        ark_reference_image_urls
+                        if task.generation_mode == "r2v"
+                        else None
+                    ),
                     on_provider_ids=_capture_ark_provider_ids,
                 )
             elif use_mulerouter:
@@ -3662,6 +3741,137 @@ class ComicGenPipeline:
         if hasattr(image_asset, "image_variants"):
             return image_asset.image_variants, "selected_image_id"
         return getattr(image_asset, "variants", []), "selected_id"
+
+    def _image_variant_containers(self, asset: Any, asset_type: str) -> List[Any]:
+        """Return every image container that can hold a variant for an asset.
+
+        Character data has canonical and legacy containers which can contain
+        duplicate variant IDs. Updating every match keeps old projects and the
+        current reference-sheet UI in sync.
+        """
+        if asset_type == "character":
+            attributes = (
+                "reference_sheet",
+                "full_body",
+                "head_shot",
+                "three_views",
+                "full_body_asset",
+                "headshot_asset",
+                "three_view_asset",
+            )
+        else:
+            attributes = ("image_asset",)
+        containers: List[Any] = []
+        seen: set[int] = set()
+        for attribute in attributes:
+            container = getattr(asset, attribute, None)
+            if container is None or id(container) in seen:
+                continue
+            seen.add(id(container))
+            containers.append(container)
+        return containers
+
+    def bind_asset_variant_provider_id(
+        self,
+        script_id: str,
+        asset_id: str,
+        asset_type: str,
+        variant_id: str,
+        provider: str,
+        provider_asset_id: Optional[str],
+    ) -> Script:
+        """Bind or clear a provider-owned trusted-material ID on one variant."""
+        script = self.scripts.get(script_id)
+        if not script:
+            raise ValueError("Script not found")
+        if provider != _ARK_PROVIDER_ASSET_KEY:
+            raise ValueError(f"Unsupported provider asset binding: {provider}")
+
+        target_asset, source = self._find_asset_with_source(
+            script, asset_id, asset_type
+        )
+        if not target_asset or not source:
+            raise ValueError(f"Asset {asset_id} of type {asset_type} not found")
+
+        normalized_id = (
+            _normalize_ark_asset_id(provider_asset_id)
+            if provider_asset_id and provider_asset_id.strip()
+            else None
+        )
+        matched = False
+        for container in self._image_variant_containers(target_asset, asset_type):
+            variants, _selected_field = self._variant_collection(container)
+            for variant in variants:
+                if variant.id != variant_id:
+                    continue
+                matched = True
+                bindings = dict(getattr(variant, "provider_asset_ids", {}) or {})
+                if normalized_id:
+                    bindings[provider] = normalized_id
+                else:
+                    bindings.pop(provider, None)
+                variant.provider_asset_ids = bindings
+
+        if not matched:
+            raise ValueError(f"Variant {variant_id} not found")
+        self._save_after_asset_mutation(source)
+        return script
+
+    def _provider_ready_image_references(
+        self,
+        script: Script,
+        references: List[str],
+        *,
+        provider: str,
+    ) -> List[str]:
+        """Prefer a bound trusted-material URI while preserving task snapshots."""
+        if provider != _ARK_PROVIDER_ASSET_KEY or not references:
+            return list(references)
+
+        assets_by_type: List[Tuple[str, Any]] = []
+        owners: List[Any] = [script]
+        if getattr(script, "series_id", None):
+            series = getattr(self, "series_store", {}).get(script.series_id)
+            if series is not None:
+                owners.append(series)
+        library = getattr(self, "library_store", None)
+        if library is not None:
+            owners.append(library)
+
+        seen_assets: set[int] = set()
+        for owner in owners:
+            for asset_type, collection_name in (
+                ("character", "characters"),
+                ("scene", "scenes"),
+                ("prop", "props"),
+            ):
+                for asset in getattr(owner, collection_name, []) or []:
+                    if id(asset) in seen_assets:
+                        continue
+                    seen_assets.add(id(asset))
+                    assets_by_type.append((asset_type, asset))
+
+        bindings_by_url: Dict[str, str] = {}
+        for asset_type, asset in assets_by_type:
+            for container in self._image_variant_containers(asset, asset_type):
+                variants, _selected_field = self._variant_collection(container)
+                for variant in variants:
+                    bound_id = (getattr(variant, "provider_asset_ids", {}) or {}).get(
+                        provider
+                    )
+                    if not bound_id:
+                        continue
+                    try:
+                        normalized_id = _normalize_ark_asset_id(bound_id)
+                    except ValueError:
+                        logger.warning(
+                            "Ignoring invalid Ark Asset ID bound to image variant %s",
+                            getattr(variant, "id", "unknown"),
+                        )
+                        continue
+                    bindings_by_url.setdefault(variant.url, f"asset://{normalized_id}")
+
+        return [bindings_by_url.get(reference, reference) for reference in references]
 
     def _select_variant_in_asset(self, image_asset: Any, variant_id: str) -> Any:
         """Select a variant in either ImageAsset or AssetUnit."""

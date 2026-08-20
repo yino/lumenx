@@ -15,6 +15,8 @@ def test_desktop_settings_do_not_require_cloud_dependencies() -> None:
     settings = DeploymentSettings(_env_file=None)
 
     assert settings.deployment_mode is DeploymentMode.DESKTOP
+    assert "http://localhost:3008" in settings.allowed_origin_set
+    assert "http://127.0.0.1:3008" in settings.allowed_origin_set
 
 
 def test_emergency_feature_flags_default_open_and_parse_explicit_shutdown() -> None:

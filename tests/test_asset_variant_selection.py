@@ -139,6 +139,53 @@ class AssetVariantSelectionTests(unittest.TestCase):
                 "reference_sheet",
             )
 
+    def test_binds_ark_trusted_material_without_replacing_preview_url(self):
+        character = _character()
+        script = _script("project-1", [character])
+        pipeline = _pipeline(script)
+
+        pipeline.bind_asset_variant_provider_id(
+            script.id,
+            character.id,
+            "character",
+            "variant-1",
+            "volcengine_ark",
+            "asset://asset-20260820abc123",
+        )
+
+        variant = character.reference_sheet.image_variants[0]
+        self.assertEqual(variant.url, "assets/characters/one.png")
+        self.assertEqual(
+            variant.provider_asset_ids["volcengine_ark"],
+            "asset-20260820abc123",
+        )
+        self.assertEqual(
+            pipeline._provider_ready_image_references(
+                script,
+                [variant.url, "https://example.com/scene.png"],
+                provider="volcengine_ark",
+            ),
+            [
+                "asset://asset-20260820abc123",
+                "https://example.com/scene.png",
+            ],
+        )
+
+    def test_rejects_invalid_ark_trusted_material_id(self):
+        character = _character()
+        script = _script("project-1", [character])
+        pipeline = _pipeline(script)
+
+        with self.assertRaisesRegex(ValueError, "Expected asset"):
+            pipeline.bind_asset_variant_provider_id(
+                script.id,
+                character.id,
+                "character",
+                "variant-1",
+                "volcengine_ark",
+                "https://example.com/not-an-asset-id.png",
+            )
+
 
 if __name__ == "__main__":
     unittest.main()
