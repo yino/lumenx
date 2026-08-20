@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { X, Zap, Film } from "lucide-react";
 import { useTranslations } from "next-intl";
@@ -12,9 +12,10 @@ interface CreateProjectDialogProps {
     onClose: () => void;
     seriesId?: string;
     seriesTitle?: string;
+    initialScript?: string;
 }
 
-export default function CreateProjectDialog({ isOpen, onClose, seriesId, seriesTitle }: CreateProjectDialogProps) {
+export default function CreateProjectDialog({ isOpen, onClose, seriesId, seriesTitle, initialScript }: CreateProjectDialogProps) {
     const [title, setTitle] = useState("");
     const [text, setText] = useState("");
     const [workflowMode, setWorkflowMode] = useState<"r2v" | "i2v_legacy">("r2v");
@@ -23,6 +24,9 @@ export default function CreateProjectDialog({ isOpen, onClose, seriesId, seriesT
     const t = useTranslations("project");
     const tc = useTranslations("common");
 
+    useEffect(() => {
+        if (isOpen && initialScript?.trim()) setText(initialScript.trim());
+    }, [initialScript, isOpen]);
 
     const handleCreate = async () => {
         if (!title) {
@@ -39,6 +43,8 @@ export default function CreateProjectDialog({ isOpen, onClose, seriesId, seriesT
                 // Use hash-based routing to match the app's routing structure
                 window.location.hash = `#/project/${currentProject.id}`;
             }
+            setTitle("");
+            setText("");
             onClose();
         } catch (error: any) {
             const errorMessage = error?.response?.data?.detail || error?.message || t("checkBackend");

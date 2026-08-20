@@ -61,7 +61,7 @@ export default function PipelineSidebar({ activeStep, onStepChange, steps, bread
         <motion.aside
             initial={{ x: -100, opacity: 0 }}
             animate={{ x: 0, opacity: 1 }}
-            className="w-64 flex-1 min-h-0 border-r border-glass-border bg-surface backdrop-blur-xl flex flex-col z-50"
+            className="w-64 flex-1 min-h-0 border-r border-glass-border bg-background/94 backdrop-blur-2xl flex flex-col z-50"
         >
             {/* Header: breadcrumb navigation or branding */}
             <div className="p-5 border-b border-glass-border">
@@ -128,7 +128,7 @@ export default function PipelineSidebar({ activeStep, onStepChange, steps, bread
                             className={clsx(
                                 "w-full relative flex items-center gap-3 px-4 py-3 rounded-[14px] transition-all duration-200 group overflow-hidden",
                                 isActive
-                                    ? "bg-primary/10 text-primary border border-primary/20"
+                                    ? "bg-foreground text-on-accent border border-foreground shadow-[0_12px_28px_-18px_rgba(255,255,255,0.7)]"
                                     : "text-text-secondary hover:text-foreground hover:bg-glass",
                                 step.status === "gated" && !isActive && "opacity-60"
                             )}
@@ -140,19 +140,10 @@ export default function PipelineSidebar({ activeStep, onStepChange, steps, bread
                                     className="pointer-events-none absolute left-[25px] top-[38px] bottom-[-8px] w-[1.5px] bg-foreground/10"
                                 />
                             )}
-                            {isActive && (
-                                <motion.div
-                                    layoutId="active-pill"
-                                    className="absolute left-0 top-1/2 -translate-y-1/2 h-3/5 w-1 rounded-r-sm bg-primary shadow-[var(--glow-primary)]"
-                                    initial={{ opacity: 0 }}
-                                    animate={{ opacity: 1 }}
-                                />
-                            )}
-
                             <Icon size={20} className={clsx(
                                 "transition-colors",
                                 step.comingSoon ? "opacity-50" : "",
-                                isActive ? "text-primary" : "group-hover:text-foreground"
+                                isActive ? "text-on-accent" : "group-hover:text-foreground"
                             )} />
 
                             <div className="flex flex-col items-start gap-0.5 text-sm flex-1 min-w-0">
@@ -165,7 +156,10 @@ export default function PipelineSidebar({ activeStep, onStepChange, steps, bread
                                     )}
                                 </div>
                                 {/* rsub — single line: STEP 0N · status (mock pattern) */}
-                                <span className="flex items-center gap-1.5 font-mono text-[9px] tracking-[0.12em] text-text-muted">
+                                <span className={clsx(
+                                    "flex items-center gap-1.5 font-mono text-[9px] tracking-[0.12em]",
+                                    isActive ? "text-on-accent opacity-55" : "text-text-muted",
+                                )}>
                                     <span className="opacity-70">{tp("stepIndex", { number: index + 1 })}</span>
                                     {step.statusLabel ? (
                                         <>
@@ -179,7 +173,7 @@ export default function PipelineSidebar({ activeStep, onStepChange, steps, bread
                             {/* right rail: 3-state dot (ready/warn/idle), done check,
                                 gated lock, or active chevron — mock .rdot/.rcheck/.rlock */}
                             {isActive ? (
-                                <ChevronRight size={16} className="ml-auto shrink-0 opacity-50" />
+                                <ChevronRight size={16} className="ml-auto shrink-0 text-on-accent opacity-45" />
                             ) : step.status === "gated" ? (
                                 <Lock size={13} className="ml-auto shrink-0 text-text-muted/50" aria-label={tp("gatedTooltip")} />
                             ) : step.status === "ready" ? (

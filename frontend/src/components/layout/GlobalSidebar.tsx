@@ -1,13 +1,25 @@
 "use client";
 
-import { useState } from "react";
-import { LayoutGrid, Layers, LogOut, Settings, WalletCards, Wand2 } from "lucide-react";
+import { useEffect, useState } from "react";
+import {
+  LayoutGrid,
+  Layers,
+  LogOut,
+  Moon,
+  PanelLeftClose,
+  PanelLeftOpen,
+  Settings,
+  Sun,
+  WalletCards,
+  Wand2,
+} from "lucide-react";
 import { useTranslations } from "next-intl";
 import clsx from "clsx";
 import { IS_CLOUD_DEPLOYMENT } from "@/lib/deployment";
 import LumenXBranding from "./LumenXBranding";
 import { authApi, getSafeApiError } from "@/lib/api";
 import { useAuthStore } from "@/store/authStore";
+import { useSettingsStore } from "@/store/settingsStore";
 import { toast } from "@/store/toastStore";
 import WorkspaceSwitcher from "@/components/workspace/WorkspaceSwitcher";
 
@@ -18,8 +30,6 @@ interface GlobalSidebarProps {
   onTabChange: (tab: GlobalTab) => void;
 }
 
-// Shared global nav model (workspace/library/playground + settings). Reused by
-// the desktop GlobalSidebar (below) and the mobile BottomTabBar (md:hidden).
 const ALL_GLOBAL_NAV_ITEMS: { id: GlobalTab; icon: typeof LayoutGrid; hash: string }[] = [
   { id: "workspace", icon: LayoutGrid, hash: "#/" },
   { id: "library", icon: Layers, hash: "#/library" },
@@ -33,14 +43,17 @@ export const GLOBAL_NAV_ITEMS = ALL_GLOBAL_NAV_ITEMS.filter(
 );
 
 const APP_VERSION = "v0.2.0";
+const SIDEBAR_STORAGE_KEY = "lumenx-global-sidebar-collapsed";
 
 function NavButton({
   active,
+  collapsed,
   label,
   icon: Icon,
   onClick,
 }: {
   active: boolean;
+  collapsed: boolean;
   label: string;
   icon: typeof LayoutGrid;
   onClick: () => void;
@@ -50,48 +63,70 @@ function NavButton({
       type="button"
       onClick={onClick}
       aria-current={active ? "page" : undefined}
+      aria-label={collapsed ? label : undefined}
+      title={collapsed ? label : undefined}
       className={clsx(
-        "group relative flex items-center gap-3 w-full px-3 py-2.5 rounded-lg text-left transition-colors",
+        "group relative flex h-11 w-full items-center rounded-xl transition-all duration-200",
+        collapsed ? "justify-center px-2" : "justify-start gap-3 px-3.5",
         active
-          ? "bg-primary/10 text-foreground font-semibold"
-          : "text-text-secondary hover:bg-hover-bg hover:text-foreground font-medium"
+          ? "bg-foreground text-on-accent font-semibold shadow-[0_10px_28px_-18px_rgba(127,127,127,0.75)]"
+          : "text-text-secondary hover:bg-hover-bg hover:text-foreground font-medium",
       )}
     >
-      {/* Active accent bar */}
-      {active && (
-        <span className="absolute left-0 top-1/2 -translate-y-1/2 h-[18px] w-[3px] rounded-r bg-primary" />
-      )}
       <Icon
         size={18}
         strokeWidth={1.8}
         className={clsx(
           "flex-shrink-0 transition-colors",
-          active ? "text-primary" : "text-text-muted group-hover:text-foreground"
+          active ? "text-on-accent" : "text-text-muted group-hover:text-foreground",
         )}
       />
-      <span className="text-base">{label}</span>
+      {!collapsed && <span className="truncate text-[0.8125rem]">{label}</span>}
     </button>
   );
 }
 
 /**
- * 全局导航 —— 带文字标签的品牌侧栏（Line B "Luminous Atelier"）。
- *
- * 顶部常驻 Logo + LUMENX 字标 + Slogan；主导航图标+文字（无 hover、无歧义）；
- * 设置固定底部；底部版本号。早先为给二级筛选栏腾地的 60px 图标轨已废弃——
- * 资产库/设置改走横向筛选后，竖向只剩这一条栏，故恢复完整品牌呈现。
- * 结构对所有主题统一，视觉身份由语义 token 切换（zero-leak）。
+ * Desktop global navigation. The three creator destinations live in a calm,
+ * collapsible left rail; device-local collapse state and the day/night choice
+ * are persisted without affecting project data.
  */
 export default function GlobalSidebar({ activeTab, onTabChange }: GlobalSidebarProps) {
   const t = useTranslations("nav");
   const user = useAuthStore((state) => state.user);
   const setAnonymous = useAuthStore((state) => state.setAnonymous);
+  const theme = useSettingsStore((state) => state.theme);
+  const setTheme = useSettingsStore((state) => state.setTheme);
   const [loggingOut, setLoggingOut] = useState(false);
+  const [collapsed, setCollapsed] = useState(false);
+
+  useEffect(() => {
+    try {
+      setCollapsed(window.localStorage.getItem(SIDEBAR_STORAGE_KEY) === "1");
+    } catch {
+      setCollapsed(false);
+    }
+  }, []);
 
   const handleNav = (id: GlobalTab, hash: string) => {
     onTabChange(id);
     window.location.hash = hash;
   };
+
+  const toggleCollapsed = () => {
+    setCollapsed((current) => {
+      const next = !current;
+      try {
+        window.localStorage.setItem(SIDEBAR_STORAGE_KEY, next ? "1" : "0");
+      } catch {
+        // Local persistence is optional; the control still works in-memory.
+      }
+      return next;
+    });
+  };
+
+  const isLight = theme.endsWith("-light");
+  const toggleDayNight = () => setTheme(isLight ? "atelier-dark" : "atelier-light");
 
   const logout = async () => {
     setLoggingOut(true);
@@ -107,28 +142,54 @@ export default function GlobalSidebar({ activeTab, onTabChange }: GlobalSidebarP
   };
 
   return (
-    <aside className="w-52 flex-shrink-0 h-full hidden md:flex flex-col border-r border-glass-border bg-surface/60 backdrop-blur-xl">
-      {/* Brand lockup — Logo + LUMENX + Slogan, click → workspace */}
-      <button
-        type="button"
-        onClick={() => handleNav("workspace", "#/")}
-        aria-label={t("workspaceAria")}
-        className="text-left px-4 pt-5 pb-4 border-b border-glass-border hover:opacity-90 transition-opacity"
-      >
-        <LumenXBranding size="md" showSlogan={false} />
-        <p className="font-display atelier-display text-[0.75rem] italic text-text-muted tracking-wide leading-snug mt-2.5">
-          化灵感为叙事
-        </p>
-      </button>
+    <aside
+      className={clsx(
+        "relative z-30 hidden h-full flex-shrink-0 flex-col border-r border-glass-border bg-background/92 backdrop-blur-2xl transition-[width] duration-300 ease-out md:flex",
+        collapsed ? "w-[76px]" : "w-56",
+      )}
+    >
+      <div className={clsx("flex h-[76px] items-center border-b border-glass-border", collapsed ? "justify-center px-2" : "justify-between px-4")}>
+        <button
+          type="button"
+          onClick={() => handleNav("workspace", "#/")}
+          aria-label={t("workspaceAria")}
+          className="min-w-0 transition-opacity hover:opacity-80"
+        >
+          <LumenXBranding size="sm" showSlogan={false} markOnly={collapsed} />
+        </button>
+        {!collapsed && (
+          <button
+            type="button"
+            onClick={toggleCollapsed}
+            aria-label="收起侧边栏"
+            title="收起侧边栏"
+            className="grid h-9 w-9 place-items-center rounded-xl text-text-muted transition-colors hover:bg-hover-bg hover:text-foreground"
+          >
+            <PanelLeftClose size={17} />
+          </button>
+        )}
+      </div>
 
-      {IS_CLOUD_DEPLOYMENT && <WorkspaceSwitcher />}
+      {collapsed && (
+        <button
+          type="button"
+          onClick={toggleCollapsed}
+          aria-label="展开侧边栏"
+          title="展开侧边栏"
+          className="mx-auto mt-3 grid h-10 w-10 place-items-center rounded-xl border border-glass-border text-text-muted transition-colors hover:bg-hover-bg hover:text-foreground"
+        >
+          <PanelLeftOpen size={17} />
+        </button>
+      )}
 
-      {/* Primary navigation */}
-      <nav className="flex-1 flex flex-col gap-0.5 p-2.5" aria-label={t("mainNavAria")}>
+      {IS_CLOUD_DEPLOYMENT && !collapsed && <WorkspaceSwitcher />}
+
+      <nav className={clsx("flex flex-1 flex-col gap-1 overflow-y-auto", collapsed ? "px-3 pt-3" : "px-3 pt-5")} aria-label={t("mainNavAria")}>
         {GLOBAL_NAV_ITEMS.filter((item) => item.id !== "settings").map((item) => (
           <NavButton
             key={item.id}
             active={activeTab === item.id}
+            collapsed={collapsed}
             label={t(item.id)}
             icon={item.icon}
             onClick={() => handleNav(item.id, item.hash)}
@@ -136,10 +197,23 @@ export default function GlobalSidebar({ activeTab, onTabChange }: GlobalSidebarP
         ))}
       </nav>
 
-      {/* Settings pinned bottom + version */}
-      <div className="p-2.5 border-t border-glass-border">
-        {IS_CLOUD_DEPLOYMENT && user && (
-          <div className="mb-2 flex items-center gap-2 border-b border-glass-border px-3 pb-3">
+      <div className="border-t border-glass-border p-3">
+        <button
+          type="button"
+          onClick={toggleDayNight}
+          aria-label={isLight ? "切换到黑夜模式" : "切换到白天模式"}
+          title={isLight ? "切换到黑夜模式" : "切换到白天模式"}
+          className={clsx(
+            "mb-1 flex h-11 w-full items-center rounded-xl border border-glass-border bg-surface/55 text-text-secondary transition-colors hover:bg-hover-bg hover:text-foreground",
+            collapsed ? "justify-center px-2" : "justify-start gap-3 px-3.5",
+          )}
+        >
+          {isLight ? <Moon size={18} /> : <Sun size={18} />}
+          {!collapsed && <span className="text-[0.75rem] font-medium">{isLight ? "黑夜模式" : "白天模式"}</span>}
+        </button>
+
+        {IS_CLOUD_DEPLOYMENT && user && !collapsed && (
+          <div className="my-2 flex items-center gap-2 border-y border-glass-border py-2">
             <button
               type="button"
               onClick={() => handleNav("settings", "#/settings")}
@@ -149,7 +223,6 @@ export default function GlobalSidebar({ activeTab, onTabChange }: GlobalSidebarP
               <span className="block truncate font-mono text-xs text-foreground">
                 {user.username || user.phone?.replace(/(\+86\d{3})\d{4}(\d{4})/, "$1****$2") || user.account_label}
               </span>
-              <span className="mt-0.5 block text-[0.625rem] text-text-muted">{user.phone_verification_status}</span>
             </button>
             <button
               type="button"
@@ -163,15 +236,15 @@ export default function GlobalSidebar({ activeTab, onTabChange }: GlobalSidebarP
             </button>
           </div>
         )}
+
         <NavButton
           active={activeTab === "settings"}
+          collapsed={collapsed}
           label={t("settings")}
           icon={Settings}
           onClick={() => handleNav("settings", "#/settings")}
         />
-        <div className="px-3 pt-2.5 font-mono text-[0.6875rem] tracking-wide text-text-muted">
-          {APP_VERSION}
-        </div>
+        {!collapsed && <div className="px-3 pt-2 font-mono text-[0.625rem] tracking-wide text-text-muted">{APP_VERSION}</div>}
       </div>
     </aside>
   );

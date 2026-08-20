@@ -820,6 +820,13 @@
   "pipeline": {
     "stepLabel": "步骤 {number}",
     "stepIndex": "步骤 0{number}",
+    "stepScript": "剧本",
+    "stepArtDirection": "风格定调",
+    "stepCast": "本集素材",
+    "stepStoryboard": "故事板",
+    "stepAssembly": "时间线组装",
+    "stepAssets": "资产",
+    "stepMotion": "动效生成",
     "beta": "测试版",
     "railArtReady": "已设定",
     "railCast": "{n} 角色",

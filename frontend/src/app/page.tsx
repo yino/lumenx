@@ -471,6 +471,7 @@ function StudioApplication() {
   const [currentView, setCurrentView] = useState<'home' | 'project' | 'series' | 'series-episode' | 'library' | 'settings' | 'playground' | 'wallet'>('home');
   const [activeTab, setActiveTab] = useState<GlobalTab>("workspace");
   const [wsSearch, setWsSearch] = useState("");
+  const [workspaceBrief, setWorkspaceBrief] = useState("");
   const online = useOnline();
   const [wsStatus, setWsStatus] = useState<DerivedStatus | "all">("all");
   const [viewMode, setViewMode] = useState<"gallery" | "list">("gallery");
@@ -740,18 +741,65 @@ function StudioApplication() {
     const wsVisibleCount =
       wsVisibleStandalone.length + wsSeriesGroups.reduce((n, g) => n + g.eps.length, 0);
     return (
-      <div className="flex flex-col h-full overflow-hidden">
-        {/* Page header — eyebrow + Fraunces title + actions */}
-        <header className="px-4 md:px-7 pt-5 md:pt-6 pb-3 flex flex-col md:flex-row md:items-end gap-3 md:gap-5">
-          <div className="flex-1 min-w-0">
-            <div className="font-mono text-[0.625rem] font-medium uppercase tracking-[0.2em] text-text-muted">
-              当前工作区 · <span className="text-primary font-semibold">{currentWorkspace?.name || "本地工作区"}</span>
+      <div className="xyq-workspace flex h-full flex-col overflow-hidden">
+        <section className="xyq-workspace-hero relative shrink-0 overflow-hidden px-5 pb-8 pt-9 text-center md:px-10 md:pb-10 md:pt-12">
+          <div className="xyq-orbit xyq-orbit-left" aria-hidden="true" />
+          <div className="xyq-orbit xyq-orbit-right" aria-hidden="true" />
+          <div className="relative z-[1] mx-auto max-w-4xl">
+            <div className="font-mono text-[0.59375rem] font-medium uppercase tracking-[0.24em] text-text-muted">
+              LumenX Story Agent · {currentWorkspace?.name || "本地工作区"}
             </div>
-            <h1 className="text-[1.625rem] md:text-[2.125rem] font-display atelier-display font-semibold text-foreground leading-tight tracking-tight mt-1">
-              {t("title")}
+            <h1 className="mt-4 text-balance font-display text-[2.15rem] font-semibold leading-[1.05] tracking-[-0.045em] text-foreground md:text-[3.35rem]">
+              让一个灵感，长成一部故事
             </h1>
+            <p className="mx-auto mt-3 max-w-2xl text-[0.8125rem] leading-relaxed text-text-secondary md:text-[0.9375rem]">
+              从剧本、角色和分镜到声音与成片，让创作沿着一条清晰的路径自然发生。
+            </p>
+            <form
+              className="xyq-brief-bar mx-auto mt-7 flex max-w-[760px] items-center gap-3 rounded-full p-2 pl-5"
+              onSubmit={(event) => {
+                event.preventDefault();
+                if (!online) return;
+                setDialogSeries(null);
+                setIsDialogOpen(true);
+              }}
+            >
+              <Sparkles size={18} className="shrink-0 text-accent" aria-hidden="true" />
+              <input
+                value={workspaceBrief}
+                onChange={(event) => setWorkspaceBrief(event.target.value)}
+                placeholder="输入你的灵感、故事梗概，或直接粘贴一段剧本…"
+                aria-label="创作灵感"
+                className="min-w-0 flex-1 bg-transparent py-2 text-[0.8125rem] text-foreground outline-none placeholder:text-text-muted md:text-[0.875rem]"
+              />
+              <button
+                type="submit"
+                disabled={!online}
+                className="inline-flex shrink-0 items-center gap-2 rounded-full bg-foreground px-5 py-2.5 text-[0.75rem] font-semibold text-on-accent transition-all hover:-translate-y-px hover:bg-primary-hover disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                开始创作
+                <Zap size={14} fill="currentColor" aria-hidden="true" />
+              </button>
+            </form>
+            <div className="mt-4 flex flex-wrap items-center justify-center gap-2 text-[0.6875rem] text-text-muted">
+              <span className="xyq-capability-pill">短剧 Agent</span>
+              <span className="xyq-capability-pill">角色一致性</span>
+              <span className="xyq-capability-pill">多镜头 R2V</span>
+              <span className="xyq-capability-pill">自动成片</span>
+            </div>
           </div>
-          <div className="flex items-center flex-wrap gap-2.5 md:pb-1">
+        </section>
+
+        <header className="flex flex-col gap-3 px-5 pb-3 pt-5 md:flex-row md:items-end md:gap-5 md:px-8">
+          <div className="min-w-0 flex-1">
+            <div className="font-mono text-[0.59375rem] font-medium uppercase tracking-[0.2em] text-text-muted">
+              Your stories
+            </div>
+            <h2 className="mt-1 font-display text-[1.45rem] font-semibold leading-tight tracking-[-0.025em] text-foreground md:text-[1.8rem]">
+              {t("title")}
+            </h2>
+          </div>
+          <div className="flex flex-wrap items-center gap-2.5 md:pb-1">
             <button
               onClick={syncAll}
               disabled={isSyncing || !online}
@@ -775,7 +823,7 @@ function StudioApplication() {
                 onClick={(e) => { e.stopPropagation(); setShowCreateDropdown((v) => !v); }}
                 disabled={!online}
                 title={!online ? tc("offlineTooltip") : undefined}
-                className="bg-primary hover:bg-primary/90 text-on-accent px-4 py-2 rounded-[10px] font-semibold flex items-center gap-2 transition-all text-[0.8125rem] shadow-[var(--glow-primary)] disabled:opacity-50"
+                className="flex items-center gap-2 rounded-full bg-foreground px-4 py-2 font-semibold text-on-accent transition-all text-[0.8125rem] hover:-translate-y-px hover:bg-primary-hover disabled:opacity-50"
               >
                 <Plus size={14} />
                 {t("new")}
@@ -816,7 +864,7 @@ function StudioApplication() {
         </header>
 
         {/* Toolbar — 状态横向筛选 + 搜索 + 视图切换 */}
-        <div className="px-7 pb-2 flex flex-wrap items-center gap-3">
+        <div className="flex flex-wrap items-center gap-3 px-5 pb-2 md:px-8">
           <div className="inline-flex p-[3px] rounded-full bg-surface-inset atelier-pill-tabs" role="tablist" aria-label={t("statusFilterAria")} onKeyDown={rovingKeyDown}>
             {wsStatusPills.map((pill) => {
               const on = wsStatus === pill.id;
@@ -873,7 +921,7 @@ function StudioApplication() {
         </div>
 
         {/* Scrollable content area */}
-        <div className="flex-1 overflow-y-auto px-7 pb-10 pt-3">
+        <div className="flex-1 overflow-y-auto px-5 pb-10 pt-3 md:px-8">
           {totalCount === 0 ? (
             <motion.div
               initial={{ opacity: 0 }}
@@ -1085,6 +1133,7 @@ function StudioApplication() {
         isOpen={isDialogOpen}
         seriesId={dialogSeries?.id}
         seriesTitle={dialogSeries?.title}
+        initialScript={dialogSeries ? undefined : workspaceBrief}
         onClose={() => { setIsDialogOpen(false); setDialogSeries(null); }}
       />
 

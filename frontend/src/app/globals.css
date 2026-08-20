@@ -16,40 +16,40 @@
 html.atelier-dark {
   color-scheme: dark;
 
-  --seed-primary:   #34d8c4;
-  --seed-primary-2: #5ee9d6;
-  --seed-accent:    #ffa94d;
-  --seed-accent-2:  #ffbf73;
-  --seed-ink:       #f2ede4;
-  --seed-base:      #0c0b0e;
+  --seed-primary:   #f5f5f2;
+  --seed-primary-2: #ffffff;
+  --seed-accent:    #5ee9d6;
+  --seed-accent-2:  #83f4e4;
+  --seed-ink:       #f5f5f2;
+  --seed-base:      #050505;
 
-  --color-bg-base:     #0c0b0e;
-  --color-bg-surface:  #131116;
-  --color-bg-elevated: #181620;
-  --color-bg-inset:    #0a090c;
-  --color-bg-input:    rgba(0, 0, 0, 0.28);
-  --color-bg-hover:    rgba(255, 255, 255, 0.045);
-  --color-glass:       rgba(255, 255, 255, 0.045);
-  --color-overlay:     rgba(8, 7, 10, 0.8);
+  --color-bg-base:     #050505;
+  --color-bg-surface:  #0b0b0c;
+  --color-bg-elevated: #121214;
+  --color-bg-inset:    #080809;
+  --color-bg-input:    rgba(255, 255, 255, 0.035);
+  --color-bg-hover:    rgba(255, 255, 255, 0.065);
+  --color-glass:       rgba(255, 255, 255, 0.04);
+  --color-overlay:     rgba(0, 0, 0, 0.84);
 
-  --color-border-default: rgba(255, 255, 255, 0.06);
-  --color-border-subtle:  rgba(255, 255, 255, 0.03);
+  --color-border-default: rgba(255, 255, 255, 0.11);
+  --color-border-subtle:  rgba(255, 255, 255, 0.065);
 
-  --color-text-primary:   #f2ede4;
-  --color-text-secondary: #a8a2b0;
-  --color-text-muted:     #8b8597;
+  --color-text-primary:   #f5f5f2;
+  --color-text-secondary: #a0a0a6;
+  --color-text-muted:     #66666d;
 
   --color-primary:       var(--seed-primary);
   --color-primary-hover: var(--seed-primary-2);
   --color-accent:        var(--seed-accent);
   --color-accent-hover:  var(--seed-accent-2);
-  --color-on-accent:     #0c0b0e;
+  --color-on-accent:     #050505;
   --color-on-warm:       oklch(0.18 0.01 280);
 
   /* body 渐变（保留现有机制，tokens.css 未含）*/
-  --foreground-rgb:      242, 237, 228;
-  --background-start-rgb: 12, 11, 14;
-  --background-end-rgb:   12, 11, 14;
+  --foreground-rgb:      245, 245, 242;
+  --background-start-rgb: 5, 5, 5;
+  --background-end-rgb:   5, 5, 5;
 
   --color-status-pending-fg:     oklch(0.85 0.13 230);
   --color-status-pending-border: oklch(0.75 0.16 230 / 0.45);
@@ -68,17 +68,17 @@ html.atelier-dark {
   --color-status-starred-bg:     oklch(0.82 0.16 70 / 0.18);
   --color-status-starred-solid:  oklch(0.82 0.16 70);
 
-  --glow-primary: 0 0 0 1px rgba(52, 216, 196, 0.30), 0 0 24px -6px rgba(52, 216, 196, 0.45);
-  --glow-accent:  0 0 0 1px rgba(255, 169, 77, 0.35), 0 0 28px -6px rgba(255, 169, 77, 0.50);
-  --halation:     inset 0 0 42px -8px rgba(255, 169, 77, 0.27);
-  --bloom:        radial-gradient(60% 50% at 18% 0%, rgba(52, 216, 196, 0.10), transparent 70%),
-                  radial-gradient(55% 45% at 88% 100%, rgba(255, 169, 77, 0.08), transparent 70%);
-  --grain-op: 0.08;
+  --glow-primary: 0 0 0 1px rgba(255, 255, 255, 0.18), 0 10px 30px -18px rgba(255, 255, 255, 0.55);
+  --glow-accent:  0 0 0 1px rgba(94, 233, 214, 0.28), 0 0 28px -10px rgba(94, 233, 214, 0.42);
+  --halation:     inset 0 0 42px -10px rgba(94, 233, 214, 0.18);
+  --bloom:        radial-gradient(55% 42% at 50% -10%, rgba(255, 255, 255, 0.055), transparent 72%),
+                  radial-gradient(42% 34% at 92% 8%, rgba(94, 233, 214, 0.04), transparent 75%);
+  --grain-op: 0.025;
 
   --font-inter:          'Space Grotesk', sans-serif;
   --font-jetbrains-mono: 'JetBrains Mono', monospace;
   --font-space-grotesk:  'Space Grotesk', sans-serif;
-  --font-display:        'Fraunces', Georgia, serif;
+  --font-display:        'Space Grotesk', sans-serif;
 
   --card-bg:      var(--color-bg-surface);
   --card-border:  var(--color-border-default);
@@ -89,7 +89,7 @@ html.atelier-dark {
   --input-bg:     var(--color-bg-input);
   --input-border: var(--color-border-default);
   --sidebar-bg:   var(--color-bg-inset);
-  --logo-filter:  hue-rotate(-64deg) saturate(1.35) brightness(1.08);
+  --logo-filter:  grayscale(1) brightness(2.4);
 }
 
 /* ===== 主题 2 · bridge-dark · Warm Bridge ===== */
@@ -315,7 +315,7 @@ html.atelier-light {
   --font-inter:          'Inter', sans-serif;
   --font-jetbrains-mono: 'JetBrains Mono', monospace;
   --font-space-grotesk:  'Space Grotesk', sans-serif;
-  --font-display:        'Fraunces', Georgia, serif;
+  --font-display:        'Space Grotesk', sans-serif;
 
   --card-bg:      var(--color-bg-surface);
   --card-border:  var(--color-border-default);
@@ -415,6 +415,147 @@ body {
       rgb(var(--background-end-rgb))) rgb(var(--background-start-rgb));
   overflow: hidden;
   /* Prevent scrolling on the main body, we want an app-like feel */
+}
+
+/* Xiaoyunque-inspired workspace composition. The reference is translated,
+   not copied: monochrome stage, centered story prompt, quiet orbit light and
+   pill controls, while LumenX keeps mint for AI/status signals. */
+.xyq-workspace {
+  background:
+    radial-gradient(58% 42% at 50% 0%, rgba(255, 255, 255, 0.035), transparent 72%),
+    var(--color-bg-base);
+}
+
+.xyq-workspace-hero {
+  min-height: 300px;
+  border-bottom: 1px solid var(--color-border-subtle);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.012), transparent 65%),
+    radial-gradient(55% 85% at 50% 105%, rgba(94, 233, 214, 0.055), transparent 70%);
+}
+
+.xyq-workspace-hero::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  bottom: -118px;
+  width: min(76vw, 900px);
+  height: 170px;
+  transform: translateX(-50%);
+  border-radius: 50%;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  box-shadow: 0 -22px 80px -50px rgba(94, 233, 214, 0.4);
+  pointer-events: none;
+}
+
+.xyq-orbit {
+  position: absolute;
+  width: 210px;
+  aspect-ratio: 3 / 4;
+  border: 1px solid rgba(255, 255, 255, 0.065);
+  border-radius: 28px;
+  opacity: 0.35;
+  filter: blur(0.2px);
+  pointer-events: none;
+}
+
+.xyq-orbit-left {
+  left: max(-120px, calc(50% - 620px));
+  top: 50px;
+  transform: perspective(600px) rotateY(28deg) rotateZ(-5deg);
+}
+
+.xyq-orbit-right {
+  right: max(-120px, calc(50% - 620px));
+  top: 40px;
+  transform: perspective(600px) rotateY(-28deg) rotateZ(5deg);
+}
+
+.xyq-brief-bar {
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  background: rgba(15, 15, 16, 0.9);
+  box-shadow:
+    0 22px 70px -38px rgba(0, 0, 0, 0.95),
+    inset 0 1px 0 rgba(255, 255, 255, 0.055);
+  backdrop-filter: blur(22px);
+  -webkit-backdrop-filter: blur(22px);
+  transition: border-color 180ms ease, box-shadow 180ms ease;
+}
+
+.xyq-brief-bar:focus-within {
+  border-color: rgba(255, 255, 255, 0.32);
+  box-shadow:
+    0 24px 80px -38px rgba(0, 0, 0, 0.95),
+    0 0 0 4px rgba(255, 255, 255, 0.035),
+    inset 0 1px 0 rgba(255, 255, 255, 0.08);
+}
+
+.xyq-capability-pill {
+  border: 1px solid var(--color-border-subtle);
+  border-radius: 999px;
+  padding: 5px 11px;
+  background: rgba(255, 255, 255, 0.018);
+}
+
+/* Day mode has its own lighting model: warm paper, graphite structure and a
+   restrained teal daylight bloom. These overrides keep the same composition
+   without treating light mode as a mechanical color inversion. */
+html.atelier-light .xyq-workspace {
+  background:
+    radial-gradient(58% 42% at 50% 0%, rgba(255, 255, 255, 0.72), transparent 74%),
+    var(--color-bg-base);
+}
+
+html.atelier-light .xyq-workspace-hero {
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.5), transparent 66%),
+    radial-gradient(55% 85% at 50% 105%, rgba(29, 156, 141, 0.11), transparent 70%);
+}
+
+html.atelier-light .xyq-workspace-hero::after {
+  border-color: rgba(36, 31, 26, 0.11);
+  box-shadow: 0 -22px 80px -48px rgba(29, 156, 141, 0.34);
+}
+
+html.atelier-light .xyq-orbit {
+  border-color: rgba(36, 31, 26, 0.1);
+  background: rgba(255, 255, 255, 0.14);
+}
+
+html.atelier-light .xyq-brief-bar {
+  border-color: rgba(36, 31, 26, 0.14);
+  background: rgba(255, 253, 249, 0.9);
+  box-shadow:
+    0 22px 70px -38px rgba(76, 56, 32, 0.34),
+    inset 0 1px 0 rgba(255, 255, 255, 0.9);
+}
+
+html.atelier-light .xyq-brief-bar:focus-within {
+  border-color: rgba(29, 156, 141, 0.48);
+  box-shadow:
+    0 24px 70px -38px rgba(76, 56, 32, 0.3),
+    0 0 0 4px rgba(29, 156, 141, 0.08),
+    inset 0 1px 0 rgba(255, 255, 255, 0.95);
+}
+
+html.atelier-light .xyq-capability-pill {
+  background: rgba(255, 255, 255, 0.32);
+}
+
+@media (max-width: 767px) {
+  .xyq-workspace-hero {
+    min-height: 260px;
+  }
+  .xyq-orbit {
+    display: none;
+  }
+  .xyq-brief-bar {
+    border-radius: 20px;
+    padding-left: 14px;
+  }
+  .xyq-brief-bar button {
+    padding-inline: 14px;
+  }
 }
 
 /* ─── Atelier scrollbar — thin, graphite, recedes into the dark ───

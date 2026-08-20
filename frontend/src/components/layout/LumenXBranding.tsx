@@ -6,10 +6,11 @@ import { useSettingsStore, type ThemePreset } from "@/store/settingsStore";
 interface LumenXBrandingProps {
   size?: "sm" | "md";
   showSlogan?: boolean;
+  markOnly?: boolean;
 }
 
 // Logo 变体按主题映射（Tasty Sam 同形电路枫叶，透明底）。
-// atelier-dark 复用蓝色 logo-dark.png，再用 CSS filter 着色为 teal。
+// atelier-dark 复用蓝色 logo-dark.png，再以中性白适配极简黑色导航。
 const LOGO_SRC: Record<ThemePreset, string> = {
   "atelier-dark": "/logo-dark.png",
   "bridge-dark": "/logo-dark.png",
@@ -17,10 +18,9 @@ const LOGO_SRC: Record<ThemePreset, string> = {
   "atelier-light": "/logo-light-teal.png",
   "brand-light": "/logo-light.png",
 };
-// 仅 atelier-dark：把品牌蓝 PNG 着色为 teal，与主色一致。
-const ATELIER_DARK_FILTER = "hue-rotate(-64deg) saturate(1.35) brightness(1.08)";
+const ATELIER_DARK_FILTER = "grayscale(1) brightness(2.4)";
 
-export default function LumenXBranding({ size = "md", showSlogan = true }: LumenXBrandingProps) {
+export default function LumenXBranding({ size = "md", showSlogan = true, markOnly = false }: LumenXBrandingProps) {
   const logoSize = size === "sm" ? "w-9 h-9" : "w-14 h-14";
   const titleSize = size === "sm" ? "text-lg" : "text-xl";
 
@@ -44,7 +44,7 @@ export default function LumenXBranding({ size = "md", showSlogan = true }: Lumen
             style={logoFilter ? { filter: logoFilter } : undefined}
           />
         </div>
-        <div className="flex flex-col justify-center">
+        {!markOnly && <div className="flex flex-col justify-center">
           <div className="flex items-baseline gap-0">
             <span className={`font-mono ${titleSize} font-bold tracking-tight text-foreground`}>
               LUMEN
@@ -58,9 +58,9 @@ export default function LumenXBranding({ size = "md", showSlogan = true }: Lumen
               Studio
             </span>
           )}
-        </div>
+        </div>}
       </div>
-      {showSlogan && (
+      {showSlogan && !markOnly && (
         <p className="font-mono atelier-display text-[0.5rem] text-text-muted tracking-[0.15em] text-center mt-2.5 uppercase">
           Render Noise into Narrative
         </p>

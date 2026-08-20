@@ -34,13 +34,13 @@ const CreativeCanvas = dynamic(() => import("@/components/canvas/CreativeCanvas"
 //   - Export → Assembly Export phase tab (PR-3k)
 // Both legacy and unified projects now share the 6-step shape.
 const LEGACY_STEPS = [
-    { id: "script", label: "1. Script", icon: BookOpen },
-    { id: "art_direction", label: "2. Art Direction", icon: Palette },
-    { id: "assets", label: "3. Assets", icon: Users },
-    { id: "storyboard", label: "4. Storyboard", icon: Layout },
-    { id: "motion", label: "5. Motion", icon: Video },
-    { id: "assembly", label: "6. Assembly", icon: Film },
-];
+    { id: "script", labelKey: "stepScript", icon: BookOpen },
+    { id: "art_direction", labelKey: "stepArtDirection", icon: Palette },
+    { id: "assets", labelKey: "stepAssets", icon: Users },
+    { id: "storyboard", labelKey: "stepStoryboard", icon: Layout },
+    { id: "motion", labelKey: "stepMotion", icon: Video },
+    { id: "assembly", labelKey: "stepAssembly", icon: Film },
+] as const;
 
 // PR-3f (r2v-workflow-v3) — Unified workflow: 5 steps including Cast.
 // Per-shot tabMode toggle (t2i_i2v vs direct_r2v) inside Storyboard
@@ -49,12 +49,12 @@ const LEGACY_STEPS = [
 // Legacy `assets` step is dropped — Cast supersedes ConsistencyVault
 // for unified projects (ConsistencyVault stays only for legacy workflow).
 const UNIFIED_STEPS = [
-    { id: "script", label: "1. Script", icon: BookOpen },
-    { id: "art_direction", label: "2. Art Direction", icon: Palette },
-    { id: "cast", label: "3. Cast", icon: Users },
-    { id: "storyboard_r2v", label: "4. Storyboard", icon: Clapperboard },
-    { id: "assembly", label: "5. Assembly", icon: Film },
-];
+    { id: "script", labelKey: "stepScript", icon: BookOpen },
+    { id: "art_direction", labelKey: "stepArtDirection", icon: Palette },
+    { id: "cast", labelKey: "stepCast", icon: Users },
+    { id: "storyboard_r2v", labelKey: "stepStoryboard", icon: Clapperboard },
+    { id: "assembly", labelKey: "stepAssembly", icon: Film },
+] as const;
 
 export default function ProjectClient({ id, breadcrumbSegments }: { id: string; breadcrumbSegments?: BreadcrumbSegment[] }) {
     const [activeStep, setActiveStep] = useState("script");
@@ -88,21 +88,24 @@ export default function ProjectClient({ id, breadcrumbSegments }: { id: string; 
         // Anything else (i2v_legacy, missing) → legacy 9-step path. Old
         // projects without workflow_mode default to legacy for backward
         // compat (spec §3.2).
-        let base;
+        let baseDefinitions;
         if (currentProject?.workflow_mode !== "r2v") {
-            base = LEGACY_STEPS;
+            baseDefinitions = LEGACY_STEPS;
         } else if (seriesContentMode === "freeform") {
             // Phase 6 — freeform mode: skip Script step, episodes start at
-            // Style. Re-number labels accordingly.
-            base = UNIFIED_STEPS
-                .filter(s => s.id !== "script")
-                .map((s, i) => ({ ...s, label: s.label.replace(/^\d+\./, `${i + 1}.`) }));
+            // Style. Labels are numbered after filtering.
+            baseDefinitions = UNIFIED_STEPS.filter(s => s.id !== "script");
         } else {
             // Scripted unified flow: Cast is always present (per-episode view
             // of frame-referenced assets). Series-level shared assets are
             // managed in SeriesDetailPage.
-            base = UNIFIED_STEPS;
+            baseDefinitions = UNIFIED_STEPS;
         }
+
+        const base = baseDefinitions.map((step, index) => ({
+            ...step,
+            label: `${index + 1}. ${tp(step.labelKey)}`,
+        }));
 
         // Per-step stage status (conservative signals from project state —
         // NOT wizard done-checks; see storyboard-r2v-unified mock). Script
