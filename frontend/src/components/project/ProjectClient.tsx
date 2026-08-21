@@ -22,6 +22,9 @@ import EnvConfigDialog from "@/components/project/EnvConfigDialog";
 import PromptConfigModal from "@/components/project/PromptConfigModal";
 import StoryboardR2V from "@/components/modules/StoryboardR2V";
 import EntityConfirmModal from "@/components/modules/EntityConfirmModal";
+import DramaAgentStageRail, { type DramaAgentStageId } from "@/components/modules/short-drama/DramaAgentStageRail";
+import ShortDramaOutlineStage from "@/components/modules/short-drama/ShortDramaOutlineStage";
+import ShortDramaEpisodeStage from "@/components/modules/short-drama/ShortDramaEpisodeStage";
 import dynamic from "next/dynamic";
 import { IS_CLOUD_DEPLOYMENT } from "@/lib/deployment";
 
@@ -42,18 +45,15 @@ const LEGACY_STEPS = [
     { id: "assembly", labelKey: "stepAssembly", icon: Film },
 ] as const;
 
-// PR-3f (r2v-workflow-v3) — Unified workflow: 5 steps including Cast.
-// Per-shot tabMode toggle (t2i_i2v vs direct_r2v) inside Storyboard
-// replaces the project-level i2v_legacy / r2v split. Backend enum
-// value remains "r2v" for backward compat — UI normalizes to "Unified".
-// Legacy `assets` step is dropped — Cast supersedes ConsistencyVault
-// for unified projects (ConsistencyVault stays only for legacy workflow).
+// Short Drama Agent workflow — mirrors the production hierarchy observed in
+// Xiaoyunque: outline → shared asset library → episode clips. Art direction is
+// a sub-view of the outline; Storyboard + Assembly are sub-views of episodes.
+// The data is not discarded or hidden — it is nested under the stage where it
+// is actually used instead of being presented as five unrelated wizard steps.
 const UNIFIED_STEPS = [
-    { id: "script", labelKey: "stepScript", icon: BookOpen },
-    { id: "art_direction", labelKey: "stepArtDirection", icon: Palette },
-    { id: "cast", labelKey: "stepCast", icon: Users },
-    { id: "storyboard_r2v", labelKey: "stepStoryboard", icon: Clapperboard },
-    { id: "assembly", labelKey: "stepAssembly", icon: Film },
+    { id: "script", labelKey: "stepOutline", icon: BookOpen },
+    { id: "cast", labelKey: "stepAssetLibrary", icon: Users },
+    { id: "storyboard_r2v", labelKey: "stepEpisodes", icon: Clapperboard },
 ] as const;
 
 export default function ProjectClient({ id, breadcrumbSegments }: { id: string; breadcrumbSegments?: BreadcrumbSegment[] }) {
@@ -157,15 +157,25 @@ export default function ProjectClient({ id, breadcrumbSegments }: { id: string; 
             if (typeof detail !== "string") return;
             if (steps.some((s) => s.id === detail)) {
                 setActiveStep(detail);
+            } else if (currentProject?.workflow_mode === "r2v" && (detail === "art_direction" || detail === "assembly")) {
+                // Compatibility for older deep links and leaf actions after the
+                // five-step UI was nested into the three Short Drama stages.
+                setActiveStep(detail === "art_direction" ? "script" : "storyboard_r2v");
             }
         };
         document.addEventListener("lumenx:navigateStep", handler);
         return () => document.removeEventListener("lumenx:navigateStep", handler);
-    }, [steps]);
+    }, [steps, currentProject?.workflow_mode]);
 
     useEffect(() => {
         selectProject(id);
     }, [id, selectProject]);
+
+    useEffect(() => {
+        if (steps.length > 0 && !steps.some((step) => step.id === activeStep)) {
+            setActiveStep(steps[0].id);
+        }
+    }, [activeStep, steps]);
 
     if (!currentProject) {
         return (
@@ -272,12 +282,23 @@ export default function ProjectClient({ id, breadcrumbSegments }: { id: string; 
                     <div className="atelier-page-bloom" aria-hidden="true" />
                     <div className="atelier-page-grain" aria-hidden="true" />
                     <div className="relative z-10 h-full flex flex-col overflow-hidden">
-                        {activeStep === "script" && <ScriptProcessor />}
+                        {currentProject.workflow_mode === "r2v" && ["script", "cast", "storyboard_r2v"].includes(activeStep) && (
+                            <DramaAgentStageRail
+                                activeStage={activeStep as DramaAgentStageId}
+                                onStageChange={setActiveStep}
+                                project={currentProject}
+                            />
+                        )}
+                        {activeStep === "script" && (
+                            currentProject.workflow_mode === "r2v" ? <ShortDramaOutlineStage /> : <ScriptProcessor />
+                        )}
                         {activeStep === "art_direction" && <ArtDirection />}
                         {activeStep === "cast" && <Cast />}
                         {activeStep === "assets" && <ConsistencyVault />}  {/* legacy i2v only */}
                         {activeStep === "storyboard" && <StoryboardComposer />}
-                        {activeStep === "storyboard_r2v" && <StoryboardR2V />}
+                        {activeStep === "storyboard_r2v" && (
+                            currentProject.workflow_mode === "r2v" ? <ShortDramaEpisodeStage /> : <StoryboardR2V />
+                        )}
                         {activeStep === "motion" && <VideoGenerator />}
                         {activeStep === "assembly" && <VideoAssembly />}
                     </div>

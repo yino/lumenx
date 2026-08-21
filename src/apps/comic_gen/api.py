@@ -1316,7 +1316,9 @@ async def import_file_confirm(request: ConfirmImportRequest):
         # Prefer import_id from cache, fallback to request.text
         text = None
         if request.import_id:
-            text = pipeline._import_cache.pop(request.import_id, None)
+            # Keep the cached source until creation succeeds so a transient
+            # write failure can be retried without forcing another upload.
+            text = pipeline._import_cache.get(request.import_id)
         if not text:
             text = request.text
         if not text:
@@ -1332,6 +1334,8 @@ async def import_file_confirm(request: ConfirmImportRequest):
                 request.description,
             )
         )
+        if request.import_id:
+            pipeline._import_cache.pop(request.import_id, None)
         return signed_response(result)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -2274,6 +2278,7 @@ def generate_motion_ref(script_id: str, request: GenerateMotionRefRequest, backg
 class AnalyzeToStoryboardRequest(BaseModel):
     """Request to analyze script text into storyboard frames."""
     text: str
+    max_clip_seconds: Literal[15, 30] = 15
 
 
 @app.post("/projects/{script_id}/storyboard/analyze")
@@ -2283,7 +2288,11 @@ def analyze_to_storyboard(script_id: str, request: AnalyzeToStoryboardRequest):
     Replaces existing frames with newly generated ones.
     """
     try:
-        updated_script = pipeline.analyze_text_to_frames(script_id, request.text)
+        updated_script = pipeline.analyze_text_to_frames(
+            script_id,
+            request.text,
+            max_clip_seconds=request.max_clip_seconds,
+        )
         return signed_response(updated_script)
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
@@ -2529,6 +2538,33 @@ def cancel_video_task(script_id: str, task_id: str):
     )
     if not task:
         raise HTTPException(status_code=404, detail="Video task not found")
+    return signed_response(task)
+
+
+@app.post("/projects/{script_id}/video_tasks/{task_id}/resume", response_model=VideoTask)
+def resume_video_task(
+    script_id: str,
+    task_id: str,
+    background_tasks: BackgroundTasks,
+):
+    """Resume polling a known DashScope task without resubmitting it."""
+    script = pipeline.get_script(script_id)
+    task = next(
+        (item for item in (script.video_tasks if script else []) if item.id == task_id),
+        None,
+    )
+    if not task:
+        raise HTTPException(status_code=404, detail="Video task not found")
+    if task.provider_name != "dashscope" or not task.provider_task_id:
+        raise HTTPException(
+            status_code=400,
+            detail="Video task has no recoverable DashScope task ID",
+        )
+    if task.status != "completed":
+        task.status = "processing"
+        task.error = None
+        pipeline._save_data()
+        background_tasks.add_task(pipeline.resume_video_task, script_id, task_id)
     return signed_response(task)
 
 

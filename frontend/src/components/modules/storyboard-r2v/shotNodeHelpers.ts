@@ -211,6 +211,9 @@ export function frameToShotNode(
             ? frame.t2i_selected_index
             : 0,
         duration: frame.duration ?? null,
+        timelineStartSeconds: frame.timeline_start_seconds ?? null,
+        timelineEndSeconds: frame.timeline_end_seconds ?? null,
+        timelineBeats: Array.isArray(frame.timeline_beats) ? frame.timeline_beats : [],
         visualDescription: frame.visual_description ?? null,
         assembledPrompt: frame.assembled_prompt ?? null,
         dialogueStructured: frame.dialogue_structured ?? null,

@@ -2760,6 +2760,16 @@ export const api = {
         return res.data;
     },
 
+    /** Continue querying an already-accepted DashScope task. This avoids
+     *  creating and charging for a duplicate render after a local SSL or
+     *  polling interruption. */
+    resumeVideoTask: async (scriptId: string, taskId: string) => {
+        const res = await apiClient.post(
+            `${API_URL}/projects/${scriptId}/video_tasks/${taskId}/resume`,
+        );
+        return res.data;
+    },
+
     /**
      * Upload an asset image as a new variant.
      * The uploaded image will be marked as the 'upload source' for reverse generation.
@@ -3250,7 +3260,7 @@ export const api = {
         characters?: any[];
         scenes?: any[];
         props?: any[];
-    }) => {
+    }, maxClipSeconds: 15 | 30 = 15) => {
         const selectEntityFields = (
             items: any[] | undefined,
             fields: string[],
@@ -3276,6 +3286,7 @@ export const api = {
             `${API_URL}/projects/${scriptId}/storyboard/analyze`, {
             text,
             entities: entityPayload,
+            max_clip_seconds: maxClipSeconds,
         });
         if ("task_id" in res.data && typeof res.data.task_id === "string") {
             const result = await waitForStructuredAITaskResult(
@@ -4050,10 +4061,13 @@ export const api = {
         formData.append('file', file);
         const response = await apiClient.post(`${API_URL}/series/import/preview?suggested_episodes=${suggestedEpisodes}`, formData, {
             headers: { 'Content-Type': 'multipart/form-data' },
+            // Multi-episode planning uses an LLM and can legitimately exceed
+            // the global 60s timeout when the provider is under load.
+            timeout: 300_000,
         });
         return response.data;
     },
-    importFileConfirm: async (data: { title: string; description?: string; text: string; episodes: any[] }) => {
+    importFileConfirm: async (data: { title: string; description?: string; import_id: string; episodes: any[] }) => {
         const response = await apiClient.post(`${API_URL}/series/import/confirm`, data);
         return response.data;
     },

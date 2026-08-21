@@ -12,7 +12,7 @@
  *     overlay) so users can switch projects and learn when the other one
  *     finishes via the global ToastContainer.
  */
-import { useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { Wand2, X, AlertTriangle, ArrowRight, Film, Sparkles } from "lucide-react";
 import { useTranslations } from "next-intl";
@@ -33,9 +33,11 @@ interface StoryboardGenerateDialogProps {
     existingShotCount: number;
     /** Called when the user confirms. Dialog closes immediately; parent
      *  runs the API call in the background with toast feedback. */
-    onConfirm: () => void;
+    onConfirm: (maxClipSeconds: 15 | 30) => void;
     /** Jump to the Script step (used by the empty-text quick fix link). */
     onJumpToScript?: () => void;
+    initialMaxClipSeconds?: 15 | 30;
+    allowThirtySeconds?: boolean;
 }
 
 export default function StoryboardGenerateDialog({
@@ -45,8 +47,17 @@ export default function StoryboardGenerateDialog({
     existingShotCount,
     onConfirm,
     onJumpToScript,
+    initialMaxClipSeconds = 15,
+    allowThirtySeconds = false,
 }: StoryboardGenerateDialogProps) {
     const t = useTranslations("storyboardGen");
+    const [maxClipSeconds, setMaxClipSeconds] = useState<15 | 30>(initialMaxClipSeconds);
+
+    useEffect(() => {
+        if (isOpen) {
+            setMaxClipSeconds(initialMaxClipSeconds === 30 && allowThirtySeconds ? 30 : 15);
+        }
+    }, [isOpen, initialMaxClipSeconds, allowThirtySeconds]);
 
     const text = (project as any)?.original_text ?? project?.originalText ?? "";
     const charsCount = project?.characters?.length ?? 0;
@@ -72,7 +83,7 @@ export default function StoryboardGenerateDialog({
     const handleConfirm = () => {
         if (!allPass) return;
         onClose();
-        onConfirm();
+        onConfirm(maxClipSeconds);
     };
 
     return (
@@ -156,6 +167,50 @@ export default function StoryboardGenerateDialog({
                                         <ArrowRight size={11} />
                                     </button>
                                 )}
+                            </section>
+
+                            {/* Generation clip planning. This is deliberately
+                                separate from editorial beats: one clip can hold
+                                several beats, but the provider receives one task
+                                capped at the selected limit. */}
+                            <section>
+                                <h3 className="mb-2 font-mono text-[0.625rem] uppercase tracking-[0.18em] text-text-muted">
+                                    {t("planningTitle")}
+                                </h3>
+                                <div className="grid grid-cols-2 gap-2">
+                                    {([15, 30] as const).map((seconds) => {
+                                        const disabled = seconds === 30 && !allowThirtySeconds;
+                                        const selected = maxClipSeconds === seconds;
+                                        return (
+                                            <button
+                                                key={seconds}
+                                                type="button"
+                                                disabled={disabled}
+                                                onClick={() => setMaxClipSeconds(seconds)}
+                                                className={`rounded-xl border px-3 py-3 text-left transition-colors ${
+                                                    selected
+                                                        ? "border-primary bg-primary/10 text-foreground"
+                                                        : "border-glass-border bg-glass text-text-secondary hover:border-primary/35"
+                                                } disabled:cursor-not-allowed disabled:opacity-45`}
+                                            >
+                                                <span className="block text-sm font-semibold">
+                                                    {t(seconds === 15 ? "planning15Title" : "planning30Title")}
+                                                </span>
+                                                <span className="mt-1 block text-[0.6875rem] leading-relaxed text-text-muted">
+                                                    {t(seconds === 15 ? "planning15Body" : "planning30Body")}
+                                                </span>
+                                                {disabled && (
+                                                    <span className="mt-1.5 block text-[0.625rem] text-accent">
+                                                        {t("planning30Unavailable")}
+                                                    </span>
+                                                )}
+                                            </button>
+                                        );
+                                    })}
+                                </div>
+                                <p className="mt-2 text-[0.6875rem] leading-relaxed text-text-muted">
+                                    {t("planningHint")}
+                                </p>
                             </section>
 
                             {/* Destructive warning when shots already exist */}

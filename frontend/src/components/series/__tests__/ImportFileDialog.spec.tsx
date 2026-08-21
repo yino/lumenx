@@ -42,7 +42,9 @@ import ImportFileDialog from '../ImportFileDialog';
 // ── Test data ──
 
 const mockPreviewResult = {
-    text: '完整文本内容',
+    import_id: 'import-1',
+    filename: 'story.txt',
+    text_length: 6,
     episodes: [
         { episode_number: 1, title: '第一章', summary: '故事开头', estimated_duration: '5min' },
         { episode_number: 2, title: '第二章', summary: '故事发展' },
@@ -239,7 +241,7 @@ describe('ImportFileDialog', () => {
                 expect(mockImportFileConfirm).toHaveBeenCalledWith({
                     title: 'story',
                     description: undefined,
-                    text: '完整文本内容',
+                    import_id: 'import-1',
                     episodes: mockPreviewResult.episodes,
                 });
             });

@@ -78,6 +78,14 @@ export interface ShotNode {
 
     // ─── Storyboard Schema v2 fields ────────────────────────────────
     duration?: number | null;
+    timelineStartSeconds?: number | null;
+    timelineEndSeconds?: number | null;
+    timelineBeats?: Array<{
+        start_seconds: number;
+        end_seconds: number;
+        label?: string | null;
+        description: string;
+    }>;
     visualDescription?: string | null;
     assembledPrompt?: string | null;
     dialogueStructured?: {

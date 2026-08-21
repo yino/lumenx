@@ -141,6 +141,15 @@ export interface StoryboardFrame {
     rendered_image_asset?: ImageAsset;
     status?: string;
     locked?: boolean;
+    duration?: number | null;
+    timeline_start_seconds?: number | null;
+    timeline_end_seconds?: number | null;
+    timeline_beats?: Array<{
+        start_seconds: number;
+        end_seconds: number;
+        label?: string | null;
+        description: string;
+    }>;
     // ... other fields
 }
 
@@ -248,6 +257,7 @@ export interface Series {
     /** PR-3e — Visual control preference. 'r2v' = 节奏优先 (new shots default
      *  direct_r2v); 'i2v' = 画面优先 (new shots default t2i_i2v). */
     default_generation_mode?: "r2v" | "i2v";
+    storyboard_segment_max_seconds?: 15 | 30;
     episode_ids: string[];
     created_at: number;
     updated_at: number;
@@ -274,6 +284,9 @@ export interface Project {
     /** PR-3e — Inherited from series; used by StoryboardR2V addShot to
      *  pick default tabMode for new shots. */
     default_generation_mode?: "r2v" | "i2v";
+    /** Short-drama planning unit. One generated clip may contain several
+     * editorial beats, but may not exceed this duration. */
+    storyboard_segment_max_seconds?: 15 | 30;
     merged_video_url?: string;
     /** PR-3k · Assembly Mix phase fields */
     bgm_url?: string | null;

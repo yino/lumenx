@@ -33,6 +33,158 @@ class WanxModel(VideoGenModel):
             logger.warning("Dashscope API Key not found in config or environment variables.")
         return api_key
 
+    @staticmethod
+    def _request_with_retry(
+        request_callable,
+        *,
+        operation: str,
+        max_attempts: int = 4,
+        **kwargs,
+    ):
+        """Run a DashScope HTTP request with bounded transient retries."""
+        retryable_statuses = {429, 500, 502, 503, 504}
+        last_error = None
+        for attempt in range(1, max_attempts + 1):
+            try:
+                response = request_callable(**kwargs)
+                if response.status_code not in retryable_statuses or attempt == max_attempts:
+                    return response
+                logger.warning(
+                    "DashScope %s returned HTTP %s; retrying (%s/%s)",
+                    operation,
+                    response.status_code,
+                    attempt,
+                    max_attempts,
+                )
+            except requests.RequestException as exc:
+                last_error = exc
+                if attempt == max_attempts:
+                    raise
+                logger.warning(
+                    "DashScope %s connection interrupted; retrying (%s/%s): %s",
+                    operation,
+                    attempt,
+                    max_attempts,
+                    exc,
+                )
+            time.sleep(min(2 ** (attempt - 1), 8))
+        if last_error:
+            raise last_error
+        raise RuntimeError(f"DashScope {operation} failed without a response")
+
+    def _poll_dashscope_video_task(
+        self,
+        *,
+        task_id: str,
+        model_name: str,
+        max_wait_time: int = 900,
+        poll_interval: int = 15,
+        initial_delay: bool = True,
+    ) -> str:
+        """Poll one existing task without losing it on transient disconnects."""
+        base = get_provider_base_url("DASHSCOPE")
+        poll_url = f"{base}/api/v1/tasks/{task_id}"
+        poll_headers = {"Authorization": f"Bearer {self.api_key}"}
+        started_at = time.monotonic()
+        next_delay = poll_interval if initial_delay else 0
+        consecutive_connection_errors = 0
+
+        while time.monotonic() - started_at < max_wait_time:
+            if next_delay:
+                time.sleep(next_delay)
+
+            try:
+                poll_response = requests.get(
+                    poll_url,
+                    headers=poll_headers,
+                    timeout=30,
+                )
+                consecutive_connection_errors = 0
+                next_delay = poll_interval
+            except requests.RequestException as exc:
+                consecutive_connection_errors += 1
+                next_delay = min(
+                    poll_interval * (2 ** min(consecutive_connection_errors, 3)),
+                    60,
+                )
+                logger.warning(
+                    "DashScope video task %s polling connection interrupted; "
+                    "remote task is retained and will be queried again in %ss: %s",
+                    task_id,
+                    next_delay,
+                    exc,
+                )
+                continue
+
+            if poll_response.status_code != 200:
+                if poll_response.status_code in {401, 403}:
+                    raise RuntimeError(
+                        f"{model_name} task {task_id} polling authorization failed: "
+                        f"HTTP {poll_response.status_code}"
+                    )
+                if poll_response.status_code not in {
+                    404, 408, 409, 425, 429, 500, 502, 503, 504,
+                }:
+                    raise RuntimeError(
+                        f"{model_name} task {task_id} polling failed: "
+                        f"HTTP {poll_response.status_code} {poll_response.text[:300]}"
+                    )
+                logger.warning(
+                    "DashScope video task %s poll returned HTTP %s; retaining "
+                    "remote task and retrying",
+                    task_id,
+                    poll_response.status_code,
+                )
+                continue
+
+            poll_result = poll_response.json()
+            output = poll_result.get("output", {})
+            task_status = output.get("task_status")
+            elapsed = int(time.monotonic() - started_at)
+            logger.info("Task %s status: %s (elapsed: %ss)", task_id, task_status, elapsed)
+
+            if task_status == "SUCCEEDED":
+                video_url = output.get("video_url")
+                if not video_url:
+                    raise RuntimeError(f"No video_url in completed task: {poll_result}")
+                logger.info("Task completed. Video URL: %s", video_url)
+                return video_url
+
+            if task_status in {"FAILED", "CANCELED"}:
+                error_msg = output.get("message", "Unknown error")
+                code = output.get("code", "")
+                raise ProviderTerminalFailureError(
+                    f"{model_name} task failed: {code} - {error_msg}",
+                    provider_status=task_status,
+                )
+
+            if task_status == "UNKNOWN":
+                raise RuntimeError(f"{model_name} task {task_status}: {poll_result}")
+
+            next_delay = poll_interval
+
+        raise RuntimeError(
+            f"{model_name} task {task_id} timed out after {max_wait_time}s; "
+            "remote task id was retained for recovery"
+        )
+
+    def resume_dashscope_video_task(
+        self,
+        *,
+        provider_task_id: str,
+        output_path: str,
+        model_name: str,
+    ) -> Tuple[str, float]:
+        """Resume querying an accepted task without submitting a duplicate."""
+        started_at = time.time()
+        video_url = self._poll_dashscope_video_task(
+            task_id=provider_task_id,
+            model_name=model_name,
+            initial_delay=False,
+        )
+        self._download_video(video_url, output_path)
+        return output_path, time.time() - started_at
+
     def _resolve_provider_backend_for_model(self, model_name: str) -> str:
         try:
             return resolve_provider_backend(model_name)
@@ -374,9 +526,12 @@ class WanxModel(VideoGenModel):
                     ref_video_urls=ref_urls_resolved,
                     model_name=final_model_name,
                     size=size if not is_wan27_r2v else None,
+                    resolution=resolution if is_wan27_r2v else None,
                     ratio=ratio if is_wan27_r2v else None,
                     duration=duration,
                     audio=kwargs.get('audio', True), # Default to True for R2V
+                    prompt_extend=prompt_extend,
+                    watermark=watermark,
                     shot_type=shot_type,
                     seed=seed,
                     extra_headers=extra_media_headers,
@@ -611,7 +766,14 @@ class WanxModel(VideoGenModel):
         logger.info(f"Payload: {payload}")
         
         # Step 1: Create task
-        response = requests.post(create_url, headers=headers, json=payload, timeout=120)  # 2 minutes for task creation
+        response = self._request_with_retry(
+            requests.post,
+            operation=f"{model_name} task submission",
+            url=create_url,
+            headers=headers,
+            json=payload,
+            timeout=120,
+        )
         
         logger.info(f"Create task response status: {response.status_code}")
         logger.info(f"Create task response body: {response.text[:500] if response.text else 'empty'}")
@@ -631,63 +793,16 @@ class WanxModel(VideoGenModel):
         if callable(on_provider_ids):
             on_provider_ids("dashscope", task_id, request_id)
         
-        # Step 2: Poll for task completion
-        poll_url = f"{base}/api/v1/tasks/{task_id}"
-        poll_headers = {
-            "Authorization": f"Bearer {self.api_key}"
-        }
-        
-        max_wait_time = 900  # 15 minutes max wait (video generation takes longer)
-        poll_interval = 15   # Poll every 15 seconds
-        elapsed = 0
-        
-        while elapsed < max_wait_time:
-            time.sleep(poll_interval)
-            elapsed += poll_interval
-            
-            poll_response = requests.get(poll_url, headers=poll_headers, timeout=30)
-            
-            if poll_response.status_code != 200:
-                logger.warning(f"Poll request failed: {poll_response.status_code}")
-                continue
-            
-            poll_result = poll_response.json()
-            task_status = poll_result.get('output', {}).get('task_status')
-            
-            logger.info(f"Task {task_id} status: {task_status} (elapsed: {elapsed}s)")
-            
-            if task_status == 'SUCCEEDED':
-                video_url = poll_result.get('output', {}).get('video_url')
-                if not video_url:
-                    raise RuntimeError(f"No video_url in completed task: {poll_result}")
-                
-                logger.info(f"Task completed. Video URL: {video_url}")
-                return video_url
-            
-            elif task_status == 'FAILED':
-                error_msg = poll_result.get('output', {}).get('message', 'Unknown error')
-                code = poll_result.get('output', {}).get('code', '')
-                raise ProviderTerminalFailureError(
-                    f"{model_name} task failed: {code} - {error_msg}",
-                    provider_status=task_status,
-                )
-            
-            elif task_status == 'CANCELED':
-                raise ProviderTerminalFailureError(
-                    f"{model_name} task {task_status}",
-                    provider_status=task_status,
-                )
-
-            elif task_status == 'UNKNOWN':
-                raise RuntimeError(f"{model_name} task {task_status}: {poll_result}")
-            
-            # PENDING or RUNNING - continue polling
-        
-        raise RuntimeError(f"{model_name} task timed out after {max_wait_time}s")
+        return self._poll_dashscope_video_task(
+            task_id=task_id,
+            model_name=model_name,
+        )
 
     def _generate_wan_r2v_http(self, prompt: str, ref_video_urls: list, model_name: str = "wan2.6-r2v",
-                                  size: Optional[str] = "1280*720", ratio: Optional[str] = None,
+                                  size: Optional[str] = "1280*720", resolution: Optional[str] = None,
+                                  ratio: Optional[str] = None,
                                   duration: int = 5, audio: bool = True,
+                                  prompt_extend: bool = True, watermark: bool = False,
                                   shot_type: str = "multi", seed: int = None,
                                   extra_headers: Optional[Mapping[str, str]] = None,
                                   on_provider_ids=None) -> str:
@@ -703,25 +818,41 @@ class WanxModel(VideoGenModel):
         if extra_headers:
             headers.update(dict(extra_headers))
 
-        input_key = "reference_image_urls" if model_name.startswith("wan2.7-") else "reference_video_urls"
-        payload = {
-            "model": model_name,
-            "input": {
-                "prompt": prompt,
-                input_key: ref_video_urls
-            },
-            "parameters": {
-                "duration": duration,
-                "audio": audio,
-                "shot_type": shot_type
+        is_wan27 = model_name.startswith("wan2.7-")
+        if is_wan27:
+            payload = {
+                "model": model_name,
+                "input": {
+                    "prompt": prompt,
+                    "media": [
+                        {"type": "reference_image", "url": url}
+                        for url in ref_video_urls
+                    ],
+                },
+                "parameters": {
+                    "duration": duration,
+                    "resolution": (resolution or "720P").upper(),
+                    "prompt_extend": prompt_extend,
+                    "watermark": watermark,
+                },
             }
-        }
-
-        # Wan2.7 uses ratio; older models use size
-        if ratio:
-            payload["parameters"]["ratio"] = ratio
-        elif size:
-            payload["parameters"]["size"] = size
+            if ratio:
+                payload["parameters"]["ratio"] = ratio
+        else:
+            payload = {
+                "model": model_name,
+                "input": {
+                    "prompt": prompt,
+                    "reference_video_urls": ref_video_urls,
+                },
+                "parameters": {
+                    "duration": duration,
+                    "audio": audio,
+                    "shot_type": shot_type,
+                },
+            }
+            if size:
+                payload["parameters"]["size"] = size
         
         if seed:
             payload["parameters"]["seed"] = seed
@@ -730,7 +861,14 @@ class WanxModel(VideoGenModel):
         logger.info(f"Payload: {payload}")
         
         # Step 1: Create task
-        response = requests.post(create_url, headers=headers, json=payload, timeout=120)
+        response = self._request_with_retry(
+            requests.post,
+            operation=f"{model_name} task submission",
+            url=create_url,
+            headers=headers,
+            json=payload,
+            timeout=120,
+        )
         
         logger.info(f"Create task response status: {response.status_code}")
         logger.info(f"Create task response body: {response.text[:500] if response.text else 'empty'}")
@@ -750,57 +888,10 @@ class WanxModel(VideoGenModel):
         if callable(on_provider_ids):
             on_provider_ids("dashscope", task_id, request_id)
         
-        # Step 2: Poll for task completion
-        poll_url = f"{base}/api/v1/tasks/{task_id}"
-        poll_headers = {
-            "Authorization": f"Bearer {self.api_key}"
-        }
-        
-        max_wait_time = 900  # 15 minutes max wait
-        poll_interval = 15   # Poll every 15 seconds
-        elapsed = 0
-        
-        while elapsed < max_wait_time:
-            time.sleep(poll_interval)
-            elapsed += poll_interval
-            
-            poll_response = requests.get(poll_url, headers=poll_headers, timeout=30)
-            
-            if poll_response.status_code != 200:
-                logger.warning(f"Poll request failed: {poll_response.status_code}")
-                continue
-            
-            poll_result = poll_response.json()
-            task_status = poll_result.get('output', {}).get('task_status')
-            
-            logger.info(f"Task {task_id} status: {task_status} (elapsed: {elapsed}s)")
-            
-            if task_status == 'SUCCEEDED':
-                video_url = poll_result.get('output', {}).get('video_url')
-                if not video_url:
-                    raise RuntimeError(f"No video_url in completed task: {poll_result}")
-                
-                logger.info(f"Task completed. Video URL: {video_url}")
-                return video_url
-            
-            elif task_status == 'FAILED':
-                error_msg = poll_result.get('output', {}).get('message', 'Unknown error')
-                code = poll_result.get('output', {}).get('code', '')
-                raise ProviderTerminalFailureError(
-                    f"{model_name} task failed: {code} - {error_msg}",
-                    provider_status=task_status,
-                )
-            
-            elif task_status == 'CANCELED':
-                raise ProviderTerminalFailureError(
-                    f"{model_name} task {task_status}",
-                    provider_status=task_status,
-                )
-
-            elif task_status == 'UNKNOWN':
-                raise RuntimeError(f"{model_name} task {task_status}: {poll_result}")
-            
-        raise RuntimeError(f"{model_name} task timed out after {max_wait_time}s")
+        return self._poll_dashscope_video_task(
+            task_id=task_id,
+            model_name=model_name,
+        )
 
     def _generate_hh_http(self, *, prompt: str, model_name: str,
                            media: Optional[List[Dict[str, str]]] = None,
@@ -860,7 +951,14 @@ class WanxModel(VideoGenModel):
         logger.info(f"Payload: {payload}")
 
         # Step 1: Create task
-        response = requests.post(create_url, headers=headers, json=payload, timeout=120)
+        response = self._request_with_retry(
+            requests.post,
+            operation=f"{model_name} task submission",
+            url=create_url,
+            headers=headers,
+            json=payload,
+            timeout=120,
+        )
 
         logger.info(f"Create task response status: {response.status_code}")
         logger.info(f"Create task response body: {response.text[:500] if response.text else 'empty'}")
@@ -885,59 +983,10 @@ class WanxModel(VideoGenModel):
         if on_provider_ids is not None:
             on_provider_ids("dashscope", task_id, request_id)
 
-        # Step 2: Poll for task completion
-        poll_url = f"{base}/api/v1/tasks/{task_id}"
-        poll_headers = {
-            "Authorization": f"Bearer {self.api_key}"
-        }
-
-        max_wait_time = 900  # 15 minutes max wait
-        poll_interval = 15   # Poll every 15 seconds
-        elapsed = 0
-
-        while elapsed < max_wait_time:
-            time.sleep(poll_interval)
-            elapsed += poll_interval
-
-            poll_response = requests.get(poll_url, headers=poll_headers, timeout=30)
-
-            if poll_response.status_code != 200:
-                logger.warning(f"Poll request failed: {poll_response.status_code}")
-                continue
-
-            poll_result = poll_response.json()
-            task_status = poll_result.get('output', {}).get('task_status')
-
-            logger.info(f"Task {task_id} status: {task_status} (elapsed: {elapsed}s)")
-
-            if task_status == 'SUCCEEDED':
-                video_url = poll_result.get('output', {}).get('video_url')
-                if not video_url:
-                    raise RuntimeError(f"No video_url in completed task: {poll_result}")
-
-                logger.info(f"HappyHorse task completed. Video URL: {video_url}")
-                return video_url
-
-            elif task_status == 'FAILED':
-                error_msg = poll_result.get('output', {}).get('message', 'Unknown error')
-                code = poll_result.get('output', {}).get('code', '')
-                raise ProviderTerminalFailureError(
-                    f"{model_name} task failed: {code} - {error_msg}",
-                    provider_status=task_status,
-                )
-
-            elif task_status == 'CANCELED':
-                raise ProviderTerminalFailureError(
-                    f"{model_name} task {task_status}",
-                    provider_status=task_status,
-                )
-
-            elif task_status == 'UNKNOWN':
-                raise RuntimeError(f"{model_name} task {task_status}: {poll_result}")
-
-            # PENDING or RUNNING - continue polling
-
-        raise RuntimeError(f"{model_name} task timed out after {max_wait_time}s")
+        return self._poll_dashscope_video_task(
+            task_id=task_id,
+            model_name=model_name,
+        )
 
     def _generate_sdk(self, prompt: str, model_name: str, img_url: str = None, size: str = "1280*720",
                       duration: int = 5, prompt_extend: bool = True, negative_prompt: str = None,

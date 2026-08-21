@@ -714,10 +714,10 @@ export default function CastWorkbenchModal({ isOpen, kind, entityId, onClose }: 
                                     {/* Inline confirm when switching with dirty prompt */}
                                     {pendingTemplate && (
                                         <div className="mt-2 flex items-center gap-2 px-2 py-1.5 rounded-md bg-amber-500/10 border border-amber-500/20">
-                                            <span className="text-[0.6875rem] text-amber-200/90">{t("tplSwitchConfirm")}</span>
+                                            <span className="text-[0.6875rem] text-foreground">{t("tplSwitchConfirm")}</span>
                                             <button
                                                 onClick={confirmTemplateSwitch}
-                                                className="px-2 py-0.5 rounded text-[0.6875rem] font-medium bg-amber-500/20 text-amber-200 hover:bg-amber-500/30 transition-colors"
+                                                className="px-2 py-0.5 rounded text-[0.6875rem] font-medium bg-amber-500/20 text-foreground hover:bg-amber-500/30 transition-colors"
                                             >
                                                 {t("tplSwitchYes")}
                                             </button>

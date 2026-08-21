@@ -221,6 +221,90 @@ def test_dashscope_video_persistence_failure_stops_before_polling(monkeypatch) -
     assert polls == []
 
 
+def test_dashscope_video_submission_and_polling_recover_from_ssl_interruptions(monkeypatch) -> None:
+    submission_attempts = []
+    poll_attempts = []
+
+    def submit(*_args, **_kwargs):
+        submission_attempts.append(True)
+        if len(submission_attempts) == 1:
+            raise __import__("requests").exceptions.SSLError("unexpected EOF")
+        return FakeResponse({
+            "request_id": "request-video-retry",
+            "output": {"task_id": "task-video-retry"},
+        })
+
+    def poll(*_args, **_kwargs):
+        poll_attempts.append(True)
+        if len(poll_attempts) == 1:
+            raise __import__("requests").exceptions.SSLError("connection reset")
+        return FakeResponse({
+            "output": {
+                "task_status": "SUCCEEDED",
+                "video_url": "https://example.com/result.mp4",
+            },
+        })
+
+    monkeypatch.setattr("src.models.wanx.requests.post", submit)
+    monkeypatch.setattr("src.models.wanx.requests.get", poll)
+    monkeypatch.setattr("src.models.wanx.time.sleep", lambda *_args: None)
+    captured = {}
+
+    video_url = WanxModel({"api_key": "test-key"})._generate_wan_r2v_http(
+        "雨夜巷战",
+        ["https://example.com/reference.png"],
+        model_name="wan2.7-r2v",
+        on_provider_ids=lambda provider, provider_task_id, request_id: captured.update(
+            provider=provider,
+            task_id=provider_task_id,
+            request_id=request_id,
+        ),
+    )
+
+    assert video_url == "https://example.com/result.mp4"
+    assert len(submission_attempts) == 2
+    assert len(poll_attempts) == 2
+    assert captured == {
+        "provider": "dashscope",
+        "task_id": "task-video-retry",
+        "request_id": "request-video-retry",
+    }
+
+
+def test_dashscope_video_resume_queries_existing_task_without_resubmitting(monkeypatch, tmp_path) -> None:
+    submissions = []
+    polls = []
+    monkeypatch.setattr(
+        "src.models.wanx.requests.post",
+        lambda *_args, **_kwargs: submissions.append(True),
+    )
+    monkeypatch.setattr(
+        "src.models.wanx.requests.get",
+        lambda *_args, **_kwargs: polls.append(True) or FakeResponse({
+            "output": {
+                "task_status": "SUCCEEDED",
+                "video_url": "https://example.com/recovered.mp4",
+            },
+        }),
+    )
+    monkeypatch.setattr(
+        "src.models.wanx.WanxModel._download_video",
+        lambda _self, _url, path: __import__("pathlib").Path(path).write_bytes(b"video"),
+    )
+
+    output_path = tmp_path / "recovered.mp4"
+    path, _elapsed = WanxModel({"api_key": "test-key"}).resume_dashscope_video_task(
+        provider_task_id="existing-task-1",
+        output_path=str(output_path),
+        model_name="wan2.7-r2v",
+    )
+
+    assert path == str(output_path)
+    assert output_path.read_bytes() == b"video"
+    assert submissions == []
+    assert polls == [True]
+
+
 def test_mulerouter_submission_callback_receives_ids(monkeypatch) -> None:
     response = FakeResponse(
         {"task_info": {"id": "task-mule-1"}},

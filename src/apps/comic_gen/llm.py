@@ -316,15 +316,18 @@ DEFAULT_STORYBOARD_EXTRACTION_PROMPT = """# 角色
 你是一名电影级的分镜师。你的任务是将剧本文本拆解为一系列连续的分镜帧。
 
 # 核心规则
-1. **视觉节拍拆解**: 一行包含多个动作时，拆为多帧。每帧仅含一个主要动作。
-2. **角色可见性**: character_ref_names 只列画面中可见的角色。
-3. **实体约束**: 场景名、角色名、道具名严格匹配已提取实体。
-4. **语言**: 简体中文。
-5. **景别枚举**: 必须从以下选项中选择: 大特写 | 特写 | 近景 | 中景 | 全景 | 远景 | 大远景
-6. **角度枚举**: 必须从以下选项中选择: 平视 | 俯视 | 仰视 | 鸟瞰 | 蚁视 | 过肩 | 荷兰角 | 主观视角
-7. **时长**: 基于动作复杂度估算整数秒（范围 3-10 秒）。简单静态 3-4s，标准动作 5-6s，复杂/情绪镜头 7-10s。
-8. **对白**: 如果帧中有角色说话，dialogue 和 speaker 必须填写。一帧只能有一个说话人——多人对话必须拆为多帧。
-9. **输出预算**: 最多生成 18 帧。优先保留场景切换、关键动作、重要对白和情绪转折；次要反应与连续动作可以合并，字段内容保持简洁。
+1. **显式时间轴最高优先级**: 如果剧本包含 `【0-1秒】`、`[1-2s]` 等明确时间段，必须保留这些时间段，禁止因为一个时间段内有多个动作而增加视频生成片段。
+2. **生成片段与分镜节拍分层**: 一个生成片段最长 15 秒，可在 timeline_beats 中包含多个连续分镜节拍。总时长不超过 15 秒的显式时间轴应合并为一个生成片段；例如 5 秒剧本应返回 1 个 duration=5 的生成片段，而不是 5 个或更多独立任务。
+3. **时长守恒**: 有显式时间轴时，duration = timeline_end_seconds - timeline_start_seconds；所有生成片段 duration 之和必须等于剧本时间轴总时长。没有显式时间轴时，才根据动作复杂度估算时长。
+4. **视觉节拍拆解**: 仅在没有显式时间轴时，一行包含多个动作可拆为多帧，每帧仅含一个主要动作。
+5. **角色可见性**: character_ref_names 只列画面中可见的角色。
+6. **实体约束**: 场景名、角色名、道具名严格匹配已提取实体。
+7. **语言**: 简体中文。
+8. **景别枚举**: 必须从以下选项中选择: 大特写 | 特写 | 近景 | 中景 | 全景 | 远景 | 大远景
+9. **角度枚举**: 必须从以下选项中选择: 平视 | 俯视 | 仰视 | 鸟瞰 | 蚁视 | 过肩 | 荷兰角 | 主观视角
+10. **无时间轴时长**: 没有显式时间轴时，基于动作复杂度估算整数秒（范围 3-10 秒）。简单静态 3-4s，标准动作 5-6s，复杂/情绪镜头 7-10s。
+11. **对白**: 如果帧中有角色说话，dialogue 和 speaker 必须填写。无显式时间轴时，一帧只能有一个说话人；有显式时间轴时，不同说话人可分别记录在 timeline_beats 中。
+12. **输出预算**: 最多生成 18 个生成片段。优先保留场景切换、关键动作、重要对白和情绪转折；次要反应与连续动作可以合并，字段内容保持简洁。
 
 # 剧本格式说明
 - **场景标题行**: `1-1 地点名称 [时间] [内/外]`
@@ -349,8 +352,20 @@ DEFAULT_STORYBOARD_EXTRACTION_PROMPT = """# 角色
     "camera_movement": "静止",
     "dialogue": "台词内容（无对白则为 null）",
     "speaker": "说话人（无对白则为 null）",
-    "duration": 5
+    "duration": 5,
+    "timeline_start_seconds": 0,
+    "timeline_end_seconds": 5,
+    "timeline_beats": [
+        {
+            "start_seconds": 0,
+            "end_seconds": 1,
+            "label": "节拍标题",
+            "description": "该时间段内的镜头、动作与声音"
+        }
+    ]
 }
+
+没有显式时间轴时，timeline_start_seconds、timeline_end_seconds 填 null，timeline_beats 填空数组。
 
 # 示例
 {
@@ -591,6 +606,36 @@ class ScriptProcessor:
         Uses LLM to split a long text into episodes by narrative rhythm.
         Returns a list of episode dicts with title, summary, start/end markers, etc.
         """
+        normalized_text = text.strip()
+        if not normalized_text:
+            raise ValueError("文件内容为空")
+
+        # A one-episode import has no split decision to make.  Calling the LLM
+        # here made the common Xiaoyunque-style "upload one finished episode"
+        # flow both slower and less reliable, and could race the browser's
+        # request timeout.  Build the preview locally while preserving the
+        # exact source text for the confirmation step.
+        if suggested_episodes == 1:
+            compact = re.sub(r"\s+", " ", normalized_text)
+            first_line = next(
+                (line.strip(" #*-：:") for line in normalized_text.splitlines() if line.strip()),
+                "",
+            )
+            explicit_title = re.match(
+                r"^(?:第\s*0*1\s*[集章]|EP\s*0*1)\s*[：:\-—]?\s*(.*)$",
+                first_line,
+                re.IGNORECASE,
+            )
+            title = (explicit_title.group(1).strip() if explicit_title else "") or "第1集"
+            return [{
+                "episode_number": 1,
+                "title": title[:80],
+                "summary": compact[:50],
+                "start_marker": normalized_text[:20],
+                "end_marker": normalized_text[-20:],
+                "estimated_duration": "",
+            }]
+
         if not self.is_configured:
             raise ValueError("LLM API Key 未配置。请在 API 配置中设置对应的 API Key 后重试。")
 
@@ -1099,6 +1144,7 @@ Return a JSON object with ALL fields below. null is acceptable for optional fiel
 4. blocking.stage should cover all visible characters and key props.
 5. Maintain continuity with adjacent frames.
 6. camera_movement has at most primary + secondary.
+7. If Coarse Frame contains timeline_beats, preserve every time range and beat in visual_description. The supplied duration and timeline are immutable; do not expand, remove, reorder, or retime beats.
 
 # Coarse Frame
 {json.dumps(coarse_frame, ensure_ascii=False, indent=2)}

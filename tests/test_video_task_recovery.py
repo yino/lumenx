@@ -125,6 +125,29 @@ def test_orphan_recovery_is_noop_when_nothing_stuck(pipeline):
     assert pipeline.scripts["p1"].video_tasks[0].status == "completed"
 
 
+def test_resume_video_task_reuses_persisted_provider_id(pipeline):
+    task = _video_task(status="failed", task_id="local-task-1")
+    task.provider_name = "dashscope"
+    task.provider_task_id = "remote-task-1"
+    task.error = "SSL polling interrupted"
+    pipeline.scripts = {"p1": _script_with_tasks(task)}
+    pipeline.video_generator.model.resume_dashscope_video_task.return_value = (
+        "output/video/video_local-task-1.mp4",
+        1.0,
+    )
+
+    recovered = pipeline.resume_video_task("p1", "local-task-1")
+
+    assert recovered.status == "completed"
+    assert recovered.error is None
+    assert recovered.provider_task_id == "remote-task-1"
+    pipeline.video_generator.model.resume_dashscope_video_task.assert_called_once_with(
+        provider_task_id="remote-task-1",
+        output_path="output/video/video_local-task-1.mp4",
+        model_name="wan2.7-i2v",
+    )
+
+
 # ---------------------------------------------------------------------------
 # mark_video_task_failed (belt-and-suspenders writeback)
 # ---------------------------------------------------------------------------

@@ -12,6 +12,11 @@ from .models import Script, GenerationStatus, VideoTask, Character, Scene, Story
 from .llm import ScriptProcessor
 from .assets import AssetGenerator
 from .storyboard import StoryboardGenerator
+from .storyboard_timing import (
+    collapse_timed_storyboard_frames,
+    extract_target_duration_seconds,
+    group_storyboard_frames_into_clips,
+)
 from .video import VideoGenerator
 from .audio import AudioGenerator
 from .export import ExportManager
@@ -1441,7 +1446,13 @@ class ComicGenPipeline:
 
     # === STORYBOARD DRAMATIZATION v2 ===
 
-    def analyze_text_to_frames(self, script_id: str, text: str) -> Script:
+    def analyze_text_to_frames(
+        self,
+        script_id: str,
+        text: str,
+        *,
+        max_clip_seconds: int = 15,
+    ) -> Script:
         """
         Analyzes script text and generates storyboard frames using LLM.
         Replaces existing frames with newly generated ones.
@@ -1476,6 +1487,43 @@ class ComicGenPipeline:
 
         if not raw_frames:
             raise RuntimeError("AI 分镜分析未返回任何帧数据，请重试。")
+
+        # A screenplay with an explicit timeline describes editorial beats,
+        # not one independently generated video for every action. Collapse
+        # consecutive beats into <=15s generation clips and make the source
+        # timeline authoritative for clip count + duration. This also guards
+        # custom prompts and non-deterministic LLM output from inflating a
+        # five-second script into dozens of seconds of generated footage.
+        if max_clip_seconds not in (15, 30):
+            raise ValueError("max_clip_seconds must be 15 or 30")
+
+        timed_clips = collapse_timed_storyboard_frames(
+            text,
+            raw_frames,
+            max_clip_seconds=max_clip_seconds,
+        )
+        if timed_clips is not None:
+            logger.info(
+                "Collapsed %s AI storyboard frames into %s duration-safe "
+                "generation clip(s) from the explicit screenplay timeline",
+                len(raw_frames),
+                len(timed_clips),
+            )
+            raw_frames = timed_clips
+        else:
+            target_duration = extract_target_duration_seconds(text)
+            raw_frames = group_storyboard_frames_into_clips(
+                raw_frames,
+                max_clip_seconds=max_clip_seconds,
+                target_duration_seconds=target_duration,
+            )
+            logger.info(
+                "Grouped storyboard actions into %s generation clip(s) "
+                "with a %ss limit%s",
+                len(raw_frames),
+                max_clip_seconds,
+                f" and {target_duration:g}s total budget" if target_duration else "",
+            )
 
         # Convert raw frame dicts to StoryboardFrame objects
         new_frames = []
@@ -1527,12 +1575,16 @@ class ComicGenPipeline:
                 dialogue=frame_data.get("dialogue"),
                 speaker=frame_data.get("speaker"),
                 duration=frame_data.get("duration"),
+                timeline_start_seconds=frame_data.get("timeline_start_seconds"),
+                timeline_end_seconds=frame_data.get("timeline_end_seconds"),
+                timeline_beats=frame_data.get("timeline_beats") or [],
                 status=GenerationStatus.PENDING
             )
             new_frames.append(frame)
         
         # Replace existing frames with new ones
         script.frames = new_frames
+        script.storyboard_segment_max_seconds = max_clip_seconds
         script.updated_at = time.time()
         
         logger.info(f"Generated {len(new_frames)} frames from text analysis")
@@ -1566,6 +1618,9 @@ class ComicGenPipeline:
             "dialogue": frame.dialogue,
             "speaker": frame.speaker,
             "duration": frame.duration,
+            "timeline_start_seconds": frame.timeline_start_seconds,
+            "timeline_end_seconds": frame.timeline_end_seconds,
+            "timeline_beats": [beat.model_dump() for beat in frame.timeline_beats],
             "character_names": [c.name for c in all_characters if c.id in frame.character_ids],
             "scene_name": next((s.name for s in all_scenes if s.id == frame.scene_id), None),
         }
@@ -1599,14 +1654,20 @@ class ComicGenPipeline:
         # Map result onto frame fields
         if result.get("visual_description"):
             from .prompt_assembly import inject_reference_tags
-            frame.visual_description = inject_reference_tags(
+            refined_visual = inject_reference_tags(
                 result["visual_description"], frame, all_characters, all_scenes
             )
+            if frame.timeline_beats:
+                frame.visual_description = (
+                    f"{frame.action_description}\n视觉细化：{refined_visual}"
+                )
+            else:
+                frame.visual_description = refined_visual
         if result.get("shot_size"):
             frame.shot_size = result["shot_size"]
         if result.get("camera_angle"):
             frame.camera_angle = result["camera_angle"]
-        if result.get("duration"):
+        if result.get("duration") and not frame.timeline_beats:
             frame.duration = result["duration"]
         if result.get("transition_hint"):
             frame.transition_hint = result["transition_hint"]
@@ -3322,6 +3383,7 @@ class ComicGenPipeline:
         try:
             # Update status to processing
             task.status = "processing"
+            task.error = None
             self._save_data()
             
             # Download image to temp file
@@ -3524,6 +3586,7 @@ class ComicGenPipeline:
             
             task.video_url = os.path.relpath(output_path, "output")
             task.status = "completed"
+            task.error = None
             
             # Sync with asset if this is an asset video
             if task.asset_id:
@@ -3534,10 +3597,61 @@ class ComicGenPipeline:
             logger.exception("Failed to process video task")
             logger.error(f"Video generation failed: {e}")
             task.status = "failed"
+            task.error = str(e)
             if task.asset_id:
                 self._sync_asset_video_task(script, task)
             
         self._save_data()
+
+    def resume_video_task(self, script_id: str, task_id: str):
+        """Resume an accepted DashScope task without submitting a duplicate.
+
+        This is the recovery path for a local polling interruption after the
+        provider task id has already been persisted.  It queries that exact
+        remote task and downloads its result if complete, avoiding duplicate
+        billing and duplicate candidate creation.
+        """
+        script = self.get_script(script_id)
+        if not script:
+            raise ValueError("Script not found")
+        task = next((item for item in script.video_tasks if item.id == task_id), None)
+        if not task:
+            raise ValueError("Video task not found")
+        if task.provider_name != "dashscope" or not task.provider_task_id:
+            raise ValueError("Video task has no recoverable DashScope task ID")
+        if task.status == "completed" and task.video_url:
+            return task
+
+        output_filename = f"video_{task_id}.mp4"
+        output_path = os.path.join("output", "video", output_filename)
+        os.makedirs(os.path.dirname(output_path), exist_ok=True)
+
+        task.status = "processing"
+        task.error = None
+        self._save_data()
+        try:
+            self.video_generator.model.resume_dashscope_video_task(
+                provider_task_id=task.provider_task_id,
+                output_path=output_path,
+                model_name=task.model,
+            )
+            task.video_url = os.path.relpath(output_path, "output")
+            task.status = "completed"
+            task.error = None
+            if task.asset_id:
+                self._sync_asset_video_task(script, task)
+        except Exception as exc:
+            logger.exception(
+                "Failed to resume DashScope video task %s (%s)",
+                task.id,
+                task.provider_task_id,
+            )
+            task.status = "failed"
+            task.error = str(exc)
+            if task.asset_id:
+                self._sync_asset_video_task(script, task)
+        self._save_data()
+        return task
 
     def _sync_asset_video_task(self, script: Script, task: VideoTask):
         """Syncs the updated task status/url back to the asset's video_assets list."""

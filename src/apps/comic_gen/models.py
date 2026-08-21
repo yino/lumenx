@@ -365,6 +365,24 @@ class Prop(BaseModel):
     starred: bool = Field(False, description="User-starred flag for the asset library shortlist")
     status: GenerationStatus = GenerationStatus.PENDING
 
+
+class StoryboardBeat(BaseModel):
+    """An editorial beat inside one generated video clip."""
+
+    start_seconds: float = Field(
+        ...,
+        ge=0,
+        description="Beat start on the source timeline",
+    )
+    end_seconds: float = Field(
+        ...,
+        gt=0,
+        description="Beat end on the source timeline",
+    )
+    label: Optional[str] = Field(None, description="Optional beat title from the screenplay")
+    description: str = Field(..., description="Visual/action instructions for this beat")
+
+
 class StoryboardFrame(BaseModel):
     id: str = Field(..., description="Unique identifier for the frame")
     scene_id: str = Field(..., description="Reference to the Scene ID")
@@ -394,6 +412,20 @@ class StoryboardFrame(BaseModel):
 
     # === Storyboard Schema v2: Rich frame fields ===
     duration: Optional[int] = Field(None, description="建议时长（秒）")
+    timeline_start_seconds: Optional[float] = Field(
+        None,
+        ge=0,
+        description="Source timeline start for this generated clip",
+    )
+    timeline_end_seconds: Optional[float] = Field(
+        None,
+        gt=0,
+        description="Source timeline end for this generated clip",
+    )
+    timeline_beats: List[StoryboardBeat] = Field(
+        default_factory=list,
+        description="Timed editorial beats grouped inside this generated clip",
+    )
     visual_description: Optional[str] = Field(None, description="画面描述：环境氛围 + 角色表演 + 物理动作的综合自然语言描述")
     dialogue_structured: Optional[DialogueStructured] = Field(None, description="结构化对白（speaker + line + emotion + delivery）")
     camera_movement_structured: Optional[CameraMovementData] = Field(None, description="结构化运镜（primary + secondary + speed + description）")
@@ -568,6 +600,16 @@ class Script(BaseModel):
     # inherit from parent series.
     default_generation_mode: str = Field("r2v", description="Default per-shot generation_mode: 'r2v' (节奏优先) or 'i2v' (画面优先)")
 
+    # Short-drama Agent planning mode. 15 seconds is compatible with all
+    # current providers; 30 seconds is exposed only when the selected runtime
+    # model advertises long-clip support (for example Seedance 2.5).
+    storyboard_segment_max_seconds: int = Field(
+        15,
+        ge=1,
+        le=30,
+        description="Maximum generated clip duration; editorial beats remain nested inside the clip.",
+    )
+
     # Merged video URL
     merged_video_url: Optional[str] = Field(None, description="URL of the merged final video")
 
@@ -647,6 +689,12 @@ class Series(BaseModel):
     # the shot card tab toggle. See Project.default_generation_mode for
     # full semantics.
     default_generation_mode: str = Field("r2v", description="Default per-shot generation_mode for new episodes: 'r2v' (节奏优先) or 'i2v' (画面优先)")
+    storyboard_segment_max_seconds: int = Field(
+        15,
+        ge=1,
+        le=30,
+        description="Default max generation-clip duration inherited by episode planning.",
+    )
 
     # PR-3h/i (r2v-workflow-v3) — Custom voice pool (clones + designs).
     # Per Q16.1: series-level scope. Any character in this series can pick

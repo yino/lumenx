@@ -19,7 +19,7 @@
  *   · NO inspector right rail yet (Q9 decision: 3-section flat, no inspector)
  */
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Users, MapPin, Box, AlertTriangle, Sparkles, Plus, Upload, X, Loader2, Play, Pause, Volume2, Wand2, Layers, Maximize2 } from "lucide-react";
+import { Users, MapPin, Box, AlertTriangle, Sparkles, Plus, Upload, X, Loader2, Play, Pause, Volume2, Wand2, Layers, Maximize2, Images } from "lucide-react";
 import { useTranslations } from "next-intl";
 import { useProjectStore } from "@/store/projectStore";
 import { api } from "@/lib/api";
@@ -82,7 +82,7 @@ export default function Cast() {
     // opens a TODO dialog showing the planned two-tab interface.
     const [addModalOpen, setAddModalOpen] = useState<null | "character" | "scene" | "prop">(null);
     // PR-3* · Cast redesign — tab filter + workbench launcher.
-    const [activeTab, setActiveTab] = useState<"all" | "character" | "scene" | "prop">("all");
+    const [activeTab, setActiveTab] = useState<"all" | "character" | "scene" | "prop" | "material">("all");
     const [workbench, setWorkbench] = useState<{ kind: "character" | "scene" | "prop"; entityId: string } | null>(null);
 
     const removeGeneratingTask = useProjectStore((s) => s.removeGeneratingTask);
@@ -170,8 +170,8 @@ export default function Cast() {
     return (
         <div className="flex h-full w-full flex-col overflow-hidden">
             <StepPageHeader
-                stepNumber={3}
-                englishName="角色资产"
+                stepNumber={2}
+                englishName="资产库"
                 title={tStep("castTitle")}
                 subtitle={tStep("castSubtitle")}
                 pills={totalCast > 0 ? (
@@ -211,6 +211,7 @@ export default function Cast() {
                             { id: "character" as const, label: t("tabCharacters"), icon: <Users size={11} />, count: characters.length },
                             { id: "scene" as const, label: t("tabScenes"), icon: <MapPin size={11} />, count: scenes.length },
                             { id: "prop" as const, label: t("tabProps"), icon: <Box size={11} />, count: props.length },
+                            { id: "material" as const, label: t("tabMaterials"), icon: <Images size={11} />, count: 0 },
                         ]).map((tab) => (
                             <button
                                 key={tab.id}
@@ -273,6 +274,11 @@ export default function Cast() {
                                 onOpenWorkbench={(id) => setWorkbench({ kind: "prop", entityId: id })}
                                 hideHeader={activeTab === "prop"}
                             />
+                        )}
+                        {activeTab === "material" && (
+                            <div className="grid min-h-64 place-items-center rounded-2xl border border-dashed border-glass-border bg-glass text-sm text-text-muted">
+                                {t("sectionEmptyMaterials")}
+                            </div>
                         )}
                     </div>
                 </>

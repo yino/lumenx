@@ -246,6 +246,37 @@ class TestWanxProviderMediaIntegration:
         ]
         assert captured["create_headers"]["X-DashScope-OssResourceResolve"] == "enable"
 
+    def test_wan27_r2v_uses_media_array_and_resolution(self, monkeypatch):
+        monkeypatch.setenv("DASHSCOPE_API_KEY", "test-key")
+        _install_fake_uploader(monkeypatch, configured=False)
+
+        captured = {}
+        _install_fake_requests(monkeypatch, captured)
+
+        model = WanxModel({"params": {}})
+        model.generate(
+            prompt="图1中的刺客在雨夜长街与锦衣卫交锋",
+            output_path="output/video/wan27_r2v.mp4",
+            model_name="wan2.7-r2v",
+            ref_image_urls=["https://example.com/assassin.png"],
+            resolution="720p",
+            ratio="16:9",
+        )
+
+        assert captured["create_payload"]["input"] == {
+            "prompt": "图1中的刺客在雨夜长街与锦衣卫交锋",
+            "media": [
+                {"type": "reference_image", "url": "https://example.com/assassin.png"},
+            ],
+        }
+        assert captured["create_payload"]["parameters"] == {
+            "duration": 5,
+            "resolution": "720P",
+            "prompt_extend": True,
+            "watermark": False,
+            "ratio": "16:9",
+        }
+
     def test_i2v_object_key_with_oss_configured_uses_signed_url(self, monkeypatch):
         monkeypatch.setenv("DASHSCOPE_API_KEY", "test-key")
         monkeypatch.setenv("OSS_BASE_PATH", "lumenx")

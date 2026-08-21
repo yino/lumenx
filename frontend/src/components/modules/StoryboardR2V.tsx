@@ -514,7 +514,7 @@ export default function StoryboardR2V() {
         }
     }, [currentProject, updateProject]);
 
-    const handleSmartGenerate = useCallback(async () => {
+    const handleSmartGenerate = useCallback(async (maxClipSeconds: 15 | 30 = 15) => {
         if (!currentProject?.id) return;
         const projectId = currentProject.id;
         const scriptText = (currentProject as any).originalText || (currentProject as any).original_text || "";
@@ -530,7 +530,7 @@ export default function StoryboardR2V() {
                 characters: currentProject.characters,
                 scenes: currentProject.scenes,
                 props: currentProject.props,
-            });
+            }, maxClipSeconds);
             const newFrameCount = Array.isArray(updated?.frames) ? updated.frames.length : 0;
             updateProject(projectId, updated);
             if (Array.isArray(updated?.frames)) {
@@ -1719,17 +1719,28 @@ export default function StoryboardR2V() {
         }
     }, [currentProject?.id, refreshProject]);
 
-    // Retry = fire a fresh batch of 1 for the shot owning this task,
-    // reusing the task's params as best-effort. After Phase 2 the
-    // task→shot mapping is direct via task.frame_id; falls back to
-    // current ParamsSection state if we can't find the owner.
+    // Prefer resuming an accepted DashScope task when its provider ID was
+    // persisted. This prevents duplicate submissions after a local SSL or
+    // polling interruption. Only create a fresh take when no recoverable
+    // remote task exists.
     const handleRetryTask = useCallback(async (task: VideoTask) => {
         const ownerIdx = task.frame_id
             ? shots.findIndex((s) => s.id === task.frame_id)
             : -1;
         if (ownerIdx < 0) return;
+        const transientPollingFailure = !task.error || /ssl|eof|connection|timeout|timed out|poll|restart/i.test(task.error);
+        if (
+            !IS_CLOUD_DEPLOYMENT
+            && task.provider_name === "dashscope"
+            && task.provider_task_id
+            && transientPollingFailure
+        ) {
+            await api.resumeVideoTask(currentProject!.id, task.id);
+            await refreshProject();
+            return;
+        }
         await generateVideoBatch(ownerIdx, 1);
-    }, [shots, generateVideoBatch]);
+    }, [shots, generateVideoBatch, currentProject, refreshProject]);
 
     // Click on a candidate thumb: plain click = preview (open new
     // window for v1), shift-click = toggle compare-selection.
@@ -1803,6 +1814,11 @@ export default function StoryboardR2V() {
         () => Object.values(shotCounts).reduce((acc: number, c: any) => acc + (c?.processing ?? 0) + (c?.pending ?? 0), 0),
         [shotCounts],
     );
+    const timelineSummary = useMemo(() => {
+        const beatCount = shots.reduce((sum, shot) => sum + (shot.timelineBeats?.length ?? 0), 0);
+        const totalDuration = shots.reduce((sum, shot) => sum + (shot.duration ?? 0), 0);
+        return { beatCount, totalDuration };
+    }, [shots]);
 
     return (
         // Layout v4: outer horizontal split. Custom page header belongs
@@ -1854,6 +1870,12 @@ export default function StoryboardR2V() {
                     <span className="font-mono text-[11px] tracking-[0.04em] text-text-secondary">
                         <span className="text-foreground font-medium">{shots.length}</span>
                         <span className="ml-1.5 uppercase">{shots.length === 1 ? t("shot") : t("shots")}</span>
+                        {timelineSummary.beatCount > 0 ? (
+                            <>
+                                <span className="ml-2 text-primary">· {t("timelineDuration", { seconds: timelineSummary.totalDuration })}</span>
+                                <span className="ml-2 text-text-muted">· {t("timelineBeats", { count: timelineSummary.beatCount })}</span>
+                            </>
+                        ) : null}
                         {totalInFlight > 0 ? <span className="ml-2 text-status-processing-fg">· {totalInFlight} {t("inFlightShort")}</span> : null}
                     </span>
                     <motion.button
@@ -2332,9 +2354,13 @@ export default function StoryboardR2V() {
             project={currentProject as any}
             existingShotCount={shots.length}
             onConfirm={handleSmartGenerate}
+            initialMaxClipSeconds={currentProject?.storyboard_segment_max_seconds ?? 15}
+            allowThirtySeconds={/seedance[-_. ]?2[-_. ]?5/i.test(
+                currentProject?.model_settings?.r2v_model ?? "",
+            )}
             onJumpToScript={() => {
                 setGenDialogOpen(false);
-                window.dispatchEvent(new CustomEvent("navigateStep", { detail: "script" }));
+                document.dispatchEvent(new CustomEvent("lumenx:navigateStep", { detail: "script" }));
             }}
         />
         </div>
