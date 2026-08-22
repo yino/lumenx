@@ -308,7 +308,7 @@ function CreateSeriesDialog({ isOpen, onClose }: { isOpen: boolean; onClose: () 
           <button
             onClick={handleCreate}
             disabled={!title.trim() || isCreating}
-            className="flex-1 bg-primary hover:bg-primary/90 text-foreground px-6 py-3 rounded-lg font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+            className="flex-1 bg-primary hover:bg-primary/90 text-on-accent px-6 py-3 rounded-lg font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
           >
             {isCreating ? t("creating") : t("createSeries")}
           </button>

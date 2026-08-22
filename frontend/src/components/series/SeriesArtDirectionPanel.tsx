@@ -268,7 +268,7 @@ export default function SeriesArtDirectionPanel({ seriesId, onSaved }: SeriesArt
                                             )}
                                             {selectedStyle?.id === preset.id && (
                                                 <div className="absolute top-2 right-2 w-5 h-5 rounded-full bg-primary flex items-center justify-center shadow-md">
-                                                    <Check size={11} className="text-foreground" />
+                                                    <Check size={11} className="text-on-accent" />
                                                 </div>
                                             )}
                                         </div>

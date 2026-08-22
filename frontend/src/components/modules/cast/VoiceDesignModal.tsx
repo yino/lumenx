@@ -345,7 +345,7 @@ export default function VoiceDesignModal({
                     <button
                         onClick={handleAccept}
                         disabled={!previewVoiceId || !label.trim() || inFlight || phase === "done"}
-                        className="inline-flex items-center gap-1.5 px-4 py-1.5 rounded-md bg-primary text-white border border-[rgba(100,108,255,0.65)] shadow-[inset_0_1.5px_0_rgba(255,255,255,0.14)] hover:bg-primary-hover disabled:opacity-40 disabled:cursor-not-allowed transition-colors text-[0.75rem] font-semibold"
+                        className="inline-flex items-center gap-1.5 px-4 py-1.5 rounded-md bg-primary text-on-accent border border-[rgba(100,108,255,0.65)] shadow-[inset_0_1.5px_0_rgba(255,255,255,0.14)] hover:bg-primary-hover disabled:opacity-40 disabled:cursor-not-allowed transition-colors text-[0.75rem] font-semibold"
                     >
                         {phase === "saving" ? <Loader2 size={12} className="animate-spin" /> : null}
                         {phase === "done" ? <Check size={12} /> : null}

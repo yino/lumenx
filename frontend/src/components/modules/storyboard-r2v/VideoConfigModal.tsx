@@ -66,7 +66,7 @@ export const DEFAULT_VIDEO_CONFIG: VideoConfig = {
     negativePrompt: "",
     mode: "std",
     cfgScale: 0.5,
-    sound: false,
+    sound: true,
     viduAudio: true,
     movementAmplitude: "auto",
 };

@@ -88,6 +88,7 @@ class WanxModel(VideoGenModel):
         started_at = time.monotonic()
         next_delay = poll_interval if initial_delay else 0
         consecutive_connection_errors = 0
+        last_connection_error: Optional[Exception] = None
 
         while time.monotonic() - started_at < max_wait_time:
             if next_delay:
@@ -102,6 +103,7 @@ class WanxModel(VideoGenModel):
                 consecutive_connection_errors = 0
                 next_delay = poll_interval
             except requests.RequestException as exc:
+                last_connection_error = exc
                 consecutive_connection_errors += 1
                 next_delay = min(
                     poll_interval * (2 ** min(consecutive_connection_errors, 3)),
@@ -163,6 +165,12 @@ class WanxModel(VideoGenModel):
 
             next_delay = poll_interval
 
+        if last_connection_error is not None:
+            raise RuntimeError(
+                f"{model_name} task {task_id} polling network connection was interrupted; "
+                "the remote task may still be running and its task id was retained for recovery: "
+                f"{last_connection_error}"
+            ) from last_connection_error
         raise RuntimeError(
             f"{model_name} task {task_id} timed out after {max_wait_time}s; "
             "remote task id was retained for recovery"
@@ -487,6 +495,7 @@ class WanxModel(VideoGenModel):
                     prompt_extend=prompt_extend,
                     negative_prompt=negative_prompt,
                     audio_url=audio_url,
+                    audio=kwargs.get('audio', True),
                     watermark=watermark,
                     seed=seed,
                     shot_type=shot_type,
@@ -708,7 +717,8 @@ class WanxModel(VideoGenModel):
     def _generate_wan_i2v_http(self, prompt: str, img_url: str, model_name: str = "wan2.6-i2v",
                                   resolution: str = "720P", ratio: Optional[str] = None,
                                   duration: int = 5, prompt_extend: bool = True,
-                                  negative_prompt: str = None, audio_url: str = None,
+                    negative_prompt: str = None, audio_url: str = None,
+                                  audio: bool = True,
                                   watermark: bool = False, seed: int = None,
                                   shot_type: str = "single",
                                   extra_headers: Optional[Mapping[str, str]] = None,
@@ -748,7 +758,7 @@ class WanxModel(VideoGenModel):
                 payload["parameters"]["resolution"] = str(resolution).upper()
         else:
             payload["input"]["img_url"] = img_url
-            payload["parameters"]["audio"] = True
+            payload["parameters"]["audio"] = bool(audio)
             payload["parameters"]["shot_type"] = shot_type
             if resolution:
                 payload["parameters"]["resolution"] = resolution

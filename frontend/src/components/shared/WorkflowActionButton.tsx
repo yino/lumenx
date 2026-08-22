@@ -51,7 +51,7 @@ const variantStyles: Record<Variant, string> = {
        让对比度足够（在 #050508 dark bg 上白字读得清），仅顶部 1.5px 白色 14%
        inset 高光模拟"玻璃球反射"。底部加 inset 紫暗边 + outer 紫 glow。 */
     primary: clsx(
-        "text-foreground",
+        "text-on-accent",
         "bg-primary",
         "border border-[rgba(100,108,255,0.65)]",
         "shadow-[inset_0_1.5px_0_rgba(255,255,255,0.14),inset_0_-1px_0_rgba(60,68,200,0.45),0_4px_14px_-2px_rgba(100,108,255,0.45)]",

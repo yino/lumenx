@@ -140,7 +140,7 @@ export default function PromptExpandModal({
                         <button
                             type="button"
                             onClick={() => onSave(draft)}
-                            className="btn-tip inline-flex h-8 items-center gap-1.5 rounded-md bg-primary px-3 font-display text-display-sm font-semibold text-white shadow-[var(--btn-pri-glow),inset_0_1px_0_0_rgba(255,255,255,0.22)] transition-all duration-fast ease-out-quart hover:bg-primary/92 active:scale-[0.97] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/65"
+                            className="btn-tip inline-flex h-8 items-center gap-1.5 rounded-md bg-primary px-3 font-display text-display-sm font-semibold text-on-accent shadow-[var(--btn-pri-glow),inset_0_1px_0_0_rgba(255,255,255,0.22)] transition-all duration-fast ease-out-quart hover:bg-primary/92 active:scale-[0.97] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/65"
                             title={t("promptExpandSaveHint")}
                         >
                             <Minimize2 size={13} aria-hidden="true" />

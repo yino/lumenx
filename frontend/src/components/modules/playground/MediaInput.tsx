@@ -42,8 +42,8 @@ const MODE_CONFIG: Partial<Record<PlaygroundMode, ModeConfig>> = {
     labelKey: 'compose.mediaFirstFrame',
     accept: 'image/*',
     hintKey: 'i2v',
-    multiple: false,
-    maxFiles: 1,
+    multiple: true,
+    maxFiles: 9,
     icon: 'image',
   },
   r2v: {
@@ -88,6 +88,17 @@ function isVideoPath(path: string): boolean {
   return /\.(mp4|mov|webm|avi|mkv)$/i.test(path);
 }
 
+export function fileMatchesAccept(file: Pick<File, 'name' | 'type'>, accept: string): boolean {
+  const rules = accept.split(',').map((rule) => rule.trim().toLowerCase()).filter(Boolean);
+  const mime = file.type.toLowerCase();
+  const name = file.name.toLowerCase();
+  return rules.some((rule) => {
+    if (rule.startsWith('.')) return name.endsWith(rule);
+    if (rule.endsWith('/*')) return mime.startsWith(rule.slice(0, -1));
+    return mime === rule;
+  });
+}
+
 // Resolve a stored media path to a browser-loadable URL. Local `output/...` paths
 // are served via the backend /files static mount; absolute (http(s)/blob/data) and
 // root-relative (/files/...) URLs pass through untouched. The raw path is still kept
@@ -99,7 +110,7 @@ function resolveMediaSrc(path: string): string {
 // ---------------------------------------------------------------------------
 // Single-reference preview — Line B media-preview-row (thumb + name + meta).
 //
-// Used for maxFiles=1 modes (i2i / i2v first-frame / v2v source video). Mirrors
+// Used for maxFiles=1 modes (i2i / v2v source video). Mirrors
 // the mockup's `.media-preview-row`: a larger thumbnail on the left, file name +
 // "W × H · FORMAT" meta on the right. Dimensions are read from the loaded media
 // (onLoad / onLoadedMetadata); format is derived from the extension. File size is
@@ -180,9 +191,11 @@ export default function MediaInput() {
   const t = useTranslations('playground');
 
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const replaceNextSelectionRef = useRef(false);
   const [uploading, setUploading] = useState(false);
   const [dragOver, setDragOver] = useState(false);
   const [showAssetPicker, setShowAssetPicker] = useState(false);
+  const [limitNotice, setLimitNotice] = useState<string | null>(null);
 
   const isSeedance = modelId.startsWith('seedance');
 
@@ -208,13 +221,18 @@ export default function MediaInput() {
   // Upload handler
   // -------------------------------------------------------------------------
 
-  const handleFiles = async (files: FileList | File[]) => {
-    const fileArray = Array.from(files);
+  const handleFiles = async (files: FileList | File[], replaceExisting = false) => {
+    setLimitNotice(null);
+    const fileArray = Array.from(files).filter((file) => fileMatchesAccept(file, config.accept));
     if (fileArray.length === 0) return;
 
     // Respect max file limit
-    const available = config.maxFiles - inputMedia.length;
+    const available = replaceExisting ? config.maxFiles : config.maxFiles - inputMedia.length;
     const toUpload = fileArray.slice(0, available);
+    if (fileArray.length > toUpload.length) {
+      setLimitNotice(t('media.maxFilesNotice', { max: config.maxFiles }));
+    }
+    if (toUpload.length === 0) return;
 
     setUploading(true);
     try {
@@ -223,7 +241,7 @@ export default function MediaInput() {
       );
       const newPaths = results.map((r) => r.media_reference);
 
-      if (config.multiple) {
+      if (config.multiple && !replaceExisting) {
         setInputMedia([...inputMedia, ...newPaths]);
       } else {
         setInputMedia(newPaths);
@@ -240,12 +258,15 @@ export default function MediaInput() {
   // -------------------------------------------------------------------------
 
   const handleClick = () => {
+    replaceNextSelectionRef.current = false;
     fileInputRef.current?.click();
   };
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const replaceExisting = replaceNextSelectionRef.current;
+    replaceNextSelectionRef.current = false;
     if (e.target.files) {
-      handleFiles(e.target.files);
+      void handleFiles(e.target.files, replaceExisting);
     }
     // Reset so re-selecting the same file works
     e.target.value = '';
@@ -268,7 +289,7 @@ export default function MediaInput() {
     e.stopPropagation();
     setDragOver(false);
     if (e.dataTransfer.files) {
-      handleFiles(e.dataTransfer.files);
+      void handleFiles(e.dataTransfer.files);
     }
   };
 
@@ -278,11 +299,20 @@ export default function MediaInput() {
   };
 
   const handleReplace = () => {
+    replaceNextSelectionRef.current = true;
     fileInputRef.current?.click();
   };
 
   const handleAssetSelect = (path: string) => {
-    setInputMedia([...inputMedia, path]);
+    if (config.multiple) {
+      if (inputMedia.length >= config.maxFiles) {
+        setLimitNotice(t('media.maxFilesNotice', { max: config.maxFiles }));
+        return;
+      }
+      setInputMedia([...inputMedia, path]);
+    } else {
+      setInputMedia([path]);
+    }
   };
 
   // Determine accept type for AssetPickerModal
@@ -382,8 +412,8 @@ export default function MediaInput() {
   // -------------------------------------------------------------------------
   // Render: has media state
   //
-  // Multi-reference modes (r2v / t2i, maxFiles>1) → thumbnail tile grid.
-  // Single-reference modes (i2i / i2v / v2v, maxFiles=1) → media-preview-row
+  // Multi-reference modes (t2i / i2v / r2v, maxFiles>1) → thumbnail tile grid.
+  // Single-reference modes (i2i / v2v, maxFiles=1) → media-preview-row
   // (larger thumb + file name + dimensions·format), per the mockup.
   // -------------------------------------------------------------------------
 
@@ -435,7 +465,7 @@ export default function MediaInput() {
               </div>
             ))}
 
-            {/* Add more button for r2v */}
+            {/* Add more button for multi-image modes */}
             {canAddMore && (
               <button
                 type="button"
@@ -454,10 +484,15 @@ export default function MediaInput() {
             )}
           </div>
 
-          {/* File count for r2v */}
+          {/* File count for multi-image modes */}
           <div className="font-mono text-[0.6875rem] text-text-muted">
             {t('media.fileCount', { current: inputMedia.length, max: config.maxFiles })}
           </div>
+          {limitNotice && (
+            <div role="status" className="text-[0.6875rem] text-status-processing-fg">
+              {limitNotice}
+            </div>
+          )}
         </div>
       ) : (
         <SingleRefPreview

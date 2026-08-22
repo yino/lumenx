@@ -30,6 +30,7 @@ interface DetailPanelProps {
   onClose: () => void;
   onNavigate: (generation: PlaygroundGeneration) => void;
   onRetry?: (generation: PlaygroundGeneration) => void;
+  onResume?: (generation: PlaygroundGeneration) => void;
   onGenerateVideo?: (imagePath: string) => void;
 }
 
@@ -68,6 +69,7 @@ export default function DetailPanel({
   onClose,
   onNavigate,
   onRetry,
+  onResume,
   onGenerateVideo,
 }: DetailPanelProps) {
   const t = useTranslations('playground');
@@ -90,7 +92,7 @@ export default function DetailPanel({
   const isVideo =
     output?.media_type === 'video' ||
     ['t2v', 'i2v', 'r2v', 'v2v'].includes(generation.mode);
-  const mediaUrl = output?.media_url || getAssetUrl(output?.media_reference);
+  const mediaUrl = getAssetUrl(output?.media_url || output?.media_reference);
 
   // Navigation
   const currentIndex = allGenerations.findIndex((g) => g.id === generation.id);
@@ -389,13 +391,24 @@ export default function DetailPanel({
           <div className="border-t border-border-subtle px-6 py-4 space-y-2.5">
             {/* Primary: Retry (failed) or Save to library */}
             {generation.status === 'failed' && onRetry && !generation.support_review ? (
-              <button
-                onClick={() => onRetry(generation)}
-                className="w-full inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-full bg-primary text-on-accent text-sm font-medium shadow-[var(--glow-primary)] hover:bg-primary-hover transition"
-              >
-                <RotateCcw className="w-4 h-4" />
-                重试
-              </button>
+              <>
+                {generation.provider_name === 'dashscope' && generation.provider_task_id && onResume && (
+                  <button
+                    onClick={() => onResume(generation)}
+                    className="w-full inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-full border border-primary/35 bg-primary/10 text-foreground text-sm font-medium hover:bg-primary/20 transition"
+                  >
+                    <RotateCcw className="w-4 h-4" />
+                    恢复查询
+                  </button>
+                )}
+                <button
+                  onClick={() => onRetry(generation)}
+                  className="w-full inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-full bg-primary text-on-accent text-sm font-medium shadow-[var(--glow-primary)] hover:bg-primary-hover transition"
+                >
+                  <RotateCcw className="w-4 h-4" />
+                  重新提交
+                </button>
+              </>
             ) : output ? (
               <button
                 onClick={handleSaveToLibrary}

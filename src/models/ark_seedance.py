@@ -250,7 +250,7 @@ class ArkSeedanceVideoModel(VideoGenModel):
         ratio: Optional[str] = "16:9",
         seed: Optional[int] = None,
         watermark: bool = False,
-        generate_audio: bool = False,
+        generate_audio: bool = True,
     ) -> Dict[str, Any]:
         mode = (generation_mode or "").strip().lower()
         references = list(ref_image_urls or [])
@@ -337,7 +337,7 @@ class ArkSeedanceVideoModel(VideoGenModel):
             ratio=kwargs.get("aspect_ratio") or kwargs.get("ratio") or "16:9",
             seed=kwargs.get("seed"),
             watermark=kwargs.get("watermark", False),
-            generate_audio=kwargs.get("generate_audio", kwargs.get("audio", False)),
+            generate_audio=kwargs.get("generate_audio", kwargs.get("audio", True)),
         )
 
         tasks_url = f"{self.base_url}/contents/generations/tasks"

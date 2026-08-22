@@ -2523,7 +2523,7 @@ export const api = {
         duration: number = 5,
         seed?: number,
         resolution: string = "720p",
-        generateAudio: boolean = false,
+        generateAudio: boolean = true,
         audioUrl?: string,
         promptExtend: boolean = true,
         negativePrompt?: string,
@@ -4400,6 +4400,13 @@ export const playgroundApi = {
       raw_status: response.data.raw_status || response.data.status,
       status: normalizePlaygroundStatus(response.data.status),
     };
+  },
+
+  resumeGeneration: async (id: string) => {
+    const response = await apiClient.post<PlaygroundGenerationResponse>(
+      API_URL + "/playground/history/" + id + "/resume",
+    );
+    return normalizePlaygroundGeneration(response.data);
   },
 
   cancelGeneration: (id: string) => aiTaskApi.cancel(id),

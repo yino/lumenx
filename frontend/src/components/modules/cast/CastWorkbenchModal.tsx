@@ -701,7 +701,7 @@ export default function CastWorkbenchModal({ isOpen, kind, entityId, onClose }: 
                                                     {/* Active indicator */}
                                                     {isActive && (
                                                         <span className="absolute top-1.5 right-1.5 w-4 h-4 rounded-full bg-primary grid place-items-center">
-                                                            <Check size={9} className="text-foreground" strokeWidth={3} />
+                                                            <Check size={9} className="text-on-accent" strokeWidth={3} />
                                                         </span>
                                                     )}
                                                     {isLocked && (
@@ -865,7 +865,7 @@ export default function CastWorkbenchModal({ isOpen, kind, entityId, onClose }: 
                             <button
                                 onClick={handleGenerate}
                                 disabled={generating || !prompt.trim()}
-                                className="mt-5 self-center inline-flex items-center justify-center gap-2 px-6 py-2.5 rounded-md bg-primary text-white border border-[rgba(100,108,255,0.65)] shadow-[inset_0_1.5px_0_rgba(255,255,255,0.14)] hover:bg-primary-hover disabled:opacity-40 disabled:cursor-not-allowed transition-colors text-[0.875rem] font-semibold"
+                                className="mt-5 self-center inline-flex items-center justify-center gap-2 px-6 py-2.5 rounded-md bg-primary text-on-accent border border-[rgba(100,108,255,0.65)] shadow-[inset_0_1.5px_0_rgba(255,255,255,0.14)] hover:bg-primary-hover disabled:opacity-40 disabled:cursor-not-allowed transition-colors text-[0.875rem] font-semibold"
                             >
                                 {generating ? <Loader2 size={15} className="animate-spin" /> : <Wand2 size={15} />}
                                 {generating

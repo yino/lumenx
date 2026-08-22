@@ -348,7 +348,7 @@ function CreateEntityDialog({ onClose, onCreate }: { onClose: () => void; onCrea
                         <button
                             key={t}
                             onClick={() => setType(t)}
-                            className={`flex-1 py-1.5 text-xs font-bold rounded capitalize ${type === t ? "bg-primary text-foreground" : "text-text-muted hover:text-foreground"}`}
+                            className={`flex-1 py-1.5 text-xs font-bold rounded capitalize ${type === t ? "bg-primary text-on-accent" : "text-text-muted hover:text-foreground"}`}
                         >
                             {t}
                         </button>
@@ -377,7 +377,7 @@ function CreateEntityDialog({ onClose, onCreate }: { onClose: () => void; onCrea
 
                 <div className="flex justify-end gap-2 pt-2">
                     <button onClick={onClose} className="px-4 py-2 text-xs text-text-secondary hover:text-foreground">{tc("cancel")}</button>
-                    <button onClick={handleSubmit} className="px-4 py-2 bg-primary text-foreground rounded text-xs font-bold">{tc("create")}</button>
+                    <button onClick={handleSubmit} className="px-4 py-2 bg-primary text-on-accent rounded text-xs font-bold">{tc("create")}</button>
                 </div>
             </div>
         </div>

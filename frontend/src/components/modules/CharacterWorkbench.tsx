@@ -765,7 +765,7 @@ function WorkbenchPanel({
                                 disabled={isGeneratingMotion}
                                 className={`flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg text-sm font-medium transition-all ${isGeneratingMotion
                                     ? 'bg-gray-700 text-text-muted cursor-not-allowed'
-                                    : 'bg-primary hover:bg-primary/90 text-foreground shadow-lg'
+                                    : 'bg-primary hover:bg-primary/90 text-on-accent shadow-lg'
                                     }`}
                             >
                                 <Video size={16} />

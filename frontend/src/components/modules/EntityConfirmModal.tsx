@@ -105,7 +105,7 @@ export default function EntityConfirmModal({
                             </button>
                             <button
                                 onClick={onConfirm}
-                                className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-medium bg-primary text-white hover:bg-primary/90 transition-colors"
+                                className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-medium bg-primary text-on-accent hover:bg-primary/90 transition-colors"
                             >
                                 <Check size={14} />
                                 {t("extractApply")}

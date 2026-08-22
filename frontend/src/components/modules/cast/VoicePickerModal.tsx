@@ -398,7 +398,7 @@ export default function VoicePickerModal({
                                 onClose();
                             }}
                             disabled={!selectedId || selectedId === currentVoiceId}
-                            className="inline-flex items-center px-4 py-2 rounded-md bg-primary text-white border border-[rgba(100,108,255,0.65)] shadow-[inset_0_1.5px_0_rgba(255,255,255,0.14)] hover:bg-primary-hover disabled:opacity-40 disabled:cursor-not-allowed transition-colors text-[0.75rem] font-semibold"
+                            className="inline-flex items-center px-4 py-2 rounded-md bg-primary text-on-accent border border-[rgba(100,108,255,0.65)] shadow-[inset_0_1.5px_0_rgba(255,255,255,0.14)] hover:bg-primary-hover disabled:opacity-40 disabled:cursor-not-allowed transition-colors text-[0.75rem] font-semibold"
                         >
                             {t("apply")}
                         </button>
@@ -529,7 +529,7 @@ function VoiceCard({
                 </button>
             </div>
             {selected && (
-                <div className="absolute top-1.5 right-1.5 grid h-5 w-5 place-items-center rounded-full bg-primary text-white">
+                <div className="absolute top-1.5 right-1.5 grid h-5 w-5 place-items-center rounded-full bg-primary text-on-accent">
                     <Check size={11} strokeWidth={2.5} />
                 </div>
             )}
@@ -639,7 +639,7 @@ function CustomVoiceList({
                                     </div>
                                 </div>
                                 {isSelected && (
-                                    <div className="absolute top-1.5 right-1.5 grid h-5 w-5 place-items-center rounded-full bg-primary text-white">
+                                    <div className="absolute top-1.5 right-1.5 grid h-5 w-5 place-items-center rounded-full bg-primary text-on-accent">
                                         <Check size={11} strokeWidth={2.5} />
                                     </div>
                                 )}

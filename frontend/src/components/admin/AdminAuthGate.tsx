@@ -111,7 +111,7 @@ function AdminLoginScreen({
 
             {error && <p role="alert" className="mt-4 rounded-md border border-red-400/25 bg-red-400/10 px-3 py-2 text-sm text-red-200">{error}</p>}
 
-            <button type="submit" disabled={submitting} className="mt-6 inline-flex h-11 w-full items-center justify-center gap-2 rounded-md bg-primary px-4 text-sm font-semibold text-white transition-colors hover:bg-primary/90 disabled:opacity-60">
+            <button type="submit" disabled={submitting} className="mt-6 inline-flex h-11 w-full items-center justify-center gap-2 rounded-md bg-primary px-4 text-sm font-semibold text-on-accent transition-colors hover:bg-primary/90 disabled:opacity-60">
               {submitting ? <Loader2 size={17} className="animate-spin" /> : <ArrowRight size={17} />}
               {submitting ? "正在验证" : "进入系统后台"}
             </button>
@@ -188,7 +188,7 @@ function AdminPasswordChangeScreen({
           <div><label htmlFor={confirmPasswordId} className="mb-2 block text-sm font-medium">确认新密码</label><input id={confirmPasswordId} type="password" autoComplete="new-password" value={confirmPassword} onChange={(event) => setConfirmPassword(event.target.value)} className="h-11 w-full rounded-md border border-glass-border bg-input-bg px-3 text-sm outline-none focus:border-primary/70" /></div>
         </div>
         {error && <p role="alert" className="mt-4 rounded-md border border-red-400/25 bg-red-400/10 px-3 py-2 text-sm text-red-200">{error}</p>}
-        <button type="submit" disabled={submitting || loggingOut} className="mt-6 inline-flex h-11 w-full items-center justify-center gap-2 rounded-md bg-primary px-4 text-sm font-semibold text-white disabled:opacity-60">{submitting ? <Loader2 size={17} className="animate-spin" /> : <ArrowRight size={17} />}{submitting ? "正在修改" : "修改并进入后台"}</button>
+        <button type="submit" disabled={submitting || loggingOut} className="mt-6 inline-flex h-11 w-full items-center justify-center gap-2 rounded-md bg-primary px-4 text-sm font-semibold text-on-accent disabled:opacity-60">{submitting ? <Loader2 size={17} className="animate-spin" /> : <ArrowRight size={17} />}{submitting ? "正在修改" : "修改并进入后台"}</button>
         <button type="button" disabled={submitting || loggingOut} onClick={() => void logout()} className="mt-3 inline-flex h-10 w-full items-center justify-center gap-2 text-sm text-text-secondary hover:text-foreground disabled:opacity-60">{loggingOut ? <Loader2 size={16} className="animate-spin" /> : <LogOut size={16} />}退出登录</button>
       </form>
     </main>

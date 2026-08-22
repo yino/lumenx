@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import { readClientStorage, writeClientStorage } from '@/lib/clientCacheScope';
+import { resolveModelForMode } from './playgroundModels';
 
 // ---------------------------------------------------------------------------
 // Featured (best-of-batch) persistence — client-side localStorage only.
@@ -56,6 +57,41 @@ let queueSeq = 0;
 // ---------------------------------------------------------------------------
 
 export type PlaygroundMode = 't2i' | 'i2i' | 't2v' | 'i2v' | 'r2v' | 'v2v';
+
+type PlaygroundMediaKind = 'image' | 'video';
+
+const IMAGE_PATH_PATTERN = /\.(avif|bmp|gif|heic|heif|jpe?g|png|svg|tiff?|webp)$/i;
+const VIDEO_PATH_PATTERN = /\.(avi|m4v|mkv|mov|mp4|mpeg|mpg|webm)$/i;
+
+function mediaKindFromPath(path: string): PlaygroundMediaKind | null {
+  const cleanPath = path.split(/[?#]/, 1)[0];
+  if (/^data:image\//i.test(path) || IMAGE_PATH_PATTERN.test(cleanPath)) return 'image';
+  if (/^data:video\//i.test(path) || VIDEO_PATH_PATTERN.test(cleanPath)) return 'video';
+  return null;
+}
+
+function inferredInputKind(mode: PlaygroundMode): PlaygroundMediaKind | null {
+  if (mode === 't2v') return null;
+  return mode === 'v2v' ? 'video' : 'image';
+}
+
+function maxInputMediaForMode(mode: PlaygroundMode): number {
+  if (mode === 't2v') return 0;
+  return mode === 't2i' || mode === 'i2v' || mode === 'r2v' ? 9 : 1;
+}
+
+export function filterInputMediaForMode(
+  inputMedia: string[],
+  sourceMode: PlaygroundMode,
+  targetMode: PlaygroundMode,
+): string[] {
+  const targetKind = inferredInputKind(targetMode);
+  if (!targetKind) return [];
+  const sourceKind = inferredInputKind(sourceMode);
+  return inputMedia
+    .filter((path) => (mediaKindFromPath(path) ?? sourceKind) === targetKind)
+    .slice(0, maxInputMediaForMode(targetMode));
+}
 
 export interface PlaygroundOutput {
   id: string;
@@ -141,6 +177,8 @@ interface PlaygroundState {
 
   // History
   history: PlaygroundGeneration[];
+  /** Generation ids created in the current browser session only. */
+  sessionGenerationIds: string[];
 
   // Templates
   templates: PlaygroundTemplate[];
@@ -217,7 +255,7 @@ interface PlaygroundState {
 // ---------------------------------------------------------------------------
 
 const DEFAULT_MODE: PlaygroundMode = 't2i';
-const DEFAULT_MODEL_ID = '';
+const DEFAULT_MODEL_ID = resolveModelForMode(DEFAULT_MODE);
 const DEFAULT_PROMPT = '';
 const DEFAULT_BATCH_SIZE = 1;
 
@@ -240,6 +278,7 @@ export const usePlaygroundStore = create<PlaygroundState>((set, get) => ({
 
   // -- History ---------------------------------------------------------------
   history: [],
+  sessionGenerationIds: [],
 
   // -- Templates -------------------------------------------------------------
   templates: [],
@@ -283,12 +322,17 @@ export const usePlaygroundStore = create<PlaygroundState>((set, get) => ({
         ...s.queue,
         { ...req, id: `q${++queueSeq}`, status: 'pending' as const, enqueuedAt: Date.now() },
       ],
+      isGenerating: true,
     })),
   markDispatching: (id) =>
     set((s) => ({
       queue: s.queue.map((q) => (q.id === id ? { ...q, status: 'dispatching' as const } : q)),
     })),
-  removeFromQueue: (id) => set((s) => ({ queue: s.queue.filter((q) => q.id !== id) })),
+  removeFromQueue: (id) =>
+    set((s) => {
+      const queue = s.queue.filter((q) => q.id !== id);
+      return { queue, isGenerating: queue.length > 0 || s.activeGenerationIds.length > 0 };
+    }),
   setMaxConcurrent: (n) => {
     const clamped = Math.max(1, Math.min(8, Math.round(n)));
     saveConcurrency(clamped);
@@ -302,11 +346,20 @@ export const usePlaygroundStore = create<PlaygroundState>((set, get) => ({
   // -- Input setters ---------------------------------------------------------
 
   setMode: (mode) => {
-    const { modelPreferences } = get();
-    const preferredModel = modelPreferences[mode];
+    const { mode: currentMode, modelId, inputMedia, modelPreferences } = get();
+    const nextModelId = resolveModelForMode(
+      mode,
+      mode === currentMode ? modelId : modelPreferences[mode],
+    );
+    if (mode === currentMode) {
+      if (modelId !== nextModelId) set({ modelId: nextModelId });
+      return;
+    }
     set({
       mode,
-      ...(preferredModel !== undefined ? { modelId: preferredModel } : {}),
+      modelId: nextModelId,
+      inputMedia: filterInputMediaForMode(inputMedia, currentMode, mode),
+      parameters: {},
     });
   },
 
@@ -328,11 +381,11 @@ export const usePlaygroundStore = create<PlaygroundState>((set, get) => ({
     const { modelPreferences } = get();
     const mode: PlaygroundMode =
       targetMode ?? (mediaType === 'video' ? 'v2v' : 'i2i');
-    const preferredModel = modelPreferences[mode];
     set({
       mode,
+      modelId: resolveModelForMode(mode, modelPreferences[mode]),
       inputMedia: [mediaPath],
-      ...(preferredModel !== undefined ? { modelId: preferredModel } : {}),
+      parameters: {},
     });
   },
 
@@ -351,17 +404,25 @@ export const usePlaygroundStore = create<PlaygroundState>((set, get) => ({
   // -- Generation lifecycle --------------------------------------------------
 
   startGeneration: (gen) => {
-    const { activeGenerationIds, history } = get();
+    const { activeGenerationIds, history, sessionGenerationIds, queue } = get();
+    const isTerminal = gen.status === 'completed' || gen.status === 'failed';
     set({
-      activeGenerationIds: [...activeGenerationIds, gen.id],
-      history: [gen, ...history],
-      isGenerating: true,
+      activeGenerationIds: isTerminal
+        ? activeGenerationIds
+        : [...activeGenerationIds.filter((id) => id !== gen.id), gen.id],
+      history: [gen, ...history.filter((item) => item.id !== gen.id)],
+      sessionGenerationIds: sessionGenerationIds.includes(gen.id)
+        ? sessionGenerationIds
+        : [...sessionGenerationIds, gen.id],
+      isGenerating: !isTerminal || queue.length > 0,
     });
   },
 
   updateGeneration: (gen) => {
-    const { history, activeGenerationIds } = get();
-    const updatedHistory = history.map((h) => (h.id === gen.id ? gen : h));
+    const { history, activeGenerationIds, sessionGenerationIds, queue } = get();
+    const updatedHistory = history.some((h) => h.id === gen.id)
+      ? history.map((h) => (h.id === gen.id ? gen : h))
+      : [gen, ...history];
     const isTerminal = gen.status === 'completed' || gen.status === 'failed';
     const updatedActive = isTerminal
       ? activeGenerationIds.filter((id) => id !== gen.id)
@@ -370,25 +431,46 @@ export const usePlaygroundStore = create<PlaygroundState>((set, get) => ({
     set({
       history: updatedHistory,
       activeGenerationIds: updatedActive,
-      isGenerating: updatedActive.length > 0,
+      sessionGenerationIds: sessionGenerationIds.includes(gen.id)
+        ? sessionGenerationIds
+        : [...sessionGenerationIds, gen.id],
+      isGenerating: updatedActive.length > 0 || queue.length > 0,
     });
   },
 
   removeGeneration: (id) => {
-    const { history, activeGenerationIds } = get();
+    const { history, activeGenerationIds, sessionGenerationIds, queue } = get();
     const updatedActive = activeGenerationIds.filter((gid) => gid !== id);
     set({
       history: history.filter((h) => h.id !== id),
       activeGenerationIds: updatedActive,
-      isGenerating: updatedActive.length > 0,
+      sessionGenerationIds: sessionGenerationIds.filter((gid) => gid !== id),
+      isGenerating: updatedActive.length > 0 || queue.length > 0,
     });
   },
 
   // -- History ---------------------------------------------------------------
 
-  setHistory: (history) => set({ history }),
+  setHistory: (history) => {
+    const current = get();
+    // A history refresh can race with a just-submitted task. Keep local
+    // session records until the server includes them, so the current page
+    // never flickers back to an empty result state.
+    const sessionRecords = current.history.filter((generation) =>
+      current.sessionGenerationIds.includes(generation.id),
+    );
+    const remoteIds = new Set(history.map((generation) => generation.id));
+    const localOnly = sessionRecords.filter((generation) => !remoteIds.has(generation.id));
+    set({ history: [...localOnly, ...history] });
+  },
 
-  appendToHistory: (gen) => set((s) => ({ history: [gen, ...s.history] })),
+  appendToHistory: (gen) =>
+    set((s) => ({
+      history: [gen, ...s.history.filter((item) => item.id !== gen.id)],
+      sessionGenerationIds: s.sessionGenerationIds.includes(gen.id)
+        ? s.sessionGenerationIds
+        : [...s.sessionGenerationIds, gen.id],
+    })),
 
   // -- Templates -------------------------------------------------------------
 
@@ -406,23 +488,28 @@ export const usePlaygroundStore = create<PlaygroundState>((set, get) => ({
     set((s) => ({ templates: s.templates.filter((t) => t.id !== id) })),
 
   applyTemplate: (template) => {
+    const current = get();
+    const nextMode = template.default_mode ?? current.mode;
+    const preferredModel = template.default_model_id ?? (
+      nextMode === current.mode ? current.modelId : current.modelPreferences[nextMode]
+    );
     const patch: Partial<PlaygroundState> = {
       prompt: template.prompt,
+      parameters: template.default_parameters ?? {},
+      modelId: resolveModelForMode(nextMode, preferredModel),
     };
     if (template.negative_prompt != null) {
       patch.negativePrompt = template.negative_prompt;
     }
     if (template.default_mode != null) {
       patch.mode = template.default_mode;
-    }
-    if (template.default_model_id != null) {
-      patch.modelId = template.default_model_id;
-    }
-    if (
-      template.default_parameters != null &&
-      Object.keys(template.default_parameters).length > 0
-    ) {
-      patch.parameters = template.default_parameters;
+      if (template.default_mode !== current.mode) {
+        patch.inputMedia = filterInputMediaForMode(
+          current.inputMedia,
+          current.mode,
+          nextMode,
+        );
+      }
     }
     set(patch);
   },
@@ -448,6 +535,7 @@ export const usePlaygroundStore = create<PlaygroundState>((set, get) => ({
       batchSize: DEFAULT_BATCH_SIZE,
       modelPreferences: {},
       history: [],
+      sessionGenerationIds: [],
       templates: [],
       isGenerating: false,
       activeGenerationIds: [],

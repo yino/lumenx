@@ -240,7 +240,7 @@ function Hero({
                             onClick={onGenerate}
                             disabled={generateDisabled}
                             title={promptIsEmpty ? t("t2iHeroGenerateDisabledTooltip") : t("t2iHeroGenerateEnabledTooltip")}
-                            className="btn-tip inline-flex min-h-[36px] items-center gap-1.5 rounded-md bg-primary px-3 py-1.5 font-display text-display-sm font-semibold text-white shadow-[var(--btn-pri-glow),inset_0_1px_0_rgba(255,255,255,0.22)] transition-all duration-fast ease-out-quart hover:bg-primary/92 active:scale-[0.97] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/55 disabled:cursor-not-allowed disabled:opacity-50"
+                            className="btn-tip inline-flex min-h-[36px] items-center gap-1.5 rounded-md bg-primary px-3 py-1.5 font-display text-display-sm font-semibold text-on-accent shadow-[var(--btn-pri-glow),inset_0_1px_0_rgba(255,255,255,0.22)] transition-all duration-fast ease-out-quart hover:bg-primary/92 active:scale-[0.97] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/55 disabled:cursor-not-allowed disabled:opacity-50"
                         >
                             {generating ? (
                                 <Loader2 size={14} className="animate-spin" aria-hidden="true" />

@@ -348,7 +348,7 @@ export default function SeriesSidebar({
                     <button
                       onClick={onAddEpisode}
                       disabled={!newEpisodeTitle.trim() || isCreatingEpisode}
-                      className="flex-1 bg-primary hover:bg-primary/90 text-white px-3 py-1.5 rounded-lg text-xs font-medium transition-colors disabled:opacity-50 active:scale-[0.97]"
+                      className="flex-1 bg-primary hover:bg-primary/90 text-on-accent px-3 py-1.5 rounded-lg text-xs font-medium transition-colors disabled:opacity-50 active:scale-[0.97]"
                     >
                       {isCreatingEpisode ? t("creating") : tc("confirm")}
                     </button>

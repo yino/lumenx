@@ -4,6 +4,7 @@ import { useState, useMemo, useCallback } from 'react';
 import { useTranslations } from 'next-intl';
 import { GalleryHorizontal, Grid3x3, Layers3, Sparkles } from 'lucide-react';
 import { usePlaygroundStore, type PlaygroundGeneration } from './usePlaygroundStore';
+import { toPlaygroundGeneration } from './playgroundGeneration';
 import { playgroundApi } from '@/lib/api';
 import ResultCard from './ResultCard';
 import GalleryView from './GalleryView';
@@ -221,6 +222,26 @@ export default function ResultGallery({
       }, 2000);
     } catch (err) {
       console.error('[Playground] Retry failed:', err);
+    }
+  }, [startGeneration, updateGeneration]);
+
+  const handleResume = useCallback(async (gen: PlaygroundGeneration) => {
+    try {
+      const resumed = toPlaygroundGeneration(await playgroundApi.resumeGeneration(gen.id));
+      startGeneration(resumed);
+      const poll = setInterval(async () => {
+        try {
+          const status = await playgroundApi.getGenerationStatus(gen.id);
+          if (status.status === 'completed' || status.status === 'failed') {
+            clearInterval(poll);
+            updateGeneration(toPlaygroundGeneration(await playgroundApi.getGeneration(gen.id)));
+          }
+        } catch {
+          clearInterval(poll);
+        }
+      }, 2000);
+    } catch (err) {
+      console.error('[Playground] Remote task recovery failed:', err);
     }
   }, [startGeneration, updateGeneration]);
 
@@ -510,6 +531,7 @@ export default function ResultGallery({
                     generation={it.gen}
                     outputIndex={it.outputIndex}
                     onRetry={handleRetry}
+                    onResume={handleResume}
                     onDelete={handleDelete}
                     onGenerateVideo={handleGenerateVideo}
                     onOpenDetail={handleOpenDetail}
@@ -533,6 +555,7 @@ export default function ResultGallery({
                   key={it.key}
                   generation={it.gen}
                   onRetry={handleRetry}
+                  onResume={handleResume}
                   onDelete={handleDelete}
                   onGenerateVideo={handleGenerateVideo}
                   onOpenDetail={handleOpenDetail}
@@ -552,6 +575,7 @@ export default function ResultGallery({
           onClose={() => { setDetailGen(null); setDetailOutputId(undefined); }}
           onNavigate={(g) => handleOpenDetail(g)}
           onRetry={handleRetry}
+          onResume={handleResume}
           onGenerateVideo={handleGenerateVideo}
         />
       )}

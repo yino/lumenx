@@ -1,7 +1,7 @@
 'use client';
 
-import { useState, useCallback } from 'react';
-import { Ban, Download, Video, Copy, Check, Replace, Crown, Bookmark } from 'lucide-react';
+import { useState, useCallback, useRef } from 'react';
+import { Ban, Download, Video, Copy, Check, Replace, Crown, Bookmark, Play } from 'lucide-react';
 import { useTranslations } from 'next-intl';
 import { getSafeApiError, playgroundApi } from '@/lib/api';
 import { getAssetUrl } from '@/lib/utils';
@@ -13,6 +13,7 @@ interface ResultCardProps {
   outputIndex?: number;
   onGenerateVideo?: (imagePath: string) => void;
   onRetry?: (generation: PlaygroundGeneration) => void;
+  onResume?: (generation: PlaygroundGeneration) => void;
   onOpenDetail?: (generation: PlaygroundGeneration, outputId?: string) => void;
   onDelete?: (generation: PlaygroundGeneration) => void;
 }
@@ -44,7 +45,7 @@ function actualModelLabel(generation: PlaygroundGeneration): string {
   return generation.actual_model_name || generation.model_id || generation.mode;
 }
 
-function FailedCard({ generation, onRetry, onDelete }: { generation: PlaygroundGeneration; onRetry?: (g: PlaygroundGeneration) => void; onDelete?: (g: PlaygroundGeneration) => void }) {
+function FailedCard({ generation, onRetry, onResume, onDelete }: { generation: PlaygroundGeneration; onRetry?: (g: PlaygroundGeneration) => void; onResume?: (g: PlaygroundGeneration) => void; onDelete?: (g: PlaygroundGeneration) => void }) {
   const { prompt, model_id, mode, created_at, error } = generation;
   const t = useTranslations('playground');
   const [expanded, setExpanded] = useState(false);
@@ -87,6 +88,14 @@ function FailedCard({ generation, onRetry, onDelete }: { generation: PlaygroundG
 
         {/* Action bar */}
         <div className="relative flex items-center gap-2 pb-2">
+          {onResume && generation.provider_name === 'dashscope' && generation.provider_task_id && !billedReview && (
+            <button
+              onClick={(e) => { e.stopPropagation(); onResume(generation); }}
+              className="inline-flex items-center gap-1 px-2.5 py-1 rounded text-[0.625rem] font-medium text-primary bg-primary/10 hover:bg-primary/20 transition-colors"
+            >
+              ↻ 恢复查询
+            </button>
+          )}
           {onRetry && !billedReview && (
             <button
               onClick={(e) => { e.stopPropagation(); onRetry(generation); }}
@@ -139,9 +148,11 @@ function CompletedCard({ generation, outputIndex, onGenerateVideo, onOpenDetail 
   const output = outputs[outputIndex];
   const isVideo = output?.media_type === 'video' || ['t2v', 'i2v', 'r2v', 'v2v'].includes(mode);
   const [saving, setSaving] = useState(false);
+  const [isPlaying, setIsPlaying] = useState(false);
+  const videoRef = useRef<HTMLVideoElement>(null);
 
   const saved = output?.saved_to_library ?? false;
-  const mediaUrl = output?.media_url || getAssetUrl(output?.media_reference);
+  const mediaUrl = getAssetUrl(output?.media_url || output?.media_reference);
   const updateGeneration = usePlaygroundStore((s) => s.updateGeneration);
   const applyResultAsReference = usePlaygroundStore((s) => s.useResultAsReference);
   const featuredByGen = usePlaygroundStore((s) => s.featuredByGen);
@@ -202,14 +213,41 @@ function CompletedCard({ generation, outputIndex, onGenerateVideo, onOpenDetail 
       <div className="relative overflow-hidden bg-elevated" style={{ aspectRatio: '16/9' }}>
         {mediaUrl ? (
           isVideo ? (
-            <div className="w-full h-full bg-gradient-to-br from-elevated to-surface flex items-center justify-center">
-              <Video className="w-8 h-8 text-text-muted" />
-            </div>
+            <video
+              ref={videoRef}
+              src={mediaUrl}
+              controls
+              playsInline
+              preload="metadata"
+              onClick={(e) => e.stopPropagation()}
+              onPlay={() => setIsPlaying(true)}
+              onPause={() => setIsPlaying(false)}
+              className="h-full w-full object-cover"
+            />
           ) : (
             <img src={mediaUrl} alt={prompt} className="w-full h-full object-cover" />
           )
         ) : (
           <div className="w-full h-full bg-gradient-to-br from-elevated to-surface" />
+        )}
+
+        {isVideo && mediaUrl && !isPlaying && (
+          <button
+            type="button"
+            aria-label="播放视频"
+            title="播放视频"
+            onClick={(e) => {
+              e.stopPropagation();
+              const video = videoRef.current;
+              if (!video) return;
+              void video.play()
+                .then(() => setIsPlaying(true))
+                .catch(() => setIsPlaying(false));
+            }}
+            className="absolute left-1/2 top-1/2 z-[3] flex h-12 w-12 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full border border-white/30 bg-black/65 text-white shadow-lg backdrop-blur-sm transition hover:scale-105 hover:bg-black/80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+          >
+            <Play className="ml-0.5 h-5 w-5 fill-current" />
+          </button>
         )}
 
         {/* Amber halation overlay — only when saved to library */}
@@ -245,17 +283,17 @@ function CompletedCard({ generation, outputIndex, onGenerateVideo, onOpenDetail 
         )}
 
         {/* Bottom gradient toolbar — appears on hover */}
-        <div className="absolute bottom-0 left-0 right-0 z-[2] h-12 bg-gradient-to-t from-black/70 to-transparent flex items-end justify-end gap-1.5 px-3 pb-2.5 opacity-0 group-hover:opacity-100 transition-opacity">
+        <div className={`absolute ${isVideo ? 'bottom-10' : 'bottom-0'} left-0 right-0 z-[2] h-12 bg-gradient-to-t from-black/70 to-transparent flex items-end justify-end gap-1.5 px-3 pb-2.5 opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none`}>
           <button
             onClick={handleDownload}
-            className="w-7 h-7 rounded-full bg-elevated backdrop-blur-sm flex items-center justify-center hover:bg-hover-bg transition"
+            className="pointer-events-auto w-7 h-7 rounded-full bg-elevated backdrop-blur-sm flex items-center justify-center hover:bg-hover-bg transition"
             title={t('card.download')}
           >
             <Download className="w-3.5 h-3.5 text-foreground" />
           </button>
           <button
             onClick={handleUseAsReference}
-            className="w-7 h-7 rounded-full bg-elevated backdrop-blur-sm flex items-center justify-center hover:bg-hover-bg transition"
+            className="pointer-events-auto w-7 h-7 rounded-full bg-elevated backdrop-blur-sm flex items-center justify-center hover:bg-hover-bg transition"
             title={t('card.useAsReference')}
           >
             <Replace className="w-3.5 h-3.5 text-foreground" />
@@ -263,7 +301,7 @@ function CompletedCard({ generation, outputIndex, onGenerateVideo, onOpenDetail 
           {output?.media_type === 'image' && onGenerateVideo && (
             <button
               onClick={(e) => { e.stopPropagation(); onGenerateVideo(output.media_reference); }}
-              className="w-7 h-7 rounded-full bg-elevated backdrop-blur-sm flex items-center justify-center hover:bg-hover-bg transition"
+              className="pointer-events-auto w-7 h-7 rounded-full bg-elevated backdrop-blur-sm flex items-center justify-center hover:bg-hover-bg transition"
               title={t('card.generateVideo')}
             >
               <Video className="w-3.5 h-3.5 text-foreground" />
@@ -271,14 +309,14 @@ function CompletedCard({ generation, outputIndex, onGenerateVideo, onOpenDetail 
           )}
           <button
             onClick={(e) => { e.stopPropagation(); if (output) toggleFeatured(generation.id, output.id); }}
-            className={`w-7 h-7 rounded-full backdrop-blur-sm flex items-center justify-center transition ${featured ? 'bg-status-starred-bg' : 'bg-elevated hover:bg-hover-bg'}`}
+            className={`pointer-events-auto w-7 h-7 rounded-full backdrop-blur-sm flex items-center justify-center transition ${featured ? 'bg-status-starred-bg' : 'bg-elevated hover:bg-hover-bg'}`}
             title={t('card.featured')}
           >
             <Crown className={`w-3.5 h-3.5 ${featured ? 'text-status-starred-solid fill-status-starred-solid' : 'text-foreground'}`} />
           </button>
           <button
             onClick={handleSaveToLibrary}
-            className={`w-7 h-7 rounded-full backdrop-blur-sm flex items-center justify-center transition ${saved ? 'bg-primary/15' : 'bg-elevated hover:bg-hover-bg'}`}
+            className={`pointer-events-auto w-7 h-7 rounded-full backdrop-blur-sm flex items-center justify-center transition ${saved ? 'bg-primary/15' : 'bg-elevated hover:bg-hover-bg'}`}
             title={saved ? t('card.saved') : t('card.saveToLibrary')}
           >
             <Bookmark className={`w-3.5 h-3.5 ${saved ? 'text-primary fill-current' : 'text-foreground'}`} />
@@ -320,7 +358,7 @@ function CompletedCard({ generation, outputIndex, onGenerateVideo, onOpenDetail 
   );
 }
 
-export default function ResultCard({ generation, outputIndex = 0, onGenerateVideo, onRetry, onOpenDetail, onDelete }: ResultCardProps) {
+export default function ResultCard({ generation, outputIndex = 0, onGenerateVideo, onRetry, onResume, onOpenDetail, onDelete }: ResultCardProps) {
   const { status, prompt, model_id, mode, created_at } = generation;
   const t = useTranslations('playground');
   const updateGeneration = usePlaygroundStore((s) => s.updateGeneration);
@@ -423,7 +461,7 @@ export default function ResultCard({ generation, outputIndex = 0, onGenerateVide
 
   // ─── FAILED STATE ───────────────────────────────────────────────────────────
   if (status === 'failed') {
-    return <FailedCard generation={generation} onRetry={onRetry} onDelete={onDelete} />;
+    return <FailedCard generation={generation} onRetry={onRetry} onResume={onResume} onDelete={onDelete} />;
   }
 
   // ─── COMPLETED STATE ────────────────────────────────────────────────────────

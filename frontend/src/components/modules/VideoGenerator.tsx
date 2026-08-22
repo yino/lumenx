@@ -44,7 +44,7 @@ export default function VideoGenerator() {
         referenceVideoUrls: [] as string[],  // Reference videos for R2V (max 3)
         // Kling params
         mode: "std" as string,
-        sound: false,
+        sound: true,
         cfgScale: 0.5,
         // Vidu params
         viduAudio: true,

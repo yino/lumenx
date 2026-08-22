@@ -618,7 +618,7 @@ export default function VideoCreator({ onTaskCreated, remixData, onRemixClear, p
                                     onParamsChange({ generationMode: "i2v" });
                                 }}
                                 className={`px-5 py-2.5 text-sm rounded-lg flex items-center gap-2 transition-all font-medium ${generationMode === "i2v"
-                                    ? "bg-primary text-foreground shadow-lg"
+                                    ? "bg-primary text-on-accent shadow-lg"
                                     : "text-text-secondary hover:text-foreground hover:bg-glass"
                                     }`}
                             >
@@ -634,7 +634,7 @@ export default function VideoCreator({ onTaskCreated, remixData, onRemixClear, p
                                     });
                                 }}
                                 className={`px-5 py-2.5 text-sm rounded-lg flex items-center gap-2 transition-all font-medium ${generationMode === "r2v"
-                                    ? "bg-primary text-foreground shadow-lg"
+                                    ? "bg-primary text-on-accent shadow-lg"
                                     : "text-text-secondary hover:text-foreground hover:bg-glass"
                                     }`}
                             >
@@ -652,7 +652,7 @@ export default function VideoCreator({ onTaskCreated, remixData, onRemixClear, p
                                     <button
                                         onClick={() => setActiveTab("storyboard")}
                                         className={`px-3 py-1.5 text-xs rounded-md flex items-center gap-2 transition-all ${activeTab === "storyboard"
-                                            ? "bg-primary text-foreground shadow-sm"
+                                            ? "bg-primary text-on-accent shadow-sm"
                                             : "text-text-secondary hover:text-foreground hover:bg-glass"
                                             }`}
                                     >
@@ -661,7 +661,7 @@ export default function VideoCreator({ onTaskCreated, remixData, onRemixClear, p
                                     <button
                                         onClick={() => setActiveTab("upload")}
                                         className={`px-3 py-1.5 text-xs rounded-md flex items-center gap-2 transition-all ${activeTab === "upload"
-                                            ? "bg-primary text-foreground shadow-sm"
+                                            ? "bg-primary text-on-accent shadow-sm"
                                             : "text-text-secondary hover:text-foreground hover:bg-glass"
                                             }`}
                                     >
@@ -890,7 +890,7 @@ export default function VideoCreator({ onTaskCreated, remixData, onRemixClear, p
                                                     {/* Selected indicator */}
                                                     {selectedFrameId === frame.id && (
                                                         <div className="w-5 h-5 rounded-full bg-primary flex items-center justify-center flex-shrink-0">
-                                                            <Check size={12} className="text-white" />
+                                                            <Check size={12} className="text-on-accent" />
                                                         </div>
                                                     )}
                                                 </div>
@@ -928,7 +928,7 @@ export default function VideoCreator({ onTaskCreated, remixData, onRemixClear, p
                                                     >
                                                         {/* Slot Header */}
                                                         <div className="absolute top-2 left-2 z-10">
-                                                            <span className="text-[0.625rem] px-2 py-0.5 rounded-full bg-primary text-white font-bold">
+                                                            <span className="text-[0.625rem] px-2 py-0.5 rounded-full bg-primary text-on-accent font-bold">
                                                                 角色{slotIndex + 1}
                                                             </span>
                                                         </div>
@@ -1005,7 +1005,7 @@ export default function VideoCreator({ onTaskCreated, remixData, onRemixClear, p
                                                     >
                                                         {/* Slot Header */}
                                                         <div className="absolute top-2 left-2 z-10">
-                                                            <span className="text-[0.625rem] px-2 py-0.5 rounded-full bg-primary text-white font-bold">
+                                                            <span className="text-[0.625rem] px-2 py-0.5 rounded-full bg-primary text-on-accent font-bold">
                                                                 角色 {slotIndex + 1}
                                                             </span>
                                                         </div>
@@ -1201,7 +1201,7 @@ export default function VideoCreator({ onTaskCreated, remixData, onRemixClear, p
                                                         setSegments([{ type: "text", value: polishedPrompt.en, id: `polished-${Date.now()}` }]);
                                                         setPolishedPrompt(null);
                                                     }}
-                                                    className="text-[0.625rem] text-foreground bg-primary hover:bg-primary/90 px-2 py-0.5 rounded font-bold"
+                                                    className="text-[0.625rem] text-on-accent bg-primary hover:bg-primary/90 px-2 py-0.5 rounded font-bold"
                                                 >
                                                     应用
                                                 </button>
@@ -1230,7 +1230,7 @@ export default function VideoCreator({ onTaskCreated, remixData, onRemixClear, p
                                             <button
                                                 onClick={() => handlePolish(feedbackText.trim())}
                                                 disabled={isPolishing || !feedbackText.trim()}
-                                                className="text-xs text-foreground bg-primary hover:bg-primary/90 px-3 py-1.5 rounded font-medium flex items-center gap-1 disabled:opacity-50 disabled:cursor-not-allowed whitespace-nowrap"
+                                                className="text-xs text-on-accent bg-primary hover:bg-primary/90 px-3 py-1.5 rounded font-medium flex items-center gap-1 disabled:opacity-50 disabled:cursor-not-allowed whitespace-nowrap"
                                             >
                                                 {isPolishing ? <Loader2 size={10} className="animate-spin" /> : <Wand2 size={10} />}
                                                 再润色
@@ -1252,7 +1252,7 @@ export default function VideoCreator({ onTaskCreated, remixData, onRemixClear, p
                         disabled={(!prompt || isSubmitting) || (generationMode === 'i2v' && selectedImages.length === 0)}
                         className={`w-full py-4 rounded-xl font-bold text-lg flex items-center justify-center gap-2 transition-all transform active:scale-[0.99] ${submitSuccess
                             ? "bg-green-500 text-white"
-                            : "bg-primary hover:bg-primary/90 text-white"
+                            : "bg-primary hover:bg-primary/90 text-on-accent"
                             } disabled:opacity-50 disabled:cursor-not-allowed`}
                     >
                         {isSubmitting ? (

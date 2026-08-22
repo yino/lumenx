@@ -374,7 +374,7 @@ function EpisodeContentPanel({
           whileHover={{ scale: 1.03 }}
           whileTap={{ scale: 0.97 }}
           onClick={onOpenEditor}
-          className="flex items-center gap-2 bg-primary hover:bg-primary/90 text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors shadow-lg shadow-primary/20 hover:shadow-primary/30"
+          className="flex items-center gap-2 bg-primary hover:bg-primary/90 text-on-accent px-4 py-2 rounded-lg text-sm font-medium transition-colors shadow-lg shadow-primary/20 hover:shadow-primary/30"
         >
           <Play size={14} />
           {t("enterEditor")}

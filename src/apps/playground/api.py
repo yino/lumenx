@@ -47,7 +47,10 @@ router.add_api_route("/generate", generate, methods=["POST"])
 
 def list_history(limit: int = 50, offset: int = 0):
     """Return paginated generation history, newest first."""
-    return _storage.list_history(limit=limit, offset=offset)
+    return [
+        _service.hydrate_provider_metadata(gen)
+        for gen in _storage.list_history(limit=limit, offset=offset)
+    ]
 
 
 def get_generation(generation_id: str):
@@ -55,7 +58,7 @@ def get_generation(generation_id: str):
     gen = _storage.get_generation(generation_id)
     if not gen:
         raise HTTPException(status_code=404, detail="Generation not found")
-    return gen
+    return _service.hydrate_provider_metadata(gen)
 
 
 def get_generation_status(generation_id: str):
@@ -63,6 +66,7 @@ def get_generation_status(generation_id: str):
     gen = _storage.get_generation(generation_id)
     if not gen:
         raise HTTPException(status_code=404, detail="Generation not found")
+    gen = _service.hydrate_provider_metadata(gen)
     return {
         "id": gen.id,
         "status": gen.status,
@@ -72,6 +76,19 @@ def get_generation_status(generation_id: str):
         "provider_task_id": gen.provider_task_id,
         "provider_request_id": gen.provider_request_id,
     }
+
+
+def resume_generation(generation_id: str, background_tasks: BackgroundTasks):
+    """Resume polling a persisted DashScope task without resubmitting it."""
+    try:
+        gen = _service.prepare_resume_generation(generation_id)
+    except ValueError as exc:
+        message = str(exc)
+        status_code = 404 if message == "Generation not found" else 400
+        raise HTTPException(status_code=status_code, detail=message) from exc
+    if gen.status != "completed":
+        background_tasks.add_task(_service.process_resume_generation, gen.id)
+    return gen
 
 
 def delete_generation(generation_id: str):
@@ -97,6 +114,9 @@ router.add_api_route("/history", list_history, methods=["GET"])
 router.add_api_route("/history/{generation_id}", get_generation, methods=["GET"])
 router.add_api_route(
     "/history/{generation_id}/status", get_generation_status, methods=["GET"]
+)
+router.add_api_route(
+    "/history/{generation_id}/resume", resume_generation, methods=["POST"]
 )
 router.add_api_route(
     "/history/{generation_id}", delete_generation, methods=["DELETE"]

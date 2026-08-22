@@ -457,7 +457,7 @@ export default function StoryboardComposer() {
                                                                 <button
                                                                     key={size}
                                                                     onClick={(e) => { e.stopPropagation(); handleRenderFrame(frame, size); }}
-                                                                    className="px-2 py-1.5 bg-primary/80 hover:bg-primary text-foreground rounded text-xs font-bold transition-colors"
+                                                                    className="px-2 py-1.5 bg-primary/80 hover:bg-primary text-on-accent rounded text-xs font-bold transition-colors"
                                                                     title={`生成 ${size} 个版本`}
                                                                 >
                                                                     <div className="flex items-center gap-1">
@@ -742,7 +742,7 @@ function CreateFrameDialog({ onClose, onCreate, scenes }: { onClose: () => void;
                     <button
                         onClick={handleSubmit}
                         disabled={isSubmitting || !action.trim()}
-                        className="px-6 py-2 bg-primary hover:bg-primary/90 text-white rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+                        className="px-6 py-2 bg-primary hover:bg-primary/90 text-on-accent rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
                     >
                         {isSubmitting && <RefreshCw size={16} className="animate-spin" />}
                         创建分镜

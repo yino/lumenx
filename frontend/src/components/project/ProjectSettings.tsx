@@ -174,7 +174,7 @@ export default function ProjectSettings({ project, isOpen, onClose, onUpdate }: 
                             <button
                                 onClick={handleSave}
                                 disabled={isSaving}
-                                className="px-6 py-2 text-sm bg-primary hover:bg-primary/90 text-foreground rounded-lg font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+                                className="px-6 py-2 text-sm bg-primary hover:bg-primary/90 text-on-accent rounded-lg font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
                             >
                                 {isSaving ? t("saving") : t("saveSettings")}
                             </button>

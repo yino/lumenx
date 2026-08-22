@@ -1,7 +1,7 @@
 'use client';
 
 import { Fragment, useState, useEffect, useRef, useCallback } from 'react';
-import { Video, AlertCircle } from 'lucide-react';
+import { AlertCircle } from 'lucide-react';
 import { useTranslations } from 'next-intl';
 import { getAssetUrl } from '@/lib/utils';
 import type { PlaygroundGeneration } from './usePlaygroundStore';
@@ -102,7 +102,7 @@ export default function GalleryView({
   const output = current.outputs[0];
   const isVideo =
     output?.media_type === 'video' || VIDEO_MODES.has(current.mode);
-  const mediaUrl = output?.media_url || getAssetUrl(output?.media_reference);
+  const mediaUrl = getAssetUrl(output?.media_url || output?.media_reference);
 
   return (
     <div className="flex flex-col h-full">
@@ -117,6 +117,7 @@ export default function GalleryView({
               key={current.id}
               src={mediaUrl}
               controls
+              onClick={(e) => e.stopPropagation()}
               className="max-w-full max-h-full object-contain rounded-lg cursor-pointer hover:ring-2 hover:ring-primary/30 transition-all duration-200"
             />
           ) : (
@@ -190,7 +191,7 @@ export default function GalleryView({
             const genOutput = gen.outputs[0];
             const genIsVideo =
               genOutput?.media_type === 'video' || VIDEO_MODES.has(gen.mode);
-            const genMediaUrl = genOutput?.media_url || getAssetUrl(genOutput?.media_reference);
+            const genMediaUrl = getAssetUrl(genOutput?.media_url || genOutput?.media_reference);
             const isSelected = idx === selectedIndex;
             const isFailed = gen.status === 'failed';
 
@@ -217,10 +218,14 @@ export default function GalleryView({
                   <div className="w-full h-full bg-status-failed-bg flex items-center justify-center">
                     <AlertCircle className="w-4 h-4 text-status-failed-fg" />
                   </div>
-                ) : genIsVideo ? (
-                  <div className="w-full h-full bg-gradient-to-br from-elevated to-surface flex items-center justify-center">
-                    <Video className="w-4 h-4 text-text-muted" />
-                  </div>
+                ) : genIsVideo && genMediaUrl ? (
+                  <video
+                    src={genMediaUrl}
+                    muted
+                    playsInline
+                    preload="metadata"
+                    className="h-full w-full object-cover"
+                  />
                 ) : genMediaUrl ? (
                   <img
                     src={genMediaUrl}

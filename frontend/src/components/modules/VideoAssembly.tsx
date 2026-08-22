@@ -557,7 +557,7 @@ function ExportPhase({
                     <button
                         onClick={onMerge}
                         disabled={isMerging || !allReady}
-                        className="shrink-0 inline-flex items-center gap-2 bg-primary text-white border border-[rgba(100,108,255,0.65)] shadow-[inset_0_1.5px_0_rgba(255,255,255,0.14)] hover:bg-primary-hover disabled:opacity-40 disabled:cursor-not-allowed px-5 py-2.5 rounded-md font-semibold text-[0.8125rem]"
+                        className="shrink-0 inline-flex items-center gap-2 bg-primary text-on-accent border border-[rgba(100,108,255,0.65)] shadow-[inset_0_1.5px_0_rgba(255,255,255,0.14)] hover:bg-primary-hover disabled:opacity-40 disabled:cursor-not-allowed px-5 py-2.5 rounded-md font-semibold text-[0.8125rem]"
                     >
                         {isMerging ? <Loader2 size={14} className="animate-spin" /> : <Film size={14} />}
                         {ta("mergeAndProceed")}

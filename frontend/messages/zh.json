@@ -1795,15 +1795,21 @@
       "quickT2i": "灵感成图",
       "quickT2iDesc": "用文字快速生成概念图与关键画面",
       "quickI2v": "首帧动起来",
-      "quickI2vDesc": "上传一张首帧，让静态画面自然运动",
+      "quickI2vDesc": "上传 1–9 张图片，让静态画面自然运动",
       "quickR2v": "多参考创作",
       "quickR2vDesc": "组合角色、场景与风格素材生成视频",
       "mediaReference": "参考图片",
-      "mediaFirstFrame": "首帧图片",
+      "mediaFirstFrame": "首帧图片（最多 9 张）",
       "mediaRefMaterial": "参考素材",
       "mediaSourceVideo": "源视频",
       "generate": "生成",
-      "generateBatch": "生成 ×{count}"
+      "generateBatch": "生成 ×{count}",
+      "generating": "创建中 {time}",
+      "latestResultsEyebrow": "本次生成",
+      "latestResultsTitle": "结果已生成",
+      "latestResultsProcessingTitle": "正在生成",
+      "latestResultsPartialTitle": "部分生成成功",
+      "latestResultsFailedTitle": "生成失败"
     },
     "mode": {
       "image": "图像生成",
@@ -1867,10 +1873,11 @@
       "pickFromLibrary": "从资产库选取",
       "replaceFile": "替换文件",
       "fileCount": "{current} / {max} 张",
+      "maxFilesNotice": "最多上传 {max} 张，超出部分未添加。",
       "hints": {
         "t2i": "上传参考图自动切换为图像编辑模式",
         "i2i": "支持 JPG / PNG / WebP，建议尺寸不小于 512px",
-        "i2v": "支持 JPG / PNG / WebP，建议尺寸不小于 720px",
+        "i2v": "支持 JPG / PNG / WebP，最多 9 张，建议尺寸不小于 720px",
         "r2v": "支持 JPG / PNG / WebP，最多 9 张参考图",
         "v2v": "支持 MP4 / MOV / WebM",
         "r2vSeedance": "Seedance 支持图片、视频、音频作为参考素材"
@@ -1947,7 +1954,8 @@
       "advanced": "高级参数",
       "seedPlaceholder": "随机",
       "promptExtend": "提示词扩展",
-      "watermark": "水印"
+      "watermark": "水印",
+      "audio": "声音"
     },
     "detail": {
       "saving": "处理中...",

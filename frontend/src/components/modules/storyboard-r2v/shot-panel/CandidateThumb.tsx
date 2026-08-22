@@ -179,7 +179,7 @@ export default function CandidateThumb({
                             aria-hidden="true"
                             className={`grid h-[22px] w-[22px] place-items-center rounded-full border transition-all duration-fast ease-out-quart active:scale-90 ${
                                 isActive
-                                    ? "border-primary bg-primary/85 text-white shadow-[var(--glow-primary)]"
+                                    ? "border-primary bg-primary/85 text-on-accent shadow-[var(--glow-primary)]"
                                     : "border-foreground/15 bg-black/55 text-foreground/80 opacity-0 group-hover:opacity-100 hover:text-primary"
                             }`}
                         >

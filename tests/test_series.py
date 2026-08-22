@@ -306,6 +306,22 @@ class TestGetEffectivePrompt:
 # 6. Text splitting tests
 # ===================================================================
 
+class TestCreateSeriesFromImport:
+    def test_result_exposes_series_id_for_detail_navigation(self, pipeline):
+        pipeline.script_processor.create_draft_script.side_effect = (
+            lambda title, text: _make_script(title=title, text=text)
+        )
+
+        result = pipeline.create_series_from_import(
+            "Imported series",
+            "Episode body",
+            [{"episode_number": 1, "title": "Episode 1"}],
+        )
+
+        assert result["series_id"] == result["series"]["id"]
+        assert result["series_id"] in pipeline.series_store
+
+
 class TestSplitTextByMarkers:
     def test_normal_marker_split(self, pipeline):
         text = "AAAA第一章开始BBBB内容CCCC第二章开始DDDD内容EEEE"

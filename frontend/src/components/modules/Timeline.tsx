@@ -13,7 +13,7 @@ export default function Timeline() {
                 <div className="flex items-center gap-4">
                     <button
                         onClick={() => setIsPlaying(!isPlaying)}
-                        className="w-8 h-8 rounded-full bg-primary flex items-center justify-center text-foreground hover:bg-primary/90 transition-colors"
+                        className="w-8 h-8 rounded-full bg-primary flex items-center justify-center text-on-accent hover:bg-primary/90 transition-colors"
                     >
                         {isPlaying ? <Pause size={14} fill="currentColor" /> : <Play size={14} fill="currentColor" className="ml-0.5" />}
                     </button>

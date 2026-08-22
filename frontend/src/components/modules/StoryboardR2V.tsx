@@ -1937,7 +1937,7 @@ export default function StoryboardR2V() {
                                     type="button"
                                     onClick={() => setGenDialogOpen(true)}
                                     disabled={generating}
-                                    className="inline-flex items-center gap-1.5 px-5 py-2.5 rounded-md bg-primary text-white border border-primary/65 shadow-[inset_0_1.5px_0_rgba(255,255,255,0.14)] hover:bg-primary-hover disabled:opacity-40 transition-colors text-[0.8125rem] font-semibold"
+                                    className="inline-flex items-center gap-1.5 px-5 py-2.5 rounded-md bg-primary text-on-accent border border-primary/65 shadow-[inset_0_1.5px_0_rgba(255,255,255,0.14)] hover:bg-primary-hover disabled:opacity-40 transition-colors text-[0.8125rem] font-semibold"
                                 >
                                     {generating ? <Loader2 size={13} className="animate-spin" /> : <Wand2 size={13} />}
                                     {generating ? t("genInFlight") : t("emptyCTA")}

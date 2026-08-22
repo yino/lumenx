@@ -140,8 +140,12 @@ export default function ImportFileDialog({ isOpen, onClose, onSuccess }: ImportF
                 import_id: previewResult.import_id,
                 episodes: previewResult.episodes,
             });
+            const seriesId = result.series_id ?? result.series?.id;
+            if (!seriesId) {
+                throw new Error(t("createFailed"));
+            }
             setCreatedResult({
-                series_id: result.series_id,
+                series_id: seriesId,
                 episode_count: result.episodes?.length ?? previewResult.episodes.length,
             });
             setStep(3);
@@ -205,7 +209,7 @@ export default function ImportFileDialog({ isOpen, onClose, onSuccess }: ImportF
                                         )}
                                         <div className="flex items-center gap-2">
                                             <div className={`w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold transition-colors ${
-                                                isCompleted ? 'bg-primary text-white' :
+                                                isCompleted ? 'bg-primary text-on-accent' :
                                                 isActive ? 'bg-primary/20 text-primary border border-primary' :
                                                 'bg-surface text-text-secondary'
                                             }`}>
@@ -324,7 +328,7 @@ export default function ImportFileDialog({ isOpen, onClose, onSuccess }: ImportF
                                         <button
                                             onClick={handleAnalyze}
                                             disabled={!file || !seriesTitle.trim() || isAnalyzing}
-                                            className="flex-1 bg-primary hover:bg-primary/90 text-white px-6 py-3 rounded-lg font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+                                            className="flex-1 bg-primary hover:bg-primary/90 text-on-accent px-6 py-3 rounded-lg font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
                                         >
                                             {isAnalyzing ? (
                                                 <>
@@ -385,7 +389,7 @@ export default function ImportFileDialog({ isOpen, onClose, onSuccess }: ImportF
                                         <button
                                             onClick={handleConfirm}
                                             disabled={isCreating}
-                                            className="flex-1 bg-primary hover:bg-primary/90 text-white px-6 py-3 rounded-lg font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+                                            className="flex-1 bg-primary hover:bg-primary/90 text-on-accent px-6 py-3 rounded-lg font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
                                         >
                                             {isCreating ? (
                                                 <>
@@ -417,7 +421,7 @@ export default function ImportFileDialog({ isOpen, onClose, onSuccess }: ImportF
                                     </div>
                                     <button
                                         onClick={handleViewSeries}
-                                        className="bg-primary hover:bg-primary/90 text-white px-8 py-3 rounded-lg font-medium transition-colors flex items-center gap-2"
+                                        className="bg-primary hover:bg-primary/90 text-on-accent px-8 py-3 rounded-lg font-medium transition-colors flex items-center gap-2"
                                     >
                                         <BookOpen size={18} />
                                         {t("viewSeries")}

@@ -10,6 +10,7 @@ import {
   Coins,
   ImageIcon,
   Layers3,
+  Loader2,
   Paperclip,
   SlidersHorizontal,
   Sparkles,
@@ -20,8 +21,14 @@ import MediaInput from './MediaInput';
 import PromptInput from './PromptInput';
 import ParameterBar from './ParameterBar';
 import QueuePanel from './QueuePanel';
-import { usePlaygroundStore, type PlaygroundMode, type QueuedRequest } from './usePlaygroundStore';
+import ResultCard from './ResultCard';
+import {
+  usePlaygroundStore,
+  type PlaygroundMode,
+  type QueuedRequest,
+} from './usePlaygroundStore';
 import { toPlaygroundGeneration } from './playgroundGeneration';
+import { resolveModelForMode } from './playgroundModels';
 import {
   getSafeApiError,
   playgroundApi,
@@ -46,6 +53,7 @@ const MODE_LABELS: Record<PlaygroundMode, string> = {
 /** Modes that require media input (image or video source).
  *  t2i also shows optional media input — when provided, it auto-becomes i2i. */
 const MODES_WITH_MEDIA: PlaygroundMode[] = ['i2i', 'i2v', 'r2v', 'v2v'];
+const VIDEO_MODES = new Set<PlaygroundMode>(['t2v', 'i2v', 'r2v', 'v2v']);
 
 /** Polling interval for generation status (ms) */
 const POLL_INTERVAL = 2000;
@@ -75,12 +83,16 @@ export default function PlaygroundPage() {
   const queue = usePlaygroundStore((s) => s.queue);
   const activeCount = usePlaygroundStore((s) => s.activeGenerationIds.length);
   const maxConcurrent = usePlaygroundStore((s) => s.maxConcurrent);
+  const history = usePlaygroundStore((s) => s.history);
+  const sessionGenerationIds = usePlaygroundStore((s) => s.sessionGenerationIds);
 
   const pollTimers = useRef<Map<string, ReturnType<typeof setInterval>>>(new Map());
   const [wallet, setWallet] = useState<UserTicketWallet | null>(null);
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [showMediaPanel, setShowMediaPanel] = useState(false);
   const [showControls, setShowControls] = useState(false);
+  const [generationStartedAt, setGenerationStartedAt] = useState<number | null>(null);
+  const [elapsedSeconds, setElapsedSeconds] = useState(0);
 
   const refreshWallet = useCallback(async () => {
     if (!IS_CLOUD_DEPLOYMENT) return;
@@ -140,6 +152,27 @@ export default function PlaygroundPage() {
     }
   }, [inputMedia.length, mode]);
 
+  const generationInFlight = queue.length > 0 || activeCount > 0;
+
+  // Keep a single stopwatch for the whole queue. It starts as soon as the
+  // user submits and stops only after every queued or active task is done.
+  useEffect(() => {
+    if (!generationInFlight) {
+      setGenerationStartedAt(null);
+      setElapsedSeconds(0);
+      return undefined;
+    }
+
+    const startedAt = generationStartedAt ?? Date.now();
+    if (generationStartedAt == null) setGenerationStartedAt(startedAt);
+    const updateElapsed = () => {
+      setElapsedSeconds(Math.max(0, Math.floor((Date.now() - startedAt) / 1000)));
+    };
+    updateElapsed();
+    const timer = window.setInterval(updateElapsed, 1000);
+    return () => window.clearInterval(timer);
+  }, [generationInFlight, generationStartedAt]);
+
   // ─── Status poller ─────────────────────────────────────────────────────────
 
   const startPolling = useCallback((generationId: string) => {
@@ -173,17 +206,30 @@ export default function PlaygroundPage() {
   // ─── Generate handler — enqueue a request; the dispatcher runs it ──────────
 
   const handleGenerate = useCallback(() => {
-    if (!prompt.trim()) return;
+    if (!prompt.trim() || (MODES_WITH_MEDIA.includes(mode) && inputMedia.length === 0)) return;
     setSubmitError(null);
+    setGenerationStartedAt((startedAt) => startedAt ?? Date.now());
+    setElapsedSeconds(0);
     // Auto-detect i2i: t2i + reference images -> i2i
     const effectiveMode = (mode === 't2i' && inputMedia.length > 0) ? 'i2i' : mode;
+    const audioPreference = typeof parameters.generate_audio === 'boolean'
+      ? parameters.generate_audio
+      : typeof parameters.audio === 'boolean'
+        ? parameters.audio
+        : parameters.sound === 'off'
+          ? false
+          : typeof parameters.vidu_audio === 'boolean'
+            ? parameters.vidu_audio
+            : true;
     enqueueRequest({
       mode: effectiveMode,
-      modelId,
+      modelId: resolveModelForMode(effectiveMode, modelId),
       prompt: prompt.trim(),
       negativePrompt: negativePrompt || undefined,
       inputMedia,
-      parameters,
+      parameters: VIDEO_MODES.has(effectiveMode)
+        ? { ...parameters, generate_audio: audioPreference }
+        : parameters,
       batchSize,
     });
   }, [mode, modelId, prompt, negativePrompt, inputMedia, parameters, batchSize, enqueueRequest]);
@@ -239,7 +285,33 @@ export default function PlaygroundPage() {
 
   const supportsMediaInput = MODES_WITH_MEDIA.includes(mode) || mode === 't2i';
   const mediaPanelVisible = supportsMediaInput && (showMediaPanel || inputMedia.length > 0);
-  const canGenerate = prompt.trim().length > 0;
+  const canGenerate =
+    prompt.trim().length > 0 &&
+    (!MODES_WITH_MEDIA.includes(mode) || inputMedia.length > 0);
+  const sessionGenerations = history
+    .filter((generation) => sessionGenerationIds.includes(generation.id))
+    .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+  const hasProcessingSessionGeneration = sessionGenerations.some(
+    (generation) => generation.status === 'pending' || generation.status === 'processing',
+  );
+  const hasCompletedSessionGeneration = sessionGenerations.some(
+    (generation) => generation.status === 'completed',
+  );
+  const hasFailedSessionGeneration = sessionGenerations.some(
+    (generation) => generation.status === 'failed',
+  );
+  const sessionResultsTitle = hasProcessingSessionGeneration
+    ? t('compose.latestResultsProcessingTitle')
+    : hasCompletedSessionGeneration && hasFailedSessionGeneration
+      ? t('compose.latestResultsPartialTitle')
+      : hasFailedSessionGeneration
+        ? t('compose.latestResultsFailedTitle')
+        : t('compose.latestResultsTitle');
+  const formatElapsed = (seconds: number) => {
+    const minutes = Math.floor(seconds / 60);
+    const remainder = seconds % 60;
+    return `${String(minutes).padStart(2, '0')}:${String(remainder).padStart(2, '0')}`;
+  };
 
   // ─── Render ────────────────────────────────────────────────────────────────
 
@@ -392,23 +464,67 @@ export default function PlaygroundPage() {
               <button
                 type="button"
                 onClick={handleGenerate}
-                disabled={!canGenerate}
+                disabled={!canGenerate || generationInFlight}
                 className={[
                   'inline-flex h-11 min-w-[132px] items-center justify-center gap-2 rounded-full px-6',
                   "font-['Space_Grotesk',sans-serif] text-sm font-semibold",
                   'bg-primary text-on-accent shadow-[var(--glow-primary)] transition-all duration-150 disabled:cursor-not-allowed disabled:opacity-35 disabled:shadow-none',
-                  canGenerate ? 'hover:-translate-y-px hover:bg-primary-hover' : '',
+                  canGenerate && !generationInFlight ? 'hover:-translate-y-px hover:bg-primary-hover' : '',
                 ].join(' ')}
               >
-                <Sparkles size={16} aria-hidden="true" />
-                <span>
-                  {batchSize > 1
-                    ? t('compose.generateBatch', { count: batchSize })
-                    : t('compose.generate')}
-                </span>
+                {generationInFlight ? (
+                  <>
+                    <Loader2 size={16} aria-hidden="true" className="animate-spin" />
+                    <span aria-live="polite">
+                      {t('compose.generating', { time: formatElapsed(elapsedSeconds) })}
+                    </span>
+                  </>
+                ) : (
+                  <>
+                    <Sparkles size={16} aria-hidden="true" />
+                    <span>
+                      {batchSize > 1
+                        ? t('compose.generateBatch', { count: batchSize })
+                        : t('compose.generate')}
+                    </span>
+                  </>
+                )}
               </button>
             </div>
           </section>
+
+          {sessionGenerations.length > 0 && (
+            <section
+              data-testid="playground-session-results"
+              className="mx-auto mt-8 w-full max-w-[900px]"
+            >
+              <div className="mb-3 flex items-center justify-between">
+                <div>
+                  <p className="font-mono text-[0.625rem] uppercase tracking-[0.16em] text-primary">
+                    {t('compose.latestResultsEyebrow')}
+                  </p>
+                  <h3 className="mt-1 font-display text-lg font-semibold text-foreground">
+                    {sessionResultsTitle}
+                  </h3>
+                </div>
+                <span className="font-mono text-[0.625rem] text-text-muted">
+                  {sessionGenerations.length}
+                </span>
+              </div>
+              <div className="grid gap-4 md:grid-cols-2">
+                {sessionGenerations.flatMap((generation) => {
+                  const outputCount = Math.max(1, generation.outputs.length);
+                  return Array.from({ length: outputCount }, (_, outputIndex) => (
+                    <ResultCard
+                      key={`${generation.id}-${outputIndex}`}
+                      generation={generation}
+                      outputIndex={outputIndex}
+                    />
+                  ));
+                })}
+              </div>
+            </section>
+          )}
 
           <section className="mx-auto mt-8 w-full max-w-[900px]">
             <div className="mb-3 flex items-center justify-between">

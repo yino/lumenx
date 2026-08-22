@@ -680,7 +680,7 @@ function CharacterDetailModal({ asset, type, onClose, onUpdateDescription, onGen
                                     />
                                     <div className="flex justify-end gap-2">
                                         <button onClick={() => { setIsEditing(false); setDescription(asset.description); }} className="px-3 py-1.5 text-xs text-text-secondary hover:text-foreground">取消</button>
-                                        <button onClick={handleSave} className="px-3 py-1.5 bg-primary text-white text-xs rounded hover:bg-primary/90">保存描述</button>
+                                        <button onClick={handleSave} className="px-3 py-1.5 bg-primary text-on-accent text-xs rounded hover:bg-primary/90">保存描述</button>
                                     </div>
                                 </div>
                             ) : (
@@ -1046,7 +1046,7 @@ function CreateAssetDialog({ type, onClose, onCreate }: { type: string; onClose:
                     <button
                         onClick={handleSubmit}
                         disabled={isSubmitting || !name.trim()}
-                        className="px-6 py-2 bg-primary hover:bg-primary/90 text-white rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+                        className="px-6 py-2 bg-primary hover:bg-primary/90 text-on-accent rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
                     >
                         {isSubmitting && <RefreshCw size={16} className="animate-spin" />}
                         创建{typeLabel}

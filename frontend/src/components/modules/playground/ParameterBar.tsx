@@ -265,7 +265,22 @@ export default function ParameterBar() {
   const supportsSeed = modelParams?.seed !== false;
   const supportsPromptExtend = modelParams?.promptExtend !== false;
   const supportsWatermark = modelParams?.watermark !== false;
-  const hasAnyAdvanced = supportsSeed || supportsPromptExtend || supportsWatermark;
+  const supportsAudio = isVideoMode && (
+    modelParams?.audio === true ||
+    modelParams?.sound === true ||
+    modelParams?.viduAudio === true
+  );
+  const hasAnyAdvanced = supportsSeed || supportsPromptExtend || supportsWatermark || supportsAudio;
+
+  const audioEnabled = typeof parameters.generate_audio === 'boolean'
+    ? parameters.generate_audio
+    : typeof parameters.audio === 'boolean'
+      ? parameters.audio
+      : parameters.sound === 'off'
+        ? false
+        : typeof parameters.vidu_audio === 'boolean'
+          ? parameters.vidu_audio
+          : true;
 
   // When model changes, reset params whose current value is not in the new model's options
   useEffect(() => {
@@ -501,6 +516,14 @@ export default function ParameterBar() {
                   label={t('parameters.watermark')}
                   value={parameters.watermark === true}
                   onChange={(v) => updateParam('watermark', v)}
+                />
+              )}
+
+              {supportsAudio && (
+                <PillToggle
+                  label={t('parameters.audio')}
+                  value={audioEnabled}
+                  onChange={(v) => updateParam('generate_audio', v)}
                 />
               )}
             </div>

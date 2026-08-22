@@ -65,3 +65,27 @@ def test_playground_persists_remote_ark_video_task_before_polling() -> None:
     assert persisted.provider_name == "volcengine-ark"
     assert persisted.provider_task_id == "cgt-video-1"
     assert persisted.provider_request_id == "request-video-1"
+
+
+def test_playground_backfills_dashscope_task_id_from_legacy_network_error() -> None:
+    generation = PlaygroundGeneration(
+        id="legacy-generation",
+        mode=PlaygroundMode.T2V,
+        model_id="happyhorse-1.1-t2v",
+        prompt="雨夜街道",
+        status="failed",
+        error=(
+            "All 1 batch items failed: HTTPSConnectionPool(host='dashscope.aliyuncs.com', "
+            "port=443): Max retries exceeded with url: "
+            "/api/v1/tasks/legacy-task-123"
+        ),
+        created_at="2026-08-21T00:00:00+00:00",
+    )
+    storage = MemoryStorage(generation)
+    service = PlaygroundService(storage)
+
+    hydrated = service.hydrate_provider_metadata(generation)
+
+    assert hydrated.provider_name == "dashscope"
+    assert hydrated.provider_task_id == "legacy-task-123"
+    assert storage.updates[-1].provider_task_id == "legacy-task-123"

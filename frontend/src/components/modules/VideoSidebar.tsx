@@ -65,11 +65,11 @@ export default function VideoSidebar({ tasks, onRemix, params, setParams }: Vide
             newParams.promptExtend = !!np.promptExtend;
             newParams.negativePrompt = "";
             newParams.shotType = "single";
-            newParams.generateAudio = false;
+            newParams.generateAudio = true;
             newParams.audioUrl = "";
             // Kling defaults
             newParams.mode = np.mode?.default ?? "std";
-            newParams.sound = false;
+            newParams.sound = true;
             newParams.cfgScale = np.cfgScale?.default ?? 0.5;
             // Vidu defaults
             newParams.viduAudio = true;
@@ -144,7 +144,7 @@ export default function VideoSidebar({ tasks, onRemix, params, setParams }: Vide
                     <List size={16} />
                     {tm("queue")}
                     {tasks.filter(t => t.status === "pending" || t.status === "processing").length > 0 && (
-                        <span className="bg-primary text-white text-[0.625rem] px-1.5 rounded-full">
+                        <span className="bg-primary text-on-accent text-[0.625rem] px-1.5 rounded-full">
                             {tasks.filter(t => t.status === "pending" || t.status === "processing").length}
                         </span>
                     )}

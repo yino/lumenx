@@ -326,7 +326,7 @@ export default function ImportAssetsDialog({ isOpen, onClose, seriesId, onImport
                                                     ? 'bg-primary border-primary'
                                                     : 'border-glass-border bg-surface'
                                                 }`}>
-                                                    {selectedAssetIds.has(asset.id) && <Check size={12} className="text-white" />}
+                                                    {selectedAssetIds.has(asset.id) && <Check size={12} className="text-on-accent" />}
                                                 </div>
 
                                                 {/* Thumbnail */}
@@ -452,7 +452,7 @@ export default function ImportAssetsDialog({ isOpen, onClose, seriesId, onImport
                                     <button
                                         onClick={handleGoToStep2}
                                         disabled={!selectedSourceId || isLoadingSource}
-                                        className="flex items-center gap-2 px-4 py-2 bg-primary hover:bg-primary/90 text-white text-sm font-medium rounded-lg transition-all disabled:opacity-50"
+                                        className="flex items-center gap-2 px-4 py-2 bg-primary hover:bg-primary/90 text-on-accent text-sm font-medium rounded-lg transition-all disabled:opacity-50"
                                     >
                                         {isLoadingSource ? <Loader2 size={14} className="animate-spin" /> : null}
                                         {t("next")}
@@ -472,7 +472,7 @@ export default function ImportAssetsDialog({ isOpen, onClose, seriesId, onImport
                                     <button
                                         onClick={() => setStep(3)}
                                         disabled={selectedAssetIds.size === 0}
-                                        className="flex items-center gap-2 px-4 py-2 bg-primary hover:bg-primary/90 text-white text-sm font-medium rounded-lg transition-all disabled:opacity-50"
+                                        className="flex items-center gap-2 px-4 py-2 bg-primary hover:bg-primary/90 text-on-accent text-sm font-medium rounded-lg transition-all disabled:opacity-50"
                                     >
                                         {t("next")}
                                         <ArrowRight size={14} />

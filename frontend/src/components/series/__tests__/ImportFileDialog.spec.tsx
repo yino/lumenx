@@ -52,7 +52,7 @@ const mockPreviewResult = {
 };
 
 const mockCreatedResult = {
-    series_id: 'new-series-1',
+    series: { id: 'new-series-1' },
     episodes: [{ id: 'ep1' }, { id: 'ep2' }],
 };
 
@@ -81,6 +81,7 @@ function renderDialog(props = {}) {
 describe('ImportFileDialog', () => {
     beforeEach(() => {
         vi.clearAllMocks();
+        window.location.hash = '';
     });
 
     // ── Rendering ──
@@ -127,6 +128,12 @@ describe('ImportFileDialog', () => {
             renderDialog();
             const analyzeBtn = screen.getByText('开始分析');
             expect(analyzeBtn).toBeDisabled();
+        });
+
+        it('uses the theme contrast color for the analyze button label', () => {
+            renderDialog();
+            const analyzeBtn = screen.getByText('开始分析');
+            expect(analyzeBtn).toHaveClass('text-on-accent');
         });
 
         it('shows file name after selecting a file', async () => {
@@ -219,9 +226,9 @@ describe('ImportFileDialog', () => {
     // ── Step 2 → Step 3 ──
 
     describe('Step 2 → Step 3 transition', () => {
-        async function goToStep2() {
+        async function goToStep2(props = {}) {
             mockImportFilePreview.mockResolvedValue(mockPreviewResult);
-            renderDialog();
+            renderDialog(props);
             const fileInput = document.querySelector('input[type="file"]') as HTMLInputElement;
             const file = createMockFile('story.txt');
             fireEvent.change(fileInput, { target: { files: [file] } });
@@ -230,6 +237,13 @@ describe('ImportFileDialog', () => {
                 expect(screen.getByText('确认创建')).toBeInTheDocument();
             });
         }
+
+        it('uses the theme contrast color for preview actions and completed steps', async () => {
+            await goToStep2();
+
+            expect(screen.getByText('确认创建')).toHaveClass('text-on-accent');
+            expect(screen.getByText('上传文件').previousElementSibling).toHaveClass('text-on-accent');
+        });
 
         it('calls confirm API and shows success', async () => {
             mockImportFileConfirm.mockResolvedValue(mockCreatedResult);
@@ -248,6 +262,7 @@ describe('ImportFileDialog', () => {
             await waitFor(() => {
                 expect(screen.getByText('系列创建成功')).toBeInTheDocument();
             });
+            expect(screen.getByText('查看系列')).toHaveClass('text-on-accent');
         });
 
         it('shows loading state during creation', async () => {
@@ -278,6 +293,24 @@ describe('ImportFileDialog', () => {
 
             await waitFor(() => {
                 expect(screen.getByText(/共 2 集/)).toBeInTheDocument();
+            });
+        });
+
+        it('opens the created series using the nested series id returned by the API', async () => {
+            const onSuccess = vi.fn();
+            mockImportFileConfirm.mockResolvedValue(mockCreatedResult);
+            await goToStep2({ onSuccess });
+
+            fireEvent.click(screen.getByText('确认创建'));
+            await waitFor(() => {
+                expect(screen.getByText('查看系列')).toBeInTheDocument();
+            });
+            fireEvent.click(screen.getByText('查看系列'));
+
+            expect(window.location.hash).toBe('#/series/new-series-1');
+            expect(onSuccess).toHaveBeenCalledWith({
+                series_id: 'new-series-1',
+                episode_count: 2,
             });
         });
     });

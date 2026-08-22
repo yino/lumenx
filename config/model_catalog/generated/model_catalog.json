@@ -3349,6 +3349,7 @@
         }
       },
       "params": {
+        "audio": true,
         "negativePrompt": false,
         "promptExtend": false,
         "resolution": {
@@ -3442,6 +3443,7 @@
         }
       },
       "params": {
+        "audio": true,
         "negativePrompt": false,
         "promptExtend": false,
         "resolution": {
@@ -3530,6 +3532,7 @@
       "id": "seedance-2.0-t2v",
       "inputs": {},
       "params": {
+        "audio": true,
         "negativePrompt": false,
         "promptExtend": false,
         "resolution": {
@@ -5130,7 +5133,13 @@
           "aliyun/wan/2026-04-25"
         ]
       },
-      "duration": null,
+      "duration": {
+        "default": 5,
+        "max": 15,
+        "min": 2,
+        "step": 1,
+        "type": "slider"
+      },
       "family": "wan",
       "id": "wan2.7-t2v",
       "inputs": {},
@@ -5187,7 +5196,13 @@
           "aliyun/wan/2026-04-25"
         ]
       },
-      "duration": null,
+      "duration": {
+        "default": 5,
+        "max": 10,
+        "min": 2,
+        "step": 1,
+        "type": "slider"
+      },
       "family": "wan",
       "id": "wan2.7-videoedit",
       "inputs": {},
@@ -6531,6 +6546,7 @@
       "mode": "i2v",
       "model_line_id": "seedance/seedance-2.0-video",
       "params": {
+        "audio": true,
         "negativePrompt": false,
         "promptExtend": false,
         "resolution": {
@@ -6635,6 +6651,7 @@
       "mode": "r2v",
       "model_line_id": "seedance/seedance-2.0-video",
       "params": {
+        "audio": true,
         "negativePrompt": false,
         "promptExtend": false,
         "resolution": {
@@ -6734,6 +6751,7 @@
       "mode": "t2v",
       "model_line_id": "seedance/seedance-2.0-video",
       "params": {
+        "audio": true,
         "negativePrompt": false,
         "promptExtend": false,
         "resolution": {
@@ -8480,7 +8498,13 @@
           "aliyun/wan/2026-04-25"
         ]
       },
-      "duration": null,
+      "duration": {
+        "default": 5,
+        "max": 15,
+        "min": 2,
+        "step": 1,
+        "type": "slider"
+      },
       "family": "wan",
       "id": "wan/wan2.7-video#t2v",
       "inputs": {},
@@ -8545,7 +8569,13 @@
           "aliyun/wan/2026-04-25"
         ]
       },
-      "duration": null,
+      "duration": {
+        "default": 5,
+        "max": 10,
+        "min": 2,
+        "step": 1,
+        "type": "slider"
+      },
       "family": "wan",
       "id": "wan/wan2.7-video#videoedit",
       "inputs": {},

@@ -1795,15 +1795,21 @@
       "quickT2i": "Idea to image",
       "quickT2iDesc": "Quickly create concept art and key visuals from text",
       "quickI2v": "Animate a first frame",
-      "quickI2vDesc": "Upload a still frame and bring it naturally into motion",
+      "quickI2vDesc": "Upload 1–9 images and bring the stills naturally into motion",
       "quickR2v": "Multi-reference creation",
       "quickR2vDesc": "Combine character, scene, and style references into video",
       "mediaReference": "Reference image",
-      "mediaFirstFrame": "First frame",
+      "mediaFirstFrame": "First frame (up to 9 images)",
       "mediaRefMaterial": "Reference material",
       "mediaSourceVideo": "Source video",
       "generate": "Generate",
-      "generateBatch": "Generate ×{count}"
+      "generateBatch": "Generate ×{count}",
+      "generating": "Creating {time}",
+      "latestResultsEyebrow": "CURRENT SESSION",
+      "latestResultsTitle": "Results are ready",
+      "latestResultsProcessingTitle": "Creating results",
+      "latestResultsPartialTitle": "Some results are ready",
+      "latestResultsFailedTitle": "Generation failed"
     },
     "mode": {
       "image": "Image",
@@ -1867,10 +1873,11 @@
       "pickFromLibrary": "Pick from library",
       "replaceFile": "Replace file",
       "fileCount": "{current} / {max}",
+      "maxFilesNotice": "Up to {max} files can be added. Extra files were not added.",
       "hints": {
         "t2i": "Upload a reference image to auto-switch to image-edit mode",
         "i2i": "JPG / PNG / WebP supported; recommended at least 512px",
-        "i2v": "JPG / PNG / WebP supported; recommended at least 720px",
+        "i2v": "JPG / PNG / WebP supported; up to 9 images; recommended at least 720px",
         "r2v": "JPG / PNG / WebP supported; up to 9 reference images",
         "v2v": "MP4 / MOV / WebM supported",
         "r2vSeedance": "Seedance accepts image, video, and audio as reference material"
@@ -1947,7 +1954,8 @@
       "advanced": "Advanced",
       "seedPlaceholder": "Random",
       "promptExtend": "Prompt extend",
-      "watermark": "Watermark"
+      "watermark": "Watermark",
+      "audio": "Audio"
     },
     "detail": {
       "saving": "Saving…",

@@ -6,6 +6,7 @@ routing logic in ``src/apps/comic_gen/pipeline.py:process_video_task()``.
 """
 
 import os
+import re
 import shutil
 import uuid
 from datetime import datetime, timezone
@@ -27,6 +28,11 @@ logger = get_logger(__name__)
 # ---------------------------------------------------------------------------
 IMAGE_OUTPUT_DIR = os.path.join("output", "playground", "images")
 VIDEO_OUTPUT_DIR = os.path.join("output", "playground", "videos")
+
+_DASHSCOPE_TASK_ERROR_PATTERN = re.compile(
+    r"dashscope\.aliyuncs\.com.*?/api/v1/tasks/([A-Za-z0-9_-]+)",
+    re.IGNORECASE,
+)
 
 
 class PlaygroundService:
@@ -96,8 +102,116 @@ class PlaygroundService:
         except Exception as exc:
             logger.exception("Generation %s failed", generation_id)
             gen.status = "failed"
-            gen.error = str(exc)
+            gen.error = self._format_generation_error(exc)
 
+        self.storage.update_generation(gen)
+
+    @staticmethod
+    def _format_generation_error(exc: Exception) -> str:
+        """Keep provider connection failures actionable without hiding details."""
+        message = str(exc)
+        network_markers = (
+            "HTTPSConnectionPool",
+            "HTTPConnectionPool",
+            "NameResolutionError",
+            "Max retries exceeded",
+            "Connection refused",
+            "Connection reset",
+            "RemoteDisconnected",
+        )
+        if any(marker in message for marker in network_markers):
+            return (
+                "DashScope 网络连接中断，远端任务可能仍在运行。"
+                "网络恢复后请点击“恢复查询”，系统会继续查询原任务，不会重复提交。"
+                f" 原始错误：{message}"
+            )
+        return message
+
+    def hydrate_provider_metadata(self, gen: PlaygroundGeneration) -> PlaygroundGeneration:
+        """Recover a DashScope task ID from legacy network errors.
+
+        Older playground records were written after task submission but before
+        provider IDs were persisted. Their error text still contains the
+        explicit DashScope task URL, so backfill only that unambiguous form and
+        persist it for the recovery action in the UI.
+        """
+        if (
+            gen.provider_task_id
+            or gen.provider_name
+            or gen.mode not in (
+                PlaygroundMode.T2V,
+                PlaygroundMode.I2V,
+                PlaygroundMode.R2V,
+                PlaygroundMode.V2V,
+            )
+            or not gen.error
+        ):
+            return gen
+
+        match = _DASHSCOPE_TASK_ERROR_PATTERN.search(gen.error)
+        if not match:
+            return gen
+
+        gen.provider_name = "dashscope"
+        gen.provider_task_id = match.group(1)
+        self.storage.update_generation(gen)
+        return gen
+
+    def prepare_resume_generation(self, generation_id: str) -> PlaygroundGeneration:
+        """Mark a failed local video generation for remote-task recovery."""
+        gen = self.storage.get_generation(generation_id)
+        if gen is None:
+            raise ValueError("Generation not found")
+        if gen.mode not in (
+            PlaygroundMode.T2V,
+            PlaygroundMode.I2V,
+            PlaygroundMode.R2V,
+            PlaygroundMode.V2V,
+        ):
+            raise ValueError("Only video generations can be recovered")
+        if gen.provider_name != "dashscope" or not gen.provider_task_id:
+            raise ValueError("Generation has no recoverable DashScope task ID")
+        if gen.status == "completed":
+            return gen
+        gen.status = "processing"
+        gen.error = None
+        self.storage.update_generation(gen)
+        return gen
+
+    def process_resume_generation(self, generation_id: str) -> None:
+        """Poll and download an existing DashScope video task."""
+        gen = self.storage.get_generation(generation_id)
+        if gen is None or not gen.provider_task_id:
+            return
+
+        output_path = os.path.join(
+            VIDEO_OUTPUT_DIR,
+            f"{gen.mode.value}_{gen.id}_0.mp4",
+        )
+        try:
+            from ...models.wanx import WanxModel
+
+            if self._wanx_model is None:
+                self._wanx_model = WanxModel({})
+            self._wanx_model.resume_dashscope_video_task(
+                provider_task_id=gen.provider_task_id,
+                output_path=output_path,
+                model_name=gen.model_id,
+            )
+            if not any(item.media_path == output_path for item in gen.outputs):
+                gen.outputs.append(
+                    PlaygroundOutput(
+                        id=str(uuid.uuid4()),
+                        media_path=output_path,
+                        media_type="video",
+                    )
+                )
+            gen.status = "completed"
+            gen.error = None
+        except Exception as exc:
+            logger.exception("Remote task recovery %s failed", generation_id)
+            gen.status = "failed"
+            gen.error = self._format_generation_error(exc)
         self.storage.update_generation(gen)
 
     def save_to_library(self, generation_id: str, output_id: str, category: str = "general") -> bool:
@@ -323,6 +437,27 @@ class PlaygroundService:
 
     # -- adapter delegates ------------------------------------------------
 
+    @staticmethod
+    def _audio_enabled(params: dict) -> bool:
+        """Normalize the audio preference shared by video providers.
+
+        Older templates used provider-specific names (`audio`, `sound`, or
+        `vidu_audio`), while the playground now persists `generate_audio`.
+        Explicit values remain respected; absent values default to enabled.
+        """
+        if isinstance(params.get("generate_audio"), bool):
+            return params["generate_audio"]
+        if isinstance(params.get("audio"), bool):
+            return params["audio"]
+        sound = params.get("sound")
+        if isinstance(sound, bool):
+            return sound
+        if sound is not None:
+            return str(sound).lower() == "on"
+        if isinstance(params.get("vidu_audio"), bool):
+            return params["vidu_audio"]
+        return True
+
     def _generate_video_wanx(self, gen: PlaygroundGeneration, out_path: str) -> None:
         """Delegate to :class:`WanxModel` (DashScope video generation -- wan2.x / happyhorse)."""
         from ...models.wanx import WanxModel
@@ -343,6 +478,7 @@ class PlaygroundService:
             "watermark": params.get("watermark", False),
             "ratio": params.get("ratio"),
             "audio_url": params.get("audio_url"),
+            "audio": self._audio_enabled(params),
         }
 
         # r2v: reference images
@@ -352,6 +488,16 @@ class PlaygroundService:
         # v2v: video input
         if gen.mode == PlaygroundMode.V2V and gen.input_media:
             kwargs["video_url"] = gen.input_media[0]
+
+        def persist_provider_ids(provider: str, task_id: str, request_id: str | None) -> None:
+            gen.provider_name = provider
+            gen.provider_task_id = task_id
+            gen.provider_request_id = request_id
+            # Persist before polling so a network interruption can be recovered
+            # without submitting a duplicate provider task.
+            self.storage.update_generation(gen)
+
+        kwargs["on_provider_ids"] = persist_provider_ids
 
         self._wanx_model.generate(
             prompt=gen.prompt,
@@ -407,7 +553,7 @@ class PlaygroundService:
             "aspect_ratio": params.get("aspect_ratio", params.get("ratio", "16:9")),
             "seed": params.get("seed"),
             "watermark": params.get("watermark", False),
-            "generate_audio": params.get("generate_audio", False),
+            "generate_audio": self._audio_enabled(params),
             "generation_mode": gen.mode.value,
         }
         if gen.mode == PlaygroundMode.R2V and gen.input_media:
@@ -439,6 +585,9 @@ class PlaygroundService:
         params = gen.parameters
         img_path, img_url = self._resolve_first_input_media(gen)
 
+        sound = params.get("sound")
+        if isinstance(sound, bool):
+            sound = "on" if sound else "off"
         self._kling_model.generate(
             prompt=gen.prompt,
             output_path=out_path,
@@ -449,7 +598,7 @@ class PlaygroundService:
             negative_prompt=gen.negative_prompt,
             aspect_ratio=params.get("aspect_ratio", "16:9"),
             mode=params.get("mode", "std"),
-            sound=params.get("sound", "off"),
+            sound=sound or ("on" if self._audio_enabled(params) else "off"),
             cfg_scale=params.get("cfg_scale"),
         )
 
@@ -473,7 +622,7 @@ class PlaygroundService:
             resolution=params.get("resolution", "720p"),
             aspect_ratio=params.get("aspect_ratio", "16:9"),
             seed=params.get("seed", 0),
-            audio=params.get("audio", True),
+            audio=self._audio_enabled(params),
             movement_amplitude=params.get("movement_amplitude", "auto"),
         )
 

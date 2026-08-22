@@ -27,6 +27,12 @@ export interface PlaygroundModelOption {
     negativePrompt?: boolean;
     promptExtend?: boolean;
     watermark?: boolean;
+    /** Native audio generation support (provider payload uses `audio`). */
+    audio?: boolean;
+    /** Kling's equivalent of the audio toggle (`sound: on/off`). */
+    sound?: boolean;
+    /** Vidu's equivalent of the audio toggle (`viduAudio`). */
+    viduAudio?: boolean;
   };
   maxReferenceImages: number;
 }
@@ -198,6 +204,9 @@ function normalizeParams(
   if (typeof raw.negativePrompt === 'boolean') result.negativePrompt = raw.negativePrompt;
   if (typeof raw.promptExtend === 'boolean') result.promptExtend = raw.promptExtend;
   if (typeof raw.watermark === 'boolean') result.watermark = raw.watermark;
+  if (typeof raw.audio === 'boolean') result.audio = raw.audio;
+  if (typeof raw.sound === 'boolean') result.sound = raw.sound;
+  if (typeof raw.viduAudio === 'boolean') result.viduAudio = raw.viduAudio;
 
   return result;
 }
@@ -267,8 +276,23 @@ export function getModelsForMode(mode: PlaygroundMode): PlaygroundModelOption[] 
  * Return the default (recommended or first) model ID for a mode.
  */
 export function getDefaultModelForMode(mode: PlaygroundMode): string {
+  return resolveModelForMode(mode);
+}
+
+/**
+ * Keep the selected model compatible with the active generation mode. The
+ * model picker is rendered lazily, so submission code cannot rely on its
+ * mount effect to repair an empty or stale selection.
+ */
+export function resolveModelForMode(
+  mode: PlaygroundMode,
+  preferredModelId?: string,
+): string {
   const models = getModelsForMode(mode);
-  const recommended = models.find((m) => m.recommended);
+  if (preferredModelId && models.some((model) => model.id === preferredModelId)) {
+    return preferredModelId;
+  }
+  const recommended = models.find((model) => model.recommended);
   return recommended?.id ?? models[0]?.id ?? '';
 }
 

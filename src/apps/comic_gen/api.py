@@ -2406,7 +2406,7 @@ class CreateVideoTaskRequest(BaseModel):
     duration: int = 5
     seed: Optional[int] = None
     resolution: str = "720p"
-    generate_audio: bool = False
+    generate_audio: bool = True
     audio_url: Optional[str] = None
     prompt_extend: bool = True
     negative_prompt: Optional[str] = None

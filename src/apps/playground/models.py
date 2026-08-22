@@ -26,7 +26,11 @@ class PlaygroundGeneration(BaseModel):
     model_id: str = Field(..., description="Model identifier from model catalog")
     prompt: str = Field(..., description="Text prompt for generation")
     negative_prompt: Optional[str] = Field(None, description="Negative prompt to exclude undesired elements")
-    input_media: List[str] = Field(default_factory=list, description="Input file paths for image/video-conditioned modes")
+    input_media: List[str] = Field(
+        default_factory=list,
+        max_length=9,
+        description="Input file paths for image/video-conditioned modes (up to 9)",
+    )
     parameters: dict = Field(default_factory=dict, description="Generation parameters (resolution, duration, aspect_ratio, etc.)")
     batch_size: int = Field(1, ge=1, le=4, description="Number of outputs to generate per request (1-4)")
     outputs: List[PlaygroundOutput] = Field(default_factory=list, description="Generated outputs")
@@ -56,7 +60,11 @@ class GenerateRequest(BaseModel):
     model_id: str = Field(..., description="Model identifier from model catalog")
     prompt: str = Field(..., description="Text prompt for generation")
     negative_prompt: Optional[str] = Field(None, description="Negative prompt to exclude undesired elements")
-    input_media: Optional[List[str]] = Field(None, description="Input file paths for image/video-conditioned modes")
+    input_media: Optional[List[str]] = Field(
+        None,
+        max_length=9,
+        description="Input file paths for image/video-conditioned modes (up to 9)",
+    )
     parameters: Optional[dict] = Field(None, description="Generation parameters (resolution, duration, aspect_ratio, etc.)")
     batch_size: Optional[int] = Field(1, ge=1, le=4, description="Number of outputs to generate (1-4)")
 

@@ -166,6 +166,12 @@ models:
           selection_group: i2v
           visible_in: []
           order: 5
+        duration:
+          type: slider
+          min: 2
+          max: 15
+          step: 1
+          default: 5
       videoedit:
         legacy_id: wan2.7-videoedit
         display_name: Wan 2.7 VideoEdit
@@ -176,6 +182,12 @@ models:
           selection_group: i2v
           visible_in: []
           order: 2
+        duration:
+          type: slider
+          min: 2
+          max: 10
+          step: 1
+          default: 5
 
   # ── Wan 2.6 Video (deprecated — replaced by 2.7) ──────────────────
   - id: wan/wan2.6-video
