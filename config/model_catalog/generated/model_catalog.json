@@ -64,6 +64,9 @@
       "credential_sources": {
         "mulerouter": [
           "MULEROUTER_API_KEY"
+        ],
+        "xlinks": [
+          "XLINKS_API_KEY"
         ]
       },
       "default_backend": "mulerouter",
@@ -82,7 +85,8 @@
         "gpt-image-"
       ],
       "supported_backends": [
-        "mulerouter"
+        "mulerouter",
+        "xlinks"
       ],
       "supported_modalities": [
         "t2i",
@@ -465,6 +469,9 @@
       "credential_sources": {
         "mulerouter": [
           "MULEROUTER_API_KEY"
+        ],
+        "xlinks": [
+          "XLINKS_API_KEY"
         ]
       },
       "default_backend": "mulerouter",
@@ -494,11 +501,18 @@
       "runtime": {
         "mulerouter": {
           "gateway": "mulerouter"
+        },
+        "xlinks": {
+          "capabilities": [
+            "t2i"
+          ],
+          "gateway": "xlinks"
         }
       },
       "status": "active",
       "supported_backends": [
-        "mulerouter"
+        "mulerouter",
+        "xlinks"
       ],
       "supported_modalities": [
         "t2i",
@@ -2169,6 +2183,9 @@
       "credential_sources": {
         "mulerouter": [
           "MULEROUTER_API_KEY"
+        ],
+        "xlinks": [
+          "XLINKS_API_KEY"
         ]
       },
       "default_backend": "mulerouter",
@@ -2219,7 +2236,8 @@
       ],
       "status": "active",
       "supported_backends": [
-        "mulerouter"
+        "mulerouter",
+        "xlinks"
       ],
       "transport": {
         "audio_input_mode": {
@@ -5249,6 +5267,9 @@
       "credential_sources": {
         "mulerouter": [
           "MULEROUTER_API_KEY"
+        ],
+        "xlinks": [
+          "XLINKS_API_KEY"
         ]
       },
       "default_backend": "mulerouter",
@@ -5303,11 +5324,18 @@
       "runtime": {
         "mulerouter": {
           "gateway": "mulerouter"
+        },
+        "xlinks": {
+          "capabilities": [
+            "t2i"
+          ],
+          "gateway": "xlinks"
         }
       },
       "status": "active",
       "supported_backends": [
-        "mulerouter"
+        "mulerouter",
+        "xlinks"
       ],
       "transport": {
         "audio_input_mode": {

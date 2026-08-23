@@ -20,9 +20,9 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { motion, AnimatePresence } from "framer-motion";
-import { X, Sparkles, Loader2, Check, RefreshCw, Wand2, Palette, Star, ShieldCheck } from "lucide-react";
+import { X, Sparkles, Loader2, Check, RefreshCw, Wand2, Palette, Star } from "lucide-react";
 import { useTranslations } from "next-intl";
-import { api } from "@/lib/api";
+import { api, type EffectiveImageEngine } from "@/lib/api";
 import { useProjectStore, IMAGE_MODELS } from "@/store/projectStore";
 import { toast } from "@/store/toastStore";
 import { getAssetUrl } from "@/lib/utils";
@@ -103,7 +103,6 @@ interface ImageVariant {
     id: string;
     url: string;
     is_favorited?: boolean;
-    provider_asset_ids?: Record<string, string>;
 }
 
 type CharacterTemplate = "simple" | "detailed" | "design_sheet";
@@ -180,7 +179,6 @@ function readVariants(entity: any, kind: CastKind): ImageVariant[] {
                 id: v.id,
                 url: v.url,
                 is_favorited: v.is_favorited,
-                provider_asset_ids: v.provider_asset_ids,
             }));
         }
         const legacy = entity?.full_body_asset?.variants ?? [];
@@ -188,7 +186,6 @@ function readVariants(entity: any, kind: CastKind): ImageVariant[] {
             id: v.id,
             url: v.url,
             is_favorited: v.is_favorited,
-            provider_asset_ids: v.provider_asset_ids,
         }));
     }
     const arr = entity?.image_asset?.variants ?? [];
@@ -196,7 +193,6 @@ function readVariants(entity: any, kind: CastKind): ImageVariant[] {
         id: v.id,
         url: v.url,
         is_favorited: v.is_favorited,
-        provider_asset_ids: v.provider_asset_ids,
     }));
 }
 
@@ -234,13 +230,8 @@ export default function CastWorkbenchModal({ isOpen, kind, entityId, onClose }: 
 
     const variants = useMemo(() => readVariants(entity, kind ?? "character"), [entity, kind]);
     const selectedId = useMemo(() => readSelectedId(entity, kind ?? "character"), [entity, kind]);
-    const selectedVariant = useMemo(
-        () => variants.find((variant) => variant.id === selectedId) ?? null,
-        [variants, selectedId],
-    );
-
     const [prompt, setPrompt] = useState("");
-    const [batchSize, setBatchSize] = useState(2);
+    const [batchSize, setBatchSize] = useState(IS_CLOUD_DEPLOYMENT ? 1 : 2);
     const [aspectRatioOverride, setAspectRatioOverride] = useState<string | null>(null);
     const [modelOverride, setModelOverride] = useState<string | null>(null);
     const [positiveExpanded, setPositiveExpanded] = useState(false);
@@ -248,14 +239,15 @@ export default function CastWorkbenchModal({ isOpen, kind, entityId, onClose }: 
     const [finalPreviewExpanded, setFinalPreviewExpanded] = useState(true);
     const [applyStyle, setApplyStyle] = useState(true);
     const [galleryFilter, setGalleryFilter] = useState<"all" | "favorited">("all");
-    const [arkAssetIdInput, setArkAssetIdInput] = useState("");
-    const [bindingSaving, setBindingSaving] = useState(false);
+    const [cloudEngine, setCloudEngine] = useState<EffectiveImageEngine | null>(null);
     const generating = generatingTasks.some((t) => t.assetId === entityId);
     // Effective t2i model — drives the "design_sheet" template gating: that
     // template only works with gpt-image-2, so it stays locked unless the
     // user has selected gpt-image-2 (override or project default).
     const selectedModelId = modelOverride || currentProject?.model_settings?.t2i_model || "wan2.1-t2i";
-    const isGptImage2 = !IS_CLOUD_DEPLOYMENT && selectedModelId === "gpt-image-2";
+    const isGptImage2 = IS_CLOUD_DEPLOYMENT
+        ? cloudEngine?.features.character_design_sheet === true
+        : selectedModelId === "gpt-image-2";
     const [selectedTemplate, setSelectedTemplate] = useState<CharacterTemplate>("simple");
     const [pendingTemplate, setPendingTemplate] = useState<CharacterTemplate | null>(null);
     const [promptDirty, setPromptDirty] = useState(false);
@@ -275,16 +267,19 @@ export default function CastWorkbenchModal({ isOpen, kind, entityId, onClose }: 
         }
     }, [isOpen, entity, kind, selectedTemplate]);
 
-    useEffect(() => {
-        setArkAssetIdInput(
-            selectedVariant?.provider_asset_ids?.volcengine_ark || "",
-        );
-    }, [selectedVariant]);
-
     const [presets, setPresets] = useState<any[]>([]);
     useEffect(() => {
         api.getStylePresets().then((res: any) => setPresets(res?.presets || res || [])).catch(() => {});
     }, []);
+
+    useEffect(() => {
+        if (!IS_CLOUD_DEPLOYMENT || !isOpen) return;
+        let cancelled = false;
+        api.getEffectiveImageEngine()
+            .then((engine) => { if (!cancelled) setCloudEngine(engine); })
+            .catch(() => { if (!cancelled) setCloudEngine(null); });
+        return () => { cancelled = true; };
+    }, [isOpen]);
 
     if (!isOpen || !kind || !entity || !currentProject) return null;
 
@@ -368,7 +363,9 @@ export default function CastWorkbenchModal({ isOpen, kind, entityId, onClose }: 
             // Refresh failed — proceed with cached data; backend will reject
             // if the entity truly is stale and the poll surfaces the error.
         }
-        const effectiveBatchSize = Math.max(1, Math.min(4, batchSize));
+        const effectiveBatchSize = IS_CLOUD_DEPLOYMENT
+            ? 1
+            : Math.max(1, Math.min(4, batchSize));
         addGeneratingTask(entity.id, kind === "character" ? "reference_sheet" : "all", effectiveBatchSize);
 
         const progressId = toast.progress(t("toastGenStart", { kind: t(`kind.${kind}`) }), {
@@ -453,37 +450,6 @@ export default function CastWorkbenchModal({ isOpen, kind, entityId, onClose }: 
             );
             updateProject(currentProject.id, updated);
         } catch { /* silent — non-critical */ }
-    };
-
-    const handleSaveArkAssetId = async (clear = false) => {
-        if (!selectedVariant) return;
-        const nextValue = clear ? "" : arkAssetIdInput.trim();
-        setBindingSaving(true);
-        try {
-            const updated = await api.bindAssetVariantProviderId(
-                currentProject.id,
-                entity.id,
-                kind,
-                selectedVariant.id,
-                nextValue,
-            );
-            updateProject(currentProject.id, updated);
-            if (clear) setArkAssetIdInput("");
-            toast.success(clear ? t("arkAssetCleared") : t("arkAssetSaved"), {
-                projectId: currentProject.id,
-                projectTitle: currentProject.title,
-                body: clear ? undefined : t("arkAssetSavedBody"),
-            });
-        } catch (err: any) {
-            const detail = err?.response?.data?.detail || err?.message || t("arkAssetSaveError");
-            toast.error(t("arkAssetSaveError"), {
-                projectId: currentProject.id,
-                projectTitle: currentProject.title,
-                body: String(detail),
-            });
-        } finally {
-            setBindingSaving(false);
-        }
     };
 
     const filteredVariants = galleryFilter === "favorited"
@@ -803,7 +769,7 @@ export default function CastWorkbenchModal({ isOpen, kind, entityId, onClose }: 
                                 </p>
 
                                 {/* Batch — full row */}
-                                <div>
+                                {!IS_CLOUD_DEPLOYMENT && <div>
                                     <label className="block font-mono text-[0.625rem] uppercase tracking-[0.16em] text-text-muted mb-2">
                                         {t("batchLabel")}
                                     </label>
@@ -823,7 +789,7 @@ export default function CastWorkbenchModal({ isOpen, kind, entityId, onClose }: 
                                             </button>
                                         ))}
                                     </div>
-                                </div>
+                                </div>}
 
                                 {/* Ratio — full row */}
                                 <div>
@@ -848,17 +814,25 @@ export default function CastWorkbenchModal({ isOpen, kind, entityId, onClose }: 
                                     </div>
                                 </div>
 
-                                {/* Model — desktop only; cloud routing is server-owned. */}
-                                {!IS_CLOUD_DEPLOYMENT && <div>
+                                {/* Model selection stays server-owned in Cloud mode. */}
+                                <div>
                                     <label className="block font-mono text-[0.625rem] uppercase tracking-[0.16em] text-text-muted mb-2">
                                         {t("modelLabel")}
                                     </label>
-                                    <GroupedModelGrid
-                                        models={IMAGE_MODELS}
-                                        selectedId={modelOverride || currentProject.model_settings?.t2i_model || "wan2.1-t2i"}
-                                        onSelect={(id) => setModelOverride(id === (currentProject.model_settings?.t2i_model || "wan2.1-t2i") ? null : id)}
-                                    />
-                                </div>}
+                                    {IS_CLOUD_DEPLOYMENT ? (
+                                        <div className="rounded-md border border-glass-border bg-glass px-3 py-2 text-[0.75rem] text-text-secondary">
+                                            {cloudEngine
+                                                ? `${cloudEngine.model_display_name} · ${cloudEngine.provider_display_name}`
+                                                : "—"}
+                                        </div>
+                                    ) : (
+                                        <GroupedModelGrid
+                                            models={IMAGE_MODELS}
+                                            selectedId={modelOverride || currentProject.model_settings?.t2i_model || "wan2.1-t2i"}
+                                            onSelect={(id) => setModelOverride(id === (currentProject.model_settings?.t2i_model || "wan2.1-t2i") ? null : id)}
+                                        />
+                                    )}
+                                </div>
                             </div>
 
                             {/* Generate CTA */}
@@ -981,48 +955,6 @@ export default function CastWorkbenchModal({ isOpen, kind, entityId, onClose }: 
                             {/* Gallery bottom operations — always visible */}
                             {variants.length > 0 && (
                                 <div className="mt-auto pt-4 border-t border-glass-border space-y-3">
-                                    {selectedVariant && (
-                                        <div className="rounded-lg border border-cyan-400/20 bg-cyan-400/5 p-3">
-                                            <div className="flex items-center gap-2 mb-2">
-                                                <ShieldCheck size={14} className="text-cyan-300" />
-                                                <span className="text-[0.75rem] font-medium text-cyan-100">
-                                                    {t("arkAssetTitle")}
-                                                </span>
-                                                {selectedVariant.provider_asset_ids?.volcengine_ark && (
-                                                    <span className="ml-auto rounded-full border border-cyan-400/25 bg-cyan-400/10 px-2 py-0.5 text-[0.625rem] text-cyan-200">
-                                                        {t("arkAssetBound")}
-                                                    </span>
-                                                )}
-                                            </div>
-                                            <p className="mb-2 text-[0.6875rem] leading-relaxed text-text-muted">
-                                                {t("arkAssetHint")}
-                                            </p>
-                                            <div className="flex items-center gap-2">
-                                                <input
-                                                    value={arkAssetIdInput}
-                                                    onChange={(event) => setArkAssetIdInput(event.target.value)}
-                                                    placeholder="asset-..."
-                                                    className="min-w-0 flex-1 rounded-md border border-glass-border bg-black/30 px-2.5 py-1.5 font-mono text-[0.6875rem] text-foreground placeholder:text-text-muted focus:border-cyan-400/40 focus:outline-none"
-                                                />
-                                                <button
-                                                    onClick={() => handleSaveArkAssetId(false)}
-                                                    disabled={bindingSaving || !arkAssetIdInput.trim()}
-                                                    className="rounded-md border border-cyan-400/30 bg-cyan-400/10 px-3 py-1.5 text-[0.6875rem] text-cyan-100 transition-colors hover:bg-cyan-400/15 disabled:cursor-not-allowed disabled:opacity-40"
-                                                >
-                                                    {bindingSaving ? t("arkAssetSaving") : t("arkAssetSave")}
-                                                </button>
-                                                {selectedVariant.provider_asset_ids?.volcengine_ark && (
-                                                    <button
-                                                        onClick={() => handleSaveArkAssetId(true)}
-                                                        disabled={bindingSaving}
-                                                        className="rounded-md px-2 py-1.5 text-[0.6875rem] text-text-muted transition-colors hover:text-red-300 disabled:opacity-40"
-                                                    >
-                                                        {t("arkAssetClear")}
-                                                    </button>
-                                                )}
-                                            </div>
-                                        </div>
-                                    )}
                                     <div className="flex items-center gap-2 flex-wrap">
                                         <span className="text-[0.6875rem] text-text-muted mr-auto">
                                             {variants.filter(v => v.is_favorited).length > 0

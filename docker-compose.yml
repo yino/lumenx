@@ -15,7 +15,7 @@ x-cloud-environment: &cloud-environment
   LUMENX_OSS_PRIVATE: "true"
   LUMENX_SESSION_SECRET_FILE: /run/secrets/session_secret
   LUMENX_MODEL_CATALOG_PATH: /app/config/model_catalog/generated/model_catalog.json
-  LUMENX_PROVIDER_SECRET_REFS: ${LUMENX_PROVIDER_SECRET_REFS:-DASHSCOPE_API_KEY}
+  LUMENX_PROVIDER_SECRET_REFS: ${LUMENX_PROVIDER_SECRET_REFS:-DASHSCOPE_API_KEY,XLINKS_API_KEY}
   LUMENX_PROVIDER_ACCOUNT_ID: ${LUMENX_PROVIDER_ACCOUNT_ID:-}
   LUMENX_LOCAL_IMPORT_ROOT: /imports
   LUMENX_LOCAL_IMPORT_MAX_BYTES: ${LUMENX_LOCAL_IMPORT_MAX_BYTES:-10737418240}
@@ -30,6 +30,8 @@ x-cloud-environment: &cloud-environment
   LUMENX_ADMIN_SENSITIVE_READ_LIMIT: ${LUMENX_ADMIN_SENSITIVE_READ_LIMIT:-60}
   LUMENX_ADMIN_EXPORT_LIMIT: ${LUMENX_ADMIN_EXPORT_LIMIT:-20}
   DASHSCOPE_API_KEY_FILE: /run/secrets/dashscope_api_key
+  XLINKS_API_KEY_FILE: /run/secrets/xlinks_api_key
+  XLINKS_BASE_URL: ${XLINKS_BASE_URL:-https://api.xlinks.site/v1}
   NO_PROXY: "*.aliyuncs.com,localhost,127.0.0.1,postgres,redis"
 
 x-cloud-secrets: &cloud-secrets
@@ -38,6 +40,7 @@ x-cloud-secrets: &cloud-secrets
   - oss_access_key_id
   - oss_access_key_secret
   - dashscope_api_key
+  - xlinks_api_key
 
 services:
   postgres:
@@ -286,3 +289,5 @@ secrets:
     file: ${LUMENX_OSS_ACCESS_KEY_SECRET_FILE:-./secrets/oss_access_key_secret.txt}
   dashscope_api_key:
     file: ${DASHSCOPE_API_KEY_FILE:-./secrets/dashscope_api_key.txt}
+  xlinks_api_key:
+    file: ${XLINKS_API_KEY_FILE:-./secrets/xlinks_api_key.txt}

@@ -25,7 +25,10 @@ from .configuration_service import ConfigurationService
 from .contracts import TaskDispatcher, UserContext, WorkspaceContext
 from .feature_flags import CloudFeatureDisabledError, CloudFeatureGate
 from .identifiers import parse_database_id
-from .model_routing import DatabaseModelConfigurationProvider
+from .model_routing import (
+    DatabaseModelConfigurationProvider,
+    ModelRouteUnavailableError,
+)
 from .ticket_math import MICROTICKETS_PER_TICKET
 from .ticket_reservation import (
     AIConcurrencyLimitError,
@@ -110,6 +113,26 @@ def submitted_task_response(task: SubmittedAITask) -> dict[str, Any]:
         },
         "reused": task.reused,
         "dispatched": task.dispatched,
+    }
+
+
+def effective_engine_response(route) -> dict[str, Any]:
+    is_gpt_image_2 = (
+        route.capability == "image.t2i"
+        and route.provider_model_id == "gpt-image-2"
+    )
+    provider_names = {"xlinks": "Xlinks", "mulerouter": "MuleRouter"}
+    return {
+        "capability": route.capability,
+        "model_id": route.provider_model_id,
+        "model_display_name": route.display_name,
+        "provider_display_name": provider_names.get(
+            route.provider,
+            route.provider.replace("_", " ").title(),
+        ),
+        "features": {
+            "character_design_sheet": is_gpt_image_2,
+        },
     }
 
 
@@ -360,6 +383,26 @@ def install_cloud_ai_gateway_api(
         context: WorkspaceContext = Depends(require_context),
     ) -> dict[str, Any]:
         return submitted_task_response(submitter.submit(context, payload))
+
+    @router.get("/effective-engine")
+    def get_effective_engine(
+        capability: str = "image.t2i",
+        context: WorkspaceContext = Depends(require_context),
+    ) -> dict[str, Any]:
+        if capability != "image.t2i":
+            raise AIGatewayContractError(
+                "AI_REQUEST_INVALID",
+                "当前仅支持查询文生图有效引擎",
+            )
+        routing = DatabaseModelConfigurationProvider(
+            ConfigurationService(auth.database),
+            context.identity,
+        )
+        try:
+            route = routing.select_route(capability, {})
+        except ModelRouteUnavailableError as exc:
+            raise AIGatewayConfigurationError(str(exc)) from exc
+        return effective_engine_response(route)
 
     app.include_router(router)
     app.state.cloud_ai_gateway = submitter

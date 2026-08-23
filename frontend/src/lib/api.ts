@@ -997,6 +997,40 @@ export function getSafeAuthError(error: unknown): AuthAPIError {
 export type ProviderMode = "dashscope" | "vendor";
 export type SeedanceProviderMode = "ark" | "mulerouter";
 
+function normalizeCloudXlinksT2IParameters(
+    parameters: Record<string, unknown> | undefined,
+): Record<string, string | number> {
+    const requestedSize = String(parameters?.size || parameters?.resolution || "1024x1024")
+        .toLowerCase()
+        .replace("*", "x");
+    let size = "1024x1024";
+    if (["portrait", "9:16", "3:4"].includes(requestedSize)) {
+        size = "1024x1536";
+    } else if (["landscape", "16:9", "4:3"].includes(requestedSize)) {
+        size = "1536x1024";
+    } else if (requestedSize.includes("x")) {
+        const [width, height] = requestedSize.split("x", 2).map(Number);
+        if (Number.isFinite(width) && Number.isFinite(height) && width !== height) {
+            size = width > height ? "1536x1024" : "1024x1536";
+        }
+    }
+    const requestedQuality = String(parameters?.quality || "high").toLowerCase();
+    const quality = ["auto", "low", "medium", "high"].includes(requestedQuality)
+        ? requestedQuality
+        : "high";
+    const requestedBackground = String(parameters?.background || "auto").toLowerCase();
+    const background = ["auto", "opaque", "transparent"].includes(requestedBackground)
+        ? requestedBackground
+        : "auto";
+    return {
+        count: 1,
+        size,
+        quality,
+        output_format: "png",
+        background,
+    };
+}
+
 export type AdminAICapability =
     | "script.analysis"
     | "prompt.polish"
@@ -1008,6 +1042,16 @@ export type AdminAICapability =
     | "video.v2v"
     | "speech.tts"
     | "audio.sfx";
+
+export interface EffectiveImageEngine {
+    capability: "image.t2i";
+    model_id: string;
+    model_display_name: string;
+    provider_display_name: string;
+    features: {
+        character_design_sheet: boolean;
+    };
+}
 
 export interface AdminParameterRule {
     name: string;
@@ -2426,6 +2470,13 @@ async function withProjectVersionRetry<T>(
 }
 
 export const api = {
+    getEffectiveImageEngine: async (): Promise<EffectiveImageEngine> => {
+        const res = await apiClient.get(`${API_URL}/ai/effective-engine`, {
+            params: { capability: "image.t2i" },
+        });
+        return res.data;
+    },
+
     createProject: async (title: string, text: string, skipAnalysis: boolean = false, workflowMode: string = "r2v", seriesId?: string) => {
         const res = await apiClient.post(`${API_URL}/projects`, { title, text, workflow_mode: workflowMode, series_id: seriesId }, {
             params: { skip_analysis: skipAnalysis }
@@ -2810,11 +2861,11 @@ export const api = {
 
     generateAsset: async (scriptId: string, assetId: string, assetType: string, stylePreset: string, stylePrompt?: string, generationType: string = "all", prompt: string = "", applyStyle: boolean = true, negativePrompt: string = "", batchSize: number = 1, modelName?: string, aspectRatio?: string) => {
         const sizeByRatio: Record<string, string> = {
-            "16:9": "1280*720",
-            "9:16": "720*1280",
-            "1:1": "1280*1280",
-            "4:3": "1280*720",
-            "3:4": "720*1280",
+            "16:9": "1536x1024",
+            "9:16": "1024x1536",
+            "1:1": "1024x1024",
+            "4:3": "1536x1024",
+            "3:4": "1024x1536",
         };
         const res = await apiClient.post(`${API_URL}/projects/${scriptId}/assets/generate`, withoutCloudModelOverrides({
             asset_id: assetId,
@@ -2830,11 +2881,11 @@ export const api = {
             aspect_ratio: aspectRatio,
             ...(IS_CLOUD_DEPLOYMENT ? {
                 parameters: {
-                    count: Math.max(1, Math.min(4, batchSize)),
-                    size: sizeByRatio[aspectRatio || ""] || "1280*1280",
-                    prompt_extend: true,
-                    watermark: false,
-                    ...(negativePrompt ? { negative_prompt: negativePrompt } : {}),
+                    count: 1,
+                    size: sizeByRatio[aspectRatio || ""] || "1024x1024",
+                    quality: "high",
+                    output_format: "png",
+                    background: "auto",
                 },
             } : {}),
         }));
@@ -3239,12 +3290,7 @@ export const api = {
             prompt: prompt,
             batch_size: batchSize,
             ...(IS_CLOUD_DEPLOYMENT ? {
-                parameters: {
-                    count: Math.max(1, Math.min(4, batchSize)),
-                    size: "1280*720",
-                    prompt_extend: true,
-                    watermark: false,
-                },
+                parameters: normalizeCloudXlinksT2IParameters({ size: "16:9" }),
             } : {}),
         });
         return res.data;
@@ -4334,8 +4380,10 @@ export const playgroundApi = {
           prompt: data.prompt,
           negative_prompt: data.negative_prompt,
           media_ids: requireCloudMediaIds(data.input_media || []),
-          parameters: data.parameters,
-          batch_size: data.batch_size,
+          parameters: data.mode === "t2i"
+            ? normalizeCloudXlinksT2IParameters(data.parameters)
+            : data.parameters,
+          batch_size: data.mode === "t2i" ? 1 : data.batch_size,
           idempotency_key: data.idempotency_key || createIdempotencyKey("playground"),
         }
       : data;

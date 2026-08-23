@@ -250,6 +250,97 @@ describe("云端 API 客户端", () => {
     });
   });
 
+  it("PC 文生图固定为 Xlinks 单图契约且不允许浏览器覆盖路由", async () => {
+    const { api, apiClient, playgroundApi, setActiveWorkspaceId } = await import("@/lib/api");
+    const captured: CapturedRequest[] = [];
+    setActiveWorkspaceId("workspace-1");
+    apiClient.defaults.adapter = async (config): Promise<AxiosResponse> => {
+      const data = typeof config.data === "string" ? JSON.parse(config.data) : config.data;
+      captured.push({ url: config.url, data });
+      return {
+        config,
+        data: config.url?.endsWith("/playground/generate")
+          ? {
+              task_id: "task-t2i-1",
+              status: "queued",
+              quoted_microtickets: "1000",
+              quoted_tickets: "1",
+              tokens_per_ticket: "1000",
+              actual_model: {
+                display_name: "GPT Image 2 · Xlinks",
+                model_id: "gpt-image-2",
+              },
+            }
+          : { ok: true },
+        headers: new AxiosHeaders(),
+        status: 202,
+        statusText: "Accepted",
+      };
+    };
+
+    await api.generateAsset(
+      "5",
+      "character-1",
+      "character",
+      "3D国漫都市风格",
+      "",
+      "reference_sheet",
+      "普通男性角色设定图",
+      true,
+      "文字、水印",
+      4,
+      "browser-model",
+      "9:16",
+    );
+    await playgroundApi.generate({
+      mode: "t2i",
+      model_id: "browser-model",
+      prompt: "现代都市角色",
+      input_media: [],
+      parameters: {
+        size: "16:9",
+        quality: "unsupported",
+        background: "transparent",
+      },
+      batch_size: 4,
+    });
+
+    expect(captured[0]).toMatchObject({
+      url: expect.stringContaining("/projects/5/assets/generate"),
+      data: {
+        asset_id: "character-1",
+        asset_type: "character",
+        parameters: {
+          count: 1,
+          size: "1024x1536",
+          quality: "high",
+          output_format: "png",
+          background: "auto",
+        },
+      },
+    });
+    expect(captured[0].data).not.toHaveProperty("model_name");
+    expect(captured[0].data).not.toHaveProperty("provider");
+    expect(captured[1]).toMatchObject({
+      url: expect.stringContaining("/playground/generate"),
+      data: {
+        mode: "t2i",
+        prompt: "现代都市角色",
+        parameters: {
+          count: 1,
+          size: "1536x1024",
+          quality: "high",
+          output_format: "png",
+          background: "transparent",
+        },
+        batch_size: 1,
+      },
+    });
+    expect(captured[1].data).not.toHaveProperty("model_id");
+    expect(captured[1].data).not.toHaveProperty("provider");
+    expect(captured[1].data).not.toHaveProperty("media_ids");
+  });
+
   it("Playground 模板写入携带乐观版本", async () => {
     const { apiClient, playgroundApi } = await import("@/lib/api");
     const captured: CapturedRequest[] = [];

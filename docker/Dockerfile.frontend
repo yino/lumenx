@@ -3,9 +3,12 @@ FROM node:20-alpine AS builder
 
 WORKDIR /app
 
+# 固定全局 npm 版本（独立层，package-lock 变化时不会连带重装）
+RUN npm install --global npm@10.9.4 --no-audit --no-fund
+
 COPY frontend/package.json frontend/package-lock.json* ./
-RUN npm install --global npm@10.9.4 --no-audit --no-fund \
-    && npm ci --no-audit --no-fund \
+# 缓存 npm 下载缓存：lock 文件不变时依赖安装走缓存
+RUN --mount=type=cache,target=/root/.npm npm ci --no-audit --no-fund \
     && test -x node_modules/.bin/next
 
 COPY frontend/ .
@@ -14,7 +17,8 @@ COPY frontend/ .
 ENV NODE_ENV=production
 ENV DOCKER_BUILD=true
 ENV NEXT_PUBLIC_DEPLOYMENT_MODE=cloud
-RUN npm run build
+# 缓存 Next.js 编译缓存（.next/cache）：代码增量改动时只重编译变更模块
+RUN --mount=type=cache,target=/app/.next/cache npm run build
 
 # Stage 2: Serve with nginx
 FROM nginx:alpine

@@ -10,7 +10,11 @@ from fastapi.testclient import TestClient
 
 from src.apps.comic_gen.models import StoryboardFrame
 from src.platform.ai_gateway import SubmittedAITask
-from src.platform.ai_gateway_api import install_cloud_ai_gateway_api
+from src.platform.ai_gateway_api import (
+    effective_engine_response,
+    install_cloud_ai_gateway_api,
+)
+from src.platform.contracts import ModelRouteSnapshot
 from src.platform.asset_api import install_cloud_asset_api
 from src.platform.asset_service import CloudAssetService
 from src.platform.content_api import install_cloud_content_api
@@ -41,6 +45,35 @@ class RecordingSubmitter:
             reused=False,
             dispatched=True,
         )
+
+
+def test_effective_image_engine_projection_exposes_only_safe_identity() -> None:
+    route = ModelRouteSnapshot(
+        config_version_id="config-secret",
+        route_id="route-secret",
+        capability="image.t2i",
+        provider="xlinks",
+        provider_model_id="gpt-image-2",
+        display_name="GPT Image 2",
+        parameters={"size": "1024x1024"},
+        metering_formula={"kind": "image", "per_image_tokens": 99},
+        fallback_policy={"enabled": False},
+        secret_ref="XLINKS_API_KEY",
+    )
+
+    projection = effective_engine_response(route)
+
+    assert projection == {
+        "capability": "image.t2i",
+        "model_id": "gpt-image-2",
+        "model_display_name": "GPT Image 2",
+        "provider_display_name": "Xlinks",
+        "features": {"character_design_sheet": True},
+    }
+    serialized = str(projection)
+    assert "XLINKS_API_KEY" not in serialized
+    assert "route-secret" not in serialized
+    assert "config-secret" not in serialized
 
 
 @pytest.fixture

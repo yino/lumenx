@@ -21,6 +21,7 @@ def test_local_ai_bootstrap_contract_is_local_only() -> None:
     assert "LUMENX_LOCAL_DOCKER" in script
     assert "LUMENX_LOCAL_AI_BOOTSTRAP_ENABLED" in script
     assert "DASHSCOPE_API_KEY" in script
+    assert "XLINKS_API_KEY" in script
 
 
 def test_local_ai_routes_are_valid_and_versioned() -> None:
@@ -48,6 +49,7 @@ def test_local_ai_routes_are_valid_and_versioned() -> None:
             _catalog_route,
             _default_route,
             _speech_route,
+            _xlinks_t2i_route,
         )
 
         service = ConfigurationService(database)
@@ -81,6 +83,7 @@ def test_local_ai_routes_are_valid_and_versioned() -> None:
                 for capability in TEXT_CAPABILITIES
             ),
             _speech_route(),
+            _xlinks_t2i_route(),
             *(
                 _catalog_route(capability, model_id, catalog)
                 for capability, model_id in CATALOG_ROUTE_MODELS.items()
@@ -119,6 +122,23 @@ def test_local_ai_routes_are_valid_and_versioned() -> None:
             for route in activated.draft.routes
             if route.capability in CATALOG_ROUTE_MODELS
         )
+        t2i = next(
+            route
+            for route in activated.draft.routes
+            if route.capability is AICapability.IMAGE_T2I
+        )
+        assert (t2i.provider, t2i.provider_model_id, t2i.secret_ref) == (
+            "xlinks",
+            "gpt-image-2",
+            "XLINKS_API_KEY",
+        )
+        assert t2i.default_parameters == {
+            "count": 1,
+            "size": "1024x1024",
+            "quality": "high",
+            "output_format": "png",
+            "background": "auto",
+        }
         speech = next(
             route
             for route in activated.draft.routes

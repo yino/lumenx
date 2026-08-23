@@ -5,6 +5,7 @@ import { usePlaygroundStore } from './usePlaygroundStore';
 import { getModelParams, getModelDuration } from './playgroundModels';
 import { ChevronDown, Check } from 'lucide-react';
 import { useTranslations } from 'next-intl';
+import { IS_CLOUD_DEPLOYMENT } from '@/lib/deployment';
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -330,6 +331,12 @@ export default function ParameterBar() {
       : (modelDuration?.type === 'slider' || modelDuration?.type === 'buttons') ? modelDuration.default : 5);
   const durationFixed = modelDuration?.type === 'fixed';
 
+  useEffect(() => {
+    if (IS_CLOUD_DEPLOYMENT && mode === 't2i' && batchSize !== 1) {
+      setBatchSize(1);
+    }
+  }, [batchSize, mode, setBatchSize]);
+
   // Batch pill renderer (reused for both image and video)
   const batchPills = (
     <div className="flex flex-col gap-[6px]">
@@ -382,9 +389,11 @@ export default function ParameterBar() {
             )}
 
             {/* Batch — spans full width if no quality, else single col */}
-            <div className={!hasQuality && !hasSize ? 'col-span-2' : hasSize && !hasQuality ? '' : ''}>
-              {batchPills}
-            </div>
+            {(!IS_CLOUD_DEPLOYMENT || mode !== 't2i') && (
+              <div className={!hasQuality && !hasSize ? 'col-span-2' : hasSize && !hasQuality ? '' : ''}>
+                {batchPills}
+              </div>
+            )}
           </>
         )}
 

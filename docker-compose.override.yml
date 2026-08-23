@@ -9,7 +9,7 @@ x-local-cloud-environment: &local-cloud-environment
   LUMENX_DATABASE_USER: ${LUMENX_DATABASE_USER:-lumenx_app}
   LUMENX_REDIS_URL: redis://redis:6379/0
   LUMENX_MODEL_CATALOG_PATH: /app/config/model_catalog/generated/model_catalog.json
-  LUMENX_PROVIDER_SECRET_REFS: DASHSCOPE_API_KEY,ARK_API_KEY
+  LUMENX_PROVIDER_SECRET_REFS: DASHSCOPE_API_KEY,ARK_API_KEY,XLINKS_API_KEY
   LUMENX_PROVIDER_OUTPUT_ROOT: /provider-results
   LUMENX_LOCAL_IMPORT_ROOT: /imports
   LUMENX_REGISTRATION_EMERGENCY_DISABLED: "false"
@@ -26,6 +26,9 @@ x-local-cloud-environment: &local-cloud-environment
   LUMENX_OSS_ACCESS_KEY_SECRET: ${LUMENX_LOCAL_OSS_ACCESS_KEY_SECRET:?请先运行 make docker-env}
   DASHSCOPE_API_KEY_FILE: ""
   DASHSCOPE_API_KEY: ${LUMENX_LOCAL_DASHSCOPE_API_KEY:?请先运行 make docker-env}
+  XLINKS_API_KEY_FILE: ""
+  XLINKS_API_KEY: ${LUMENX_LOCAL_XLINKS_API_KEY:?请先运行 make docker-env}
+  XLINKS_BASE_URL: ${LUMENX_LOCAL_XLINKS_BASE_URL:-https://api.xlinks.site/v1}
   ARK_API_KEY: ${LUMENX_LOCAL_ARK_API_KEY:?请先运行 make docker-env}
   ARK_BASE_URL: ${LUMENX_LOCAL_ARK_BASE_URL:-https://ark.cn-beijing.volces.com/api/plan/v3}
   ARK_SEEDANCE_MODEL: ${LUMENX_LOCAL_ARK_SEEDANCE_MODEL:-doubao-seedance-2.0}

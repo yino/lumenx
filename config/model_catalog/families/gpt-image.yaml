@@ -5,10 +5,13 @@ routing_prefixes:
   - gpt-image-
 supported_backends:
   - mulerouter
+  - xlinks
 default_backend: mulerouter
 credential_sources:
   mulerouter:
     - MULEROUTER_API_KEY
+  xlinks:
+    - XLINKS_API_KEY
 supported_modalities:
   - t2i
   - i2i
@@ -35,6 +38,9 @@ models:
     runtime:
       mulerouter:
         gateway: mulerouter
+      xlinks:
+        gateway: xlinks
+        capabilities: [t2i]
     ui:
       selection_group: image
       visible_in: [project_settings, series_settings, global_settings]

@@ -682,7 +682,7 @@ class AITaskStateService:
             255,
         )
         provider_id = self._optional_text(provider_task_id, "供应商任务标识", 255)
-        if request_id is None and provider_id is None:
+        if request_id is None and provider_id is None and not billable_acknowledged:
             raise AITaskStateConflictError("必须提供供应商请求或任务标识")
 
         with self.database.transaction(context.identity) as session:

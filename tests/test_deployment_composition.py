@@ -161,7 +161,11 @@ def test_local_ai_bootstrap_is_explicitly_guarded_and_production_stays_closed() 
     assert "LUMENX_LOCAL_AI_BOOTSTRAP_ENABLED" in script
     assert "configuration.local_ai_bootstrap" in script
     assert 'LUMENX_NEW_AI_TASKS_EMERGENCY_DISABLED: "false"' in local_override
-    assert "LUMENX_PROVIDER_SECRET_REFS: DASHSCOPE_API_KEY,ARK_API_KEY" in local_override
+    assert (
+        "LUMENX_PROVIDER_SECRET_REFS: DASHSCOPE_API_KEY,ARK_API_KEY,XLINKS_API_KEY"
+        in local_override
+    )
+    assert "XLINKS_API_KEY: ${LUMENX_LOCAL_XLINKS_API_KEY:" in local_override
     assert "ARK_API_KEY: ${LUMENX_LOCAL_ARK_API_KEY:" in local_override
     assert "SEEDANCE_PROVIDER_MODE: ark" in local_override
     assert 'AICapability.VIDEO_I2V: "seedance-2.0-i2v"' in script

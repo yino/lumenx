@@ -224,6 +224,21 @@
       "object_position": "center 28%"
     },
     {
+      "id": "chinese_urban_3d_animation",
+      "category": "style_lab",
+      "name": "3D Chinese Urban Animation",
+      "name_zh": "3D国漫都市风格",
+      "subtitle_zh": "美型数字人 · 写实都市 · 电影自然光",
+      "description": "面向现代都市与校园短剧的半写实3D国漫风格，以美型数字人、写实环境和克制的电影级自然光营造高品质AI漫剧画面",
+      "best_for": ["都市情感", "校园青春", "职场", "现代悬疑", "短剧"],
+      "avoid_for": ["古风仙侠", "低龄Q版", "二维日漫", "真人纪实"],
+      "positive_prompt": "高品质半写实3D国漫都市动画，美型中国数字人，精致但自然的五官，真实克制的身体比例，现代日常服装，写实当代都市与校园环境，PBR物理材质，细腻皮肤次表面散射，真实发丝层次，电影级自然光，柔和轮廓光，适度浅景深，影视剧景别与构图，低饱和冷灰环境与自然暖肤色，高端AI漫剧画面，角色与场景风格统一",
+      "negative_prompt": "真人摄影，二维日漫，赛璐璐，欧美卡通，Q版，古风服饰，仙侠玄幻，夸张动漫比例，过大眼睛，塑料皮肤，蜡像感，游戏角色立绘，背景虚假，角色悬浮，过度磨皮，过饱和，强烈霓虹，低多边形，模糊，低清晰度，人体结构错误，多余手指，文字，字幕，标志，水印",
+      "sample_prompt": "A stylish young woman walks through a sunlit university gymnasium carrying a cup and saucer, modern casual clothing, polished wooden floor, wide cinematic shot, soft window light, quiet emotional tension",
+      "thumbnail": "/assets/styles/style_lab__chinese_urban_3d_animation__gymnasium_woman__landscape.png",
+      "object_position": "center 42%"
+    },
+    {
       "id": "clay_stop_motion",
       "category": "style_lab",
       "name": "Clay Stop-Motion Miniature",

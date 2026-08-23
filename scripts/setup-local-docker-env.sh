@@ -63,6 +63,7 @@ oss_bucket=$(first_env_value LUMENX_LOCAL_OSS_BUCKET_NAME LUMENX_OSS_BUCKET_NAME
 oss_access_key_id=$(first_env_value LUMENX_LOCAL_OSS_ACCESS_KEY_ID LUMENX_OSS_ACCESS_KEY_ID ALIBABA_CLOUD_ACCESS_KEY_ID)
 oss_access_key_secret=$(first_env_value LUMENX_LOCAL_OSS_ACCESS_KEY_SECRET LUMENX_OSS_ACCESS_KEY_SECRET ALIBABA_CLOUD_ACCESS_KEY_SECRET)
 dashscope_api_key=$(first_env_value LUMENX_LOCAL_DASHSCOPE_API_KEY DASHSCOPE_API_KEY)
+xlinks_api_key=$(first_env_value LUMENX_LOCAL_XLINKS_API_KEY XLINKS_API_KEY)
 ark_api_key=$(first_env_value LUMENX_LOCAL_ARK_API_KEY ARK_API_KEY)
 ark_base_url=$(first_env_value LUMENX_LOCAL_ARK_BASE_URL ARK_BASE_URL)
 ark_seedance_model=$(first_env_value LUMENX_LOCAL_ARK_SEEDANCE_MODEL ARK_SEEDANCE_MODEL)
@@ -87,6 +88,8 @@ append_if_missing LUMENX_LOCAL_OSS_BUCKET_NAME "${oss_bucket:-lumenx-private}"
 append_if_missing LUMENX_LOCAL_OSS_ACCESS_KEY_ID "${oss_access_key_id}"
 append_if_missing LUMENX_LOCAL_OSS_ACCESS_KEY_SECRET "${oss_access_key_secret}"
 append_if_missing LUMENX_LOCAL_DASHSCOPE_API_KEY "${dashscope_api_key}"
+append_if_missing LUMENX_LOCAL_XLINKS_API_KEY "${xlinks_api_key}"
+append_if_missing LUMENX_LOCAL_XLINKS_BASE_URL "${XLINKS_BASE_URL:-https://api.xlinks.site/v1}"
 append_if_missing LUMENX_LOCAL_ARK_API_KEY "${ark_api_key}"
 append_if_missing LUMENX_LOCAL_ARK_BASE_URL "${ark_base_url:-https://ark.cn-beijing.volces.com/api/plan/v3}"
 append_if_missing LUMENX_LOCAL_ARK_SEEDANCE_MODEL "${ark_seedance_model:-doubao-seedance-2.0}"

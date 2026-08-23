@@ -35,7 +35,6 @@ from src.platform.settings import DeploymentMode, get_deployment_settings
 TEXT_CAPABILITIES = (AICapability.SCRIPT_ANALYSIS, AICapability.PROMPT_POLISH)
 DEFAULT_TTS_MODEL = "cosyvoice-v2"
 CATALOG_ROUTE_MODELS = {
-    AICapability.IMAGE_T2I: "wan2.7-image-pro",
     AICapability.IMAGE_I2I: "wan2.7-image-pro",
     AICapability.VIDEO_I2V: "seedance-2.0-i2v",
     AICapability.VIDEO_R2V: "seedance-2.0-r2v",
@@ -99,6 +98,72 @@ def _speech_route(model_id: str = DEFAULT_TTS_MODEL) -> ModelRouteConfig:
     )
 
 
+def _xlinks_t2i_route() -> ModelRouteConfig:
+    return ModelRouteConfig.model_validate(
+        {
+            "capability": AICapability.IMAGE_T2I,
+            "display_name_zh": "GPT Image 2 · Xlinks",
+            "provider": "xlinks",
+            "provider_model_id": "gpt-image-2",
+            "enabled": True,
+            "is_primary": True,
+            "priority": 10,
+            "default_parameters": {
+                "count": 1,
+                "size": "1024x1024",
+                "quality": "high",
+                "output_format": "png",
+                "background": "auto",
+            },
+            "parameter_schema": [
+                {
+                    "name": "count",
+                    "value_type": "integer",
+                    "required": False,
+                    "choices": [1],
+                },
+                {
+                    "name": "size",
+                    "value_type": "string",
+                    "required": False,
+                    "choices": ["1024x1024", "1536x1024", "1024x1536"],
+                },
+                {
+                    "name": "quality",
+                    "value_type": "string",
+                    "required": False,
+                    "choices": ["auto", "low", "medium", "high"],
+                },
+                {
+                    "name": "output_format",
+                    "value_type": "string",
+                    "required": False,
+                    "choices": ["png"],
+                },
+                {
+                    "name": "background",
+                    "value_type": "string",
+                    "required": False,
+                    "choices": ["auto", "opaque", "transparent"],
+                },
+            ],
+            "metering_formula": {
+                "kind": "image",
+                "base_tokens": 0,
+                "per_image_tokens": 1,
+                "max_images": 1,
+                "resolution_multipliers": {
+                    "1024x1024": 1,
+                    "1536x1024": 1,
+                    "1024x1536": 1,
+                },
+            },
+            "fallback_policy": {"enabled": False},
+            "secret_ref": "XLINKS_API_KEY",
+        }
+    )
+
+
 def _catalog_route(
     capability: AICapability,
     model_id: str,
@@ -112,7 +177,9 @@ def _catalog_route(
     route = ModelCatalogSeeder._route(model, capability)
     return route.model_copy(
         update={
-            "display_name_zh": f"{route.display_name_zh.removesuffix('（目录导入）')}（本地）",
+            "display_name_zh": (
+                f"{route.display_name_zh.removesuffix('（目录导入）')}（本地）"
+            ),
             "enabled": True,
             "is_primary": True,
             "metering_formula": route.metering_formula.model_copy(
@@ -200,6 +267,7 @@ def main() -> int:
                 os.getenv("LUMENX_LOCAL_TTS_MODEL", DEFAULT_TTS_MODEL).strip()
                 or DEFAULT_TTS_MODEL
             ),
+            _xlinks_t2i_route(),
             *(
                 _catalog_route(capability, catalog_model_id, catalog)
                 for capability, catalog_model_id in CATALOG_ROUTE_MODELS.items()
@@ -259,6 +327,10 @@ def main() -> int:
                 "catalog_route_models": {
                     capability.value: catalog_model_id
                     for capability, catalog_model_id in CATALOG_ROUTE_MODELS.items()
+                },
+                "image_t2i_route": {
+                    "provider": "xlinks",
+                    "provider_model_id": "gpt-image-2",
                 },
             },
         )

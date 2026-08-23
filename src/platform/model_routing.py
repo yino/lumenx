@@ -227,6 +227,7 @@ class RequestScopedModelClientFactory:
             "dashscope": RequestScopedModelClientFactory._build_dashscope,
             "mulerouter": RequestScopedModelClientFactory._build_mulerouter,
             "openai": RequestScopedModelClientFactory._build_openai,
+            "xlinks": RequestScopedModelClientFactory._build_xlinks,
         }
 
     @staticmethod
@@ -298,6 +299,20 @@ class RequestScopedModelClientFactory:
             provider="openai",
             api_key=credential.get_secret_value(),
             model=snapshot.provider_model_id,
+        )
+
+    @staticmethod
+    def _build_xlinks(snapshot: ModelRouteSnapshot, credential: SecretStr) -> Any:
+        if snapshot.capability != "image.t2i":
+            raise ModelClientUnavailableError(
+                f"Xlinks 暂不支持能力 {snapshot.capability}"
+            )
+        if snapshot.provider_model_id != "gpt-image-2":
+            raise ModelClientUnavailableError("Xlinks 当前仅支持 gpt-image-2")
+        from src.models.xlinks import XlinksImageModel
+
+        return XlinksImageModel(
+            RequestScopedModelClientFactory._adapter_config(snapshot, credential)
         )
 
     def create(self, snapshot: ModelRouteSnapshot) -> RequestScopedModelClient:

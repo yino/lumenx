@@ -13,3 +13,21 @@ __pycache__
 demand/
 .agent/
 .claude/
+
+# 以下目录/文件 Docker 镜像构建用不到，排除以缩小 build context、加快传输
+docs/
+tests/
+bin/
+imports/
+secrets/
+openspec/
+*.md
+*.log
+*.yml
+*.yaml
+build_mac.sh
+build_windows.ps1
+create_icon.sh
+dev.bat
+git_push.sh
+main.py
