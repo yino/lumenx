@@ -45,6 +45,7 @@ def test_local_ai_routes_are_valid_and_versioned() -> None:
             )
         from scripts.set_local_ai_mode import (
             CATALOG_ROUTE_MODELS,
+            SECONDARY_CATALOG_ROUTE_MODELS,
             TEXT_CAPABILITIES,
             _catalog_route,
             _default_route,
@@ -88,8 +89,17 @@ def test_local_ai_routes_are_valid_and_versioned() -> None:
                 _catalog_route(capability, model_id, catalog)
                 for capability, model_id in CATALOG_ROUTE_MODELS.items()
             ),
+            *(
+                _catalog_route(capability, model_id, catalog).model_copy(
+                    update={"enabled": True, "is_primary": False}
+                )
+                for capability, model_ids in SECONDARY_CATALOG_ROUTE_MODELS.items()
+                for model_id in model_ids
+            ),
         ]
-        exposed_capabilities = [route.capability for route in routes]
+        exposed_capabilities = sorted(
+            {route.capability for route in routes}, key=lambda capability: capability.value
+        )
         draft = current.draft.model_copy(
             update={
                 "platform": current.draft.platform.model_copy(
@@ -116,7 +126,16 @@ def test_local_ai_routes_are_valid_and_versioned() -> None:
             AICapability.VIDEO_R2V,
             AICapability.SPEECH_TTS,
         }
-        assert all(route.enabled and route.is_primary for route in activated.draft.routes)
+        assert all(route.enabled for route in activated.draft.routes)
+        assert all(
+            sum(
+                1
+                for route in activated.draft.routes
+                if route.capability is capability and route.is_primary
+            )
+            == 1
+            for capability in {route.capability for route in activated.draft.routes}
+        )
         assert all(
             not route.metering_formula.review_required
             for route in activated.draft.routes
@@ -150,15 +169,29 @@ def test_local_ai_routes_are_valid_and_versioned() -> None:
             route.capability: route
             for route in activated.draft.routes
             if route.capability in {AICapability.VIDEO_I2V, AICapability.VIDEO_R2V}
+            and route.is_primary
         }
         assert video_routes[AICapability.VIDEO_I2V].provider_model_id == (
-            "seedance-2.0-i2v"
+            "grok-imagine-video"
+        )
+        assert any(
+            route.capability is AICapability.VIDEO_I2V
+            and route.provider_model_id == "seedance-2.0-i2v"
+            and route.provider == "ark"
+            and route.enabled
+            and not route.is_primary
+            for route in activated.draft.routes
         )
         assert video_routes[AICapability.VIDEO_R2V].provider_model_id == (
             "seedance-2.0-r2v"
         )
-        assert {
-            (route.provider, route.secret_ref) for route in video_routes.values()
-        } == {("ark", "ARK_API_KEY")}
+        assert (
+            video_routes[AICapability.VIDEO_I2V].provider,
+            video_routes[AICapability.VIDEO_I2V].secret_ref,
+        ) == ("xlinks", "XLINKS_API_KEY")
+        assert (
+            video_routes[AICapability.VIDEO_R2V].provider,
+            video_routes[AICapability.VIDEO_R2V].secret_ref,
+        ) == ("ark", "ARK_API_KEY")
     finally:
         database.engine.dispose()

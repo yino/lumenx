@@ -136,6 +136,38 @@ def test_route_plan_selects_primary_and_only_eligible_fallback(
             provider.select_fallback(plan, **arguments)
 
 
+def test_model_choice_selects_only_an_enabled_route_for_the_capability(
+    routing_service,
+) -> None:
+    _database, admin, service = routing_service
+    _activate_image_routes(
+        service,
+        admin,
+        primary_model="wan-image-primary",
+        include_fallback=True,
+    )
+    provider = DatabaseModelConfigurationProvider(
+        service,
+        UserContext(user_id="2001", session_id="2101"),
+    )
+
+    selected = provider.select_route(
+        "image.t2i",
+        {"model_choice": "wan-image-primary-backup", "count": 2},
+    )
+    assert selected.provider_model_id == "wan-image-primary-backup"
+    assert selected.parameters == {
+        "count": 2,
+        "resolution": "1024x1024",
+    }
+
+    with pytest.raises(LookupError, match="未启用模型"):
+        provider.select_route(
+            "image.t2i",
+            {"model_choice": "video-only-model", "count": 1},
+        )
+
+
 def test_request_scoped_client_uses_task_snapshot_and_injected_secret(
     routing_service,
     monkeypatch,

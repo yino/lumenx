@@ -2610,6 +2610,7 @@ export const api = {
         ].map(parseMediaReference).filter((value): value is string => Boolean(value));
         const cloudParameters = generationMode === "r2v"
             ? {
+                model_choice: model,
                 duration,
                 resolution,
                 output_count: 1,
@@ -2617,6 +2618,7 @@ export const api = {
                 ...(watermark != null ? { watermark } : {}),
             }
             : {
+                model_choice: model,
                 duration,
                 resolution,
                 ratio: ratio || "16:9",
@@ -3290,7 +3292,10 @@ export const api = {
             prompt: prompt,
             batch_size: batchSize,
             ...(IS_CLOUD_DEPLOYMENT ? {
-                parameters: normalizeCloudXlinksT2IParameters({ size: "16:9" }),
+                parameters: {
+                    ...normalizeCloudXlinksT2IParameters({ size: "16:9" }),
+                    model_choice: "gpt-image-2",
+                },
             } : {}),
         });
         return res.data;

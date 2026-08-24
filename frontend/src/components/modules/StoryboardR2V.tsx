@@ -11,7 +11,7 @@ import { getAssetUrl } from "@/lib/utils";
 import { selectedVariantUrl } from "@/lib/characterImage";
 import { debugLog } from "@/lib/debugLog";
 import type { BatchSummary } from "./storyboard-r2v/shot-panel/CandidatesSection";
-import { getR2vRouteModelId, isR2vImageBased, VIDEO_I2V_MODELS, VIDEO_R2V_MODELS, DEFAULT_I2V_MODEL_ID, DEFAULT_R2V_MODEL_ID } from "@/lib/modelCatalog";
+import { getR2vRouteModelId, isR2vImageBased, VIDEO_I2V_MODELS, CLOUD_VIDEO_I2V_MODELS, VIDEO_R2V_MODELS, DEFAULT_I2V_MODEL_ID, DEFAULT_R2V_MODEL_ID } from "@/lib/modelCatalog";
 import ShotCard, { type ShotNode } from "./storyboard-r2v/ShotCard";
 import { buildAssembledPrompt } from "./storyboard-r2v/buildAssembledPrompt";
 import DialogueAudioRow from "./storyboard-r2v/DialogueAudioRow";
@@ -39,6 +39,13 @@ import { GenerationBanner, type BannerState } from "./storyboard-r2v/GenerationB
 import { IS_CLOUD_DEPLOYMENT } from "@/lib/deployment";
 import { clientStorageKey } from "@/lib/clientCacheScope";
 
+const AVAILABLE_I2V_MODELS = IS_CLOUD_DEPLOYMENT
+    ? CLOUD_VIDEO_I2V_MODELS
+    : VIDEO_I2V_MODELS;
+const AVAILABLE_DEFAULT_I2V_MODEL_ID = IS_CLOUD_DEPLOYMENT
+    ? (CLOUD_VIDEO_I2V_MODELS[0]?.id ?? DEFAULT_I2V_MODEL_ID)
+    : DEFAULT_I2V_MODEL_ID;
+
 export default function StoryboardR2V() {
     const currentProject = useProjectStore((state) => state.currentProject);
     const updateProject = useProjectStore((state) => state.updateProject);
@@ -65,7 +72,7 @@ export default function StoryboardR2V() {
         const savedI2v = IS_CLOUD_DEPLOYMENT ? null : (ls?.getItem('storyboard-r2v-model') ?? null);
         const savedR2v = IS_CLOUD_DEPLOYMENT ? null : (ls?.getItem('storyboard-r2v-r2v-model') ?? null);
         const projectI2v = IS_CLOUD_DEPLOYMENT
-            ? DEFAULT_I2V_MODEL_ID
+            ? AVAILABLE_DEFAULT_I2V_MODEL_ID
             : (currentProject?.model_settings?.i2v_model || DEFAULT_I2V_MODEL_ID);
 
         // I2V — defensive: a cached localStorage model id may have been
@@ -75,14 +82,14 @@ export default function StoryboardR2V() {
         // lingers in their browser). Falling back to the default avoids
         // silently shipping the wrong model into the I2V flow.
         const i2vCandidate = savedI2v || projectI2v;
-        const i2vOk = VIDEO_I2V_MODELS.find(m => m.id === i2vCandidate);
-        const i2vModelId = i2vOk ? i2vCandidate : DEFAULT_I2V_MODEL_ID;
+        const i2vOk = AVAILABLE_I2V_MODELS.find(m => m.id === i2vCandidate);
+        const i2vModelId = i2vOk ? i2vCandidate : AVAILABLE_DEFAULT_I2V_MODEL_ID;
         if (!i2vOk && ls && savedI2v) {
             ls.removeItem('storyboard-r2v-model');
             debugLog.warn(
                 "Studio",
                 `Cached I2V model "${i2vCandidate}" is no longer in the visible I2V list; ` +
-                `falling back to "${DEFAULT_I2V_MODEL_ID}".`,
+                `falling back to "${AVAILABLE_DEFAULT_I2V_MODEL_ID}".`,
             );
         }
 
@@ -105,7 +112,7 @@ export default function StoryboardR2V() {
             ls.removeItem('storyboard-r2v-r2v-model');
         }
 
-        const finalConfig = VIDEO_I2V_MODELS.find(m => m.id === i2vModelId);
+        const finalConfig = AVAILABLE_I2V_MODELS.find(m => m.id === i2vModelId);
         const dc = finalConfig?.duration;
         const defaultDuration = dc ? (dc.type === 'fixed' ? dc.value : dc.default) : 5;
         return {
@@ -971,14 +978,14 @@ export default function StoryboardR2V() {
                 // (catalog reload, project setting flip). Last sanity
                 // check right before submit so we never ship an r2v-
                 // only model into the I2V flow.
-                const i2vModelOk = VIDEO_I2V_MODELS.some(m => m.id === videoConfig.model);
+                const i2vModelOk = AVAILABLE_I2V_MODELS.some(m => m.id === videoConfig.model);
                 if (!i2vModelOk) {
                     debugLog.warn(
                         "Studio",
                         `Refusing to submit I2V task with model "${videoConfig.model}" ` +
-                        `which is not in the visible I2V list. Falling back to "${DEFAULT_I2V_MODEL_ID}".`,
+                        `which is not in the visible I2V list. Falling back to "${AVAILABLE_DEFAULT_I2V_MODEL_ID}".`,
                     );
-                    setVideoConfig(c => ({ ...c, model: DEFAULT_I2V_MODEL_ID }));
+                    setVideoConfig(c => ({ ...c, model: AVAILABLE_DEFAULT_I2V_MODEL_ID }));
                     if (typeof window !== 'undefined') {
                         localStorage.removeItem('storyboard-r2v-model');
                     }
@@ -1174,7 +1181,7 @@ export default function StoryboardR2V() {
                 }
                 // I2V branch — same defensive check on the model.
                 const i2vModelId = params?.model ?? videoConfig.model;
-                const i2vModelOk = VIDEO_I2V_MODELS.some(m => m.id === i2vModelId);
+                const i2vModelOk = AVAILABLE_I2V_MODELS.some(m => m.id === i2vModelId);
                 if (!i2vModelOk) {
                     debugLog.warn("Studio", `Refusing I2V submission with non-I2V model "${i2vModelId}".`);
                     return null;
@@ -1429,7 +1436,7 @@ export default function StoryboardR2V() {
     const isR2VWorkflow = (currentProject?.workflow_mode ?? "r2v") === "r2v";
     const currentModelName = isR2VWorkflow
         ? (VIDEO_R2V_MODELS.find(m => m.id === videoConfig.r2vModel)?.name ?? videoConfig.r2vModel)
-        : (VIDEO_I2V_MODELS.find(m => m.id === videoConfig.model)?.name ?? videoConfig.model);
+        : (AVAILABLE_I2V_MODELS.find(m => m.id === videoConfig.model)?.name ?? videoConfig.model);
 
     // ---- Project-level task derivations (drive Queue + Candidates) ----
     // We derive these via useMemo so per-render allocation is cheap and
@@ -1624,13 +1631,15 @@ export default function StoryboardR2V() {
                 watermark: next.watermark,
             };
             if (isR2v) {
+                updated.r2vModel = next.model;
                 if (!IS_CLOUD_DEPLOYMENT) {
-                    updated.r2vModel = next.model;
                     ls?.setItem("storyboard-r2v-r2v-model", next.model);
                 }
-            } else if (!IS_CLOUD_DEPLOYMENT) {
+            } else {
                 updated.model = next.model;
-                ls?.setItem("storyboard-r2v-model", next.model);
+                if (!IS_CLOUD_DEPLOYMENT) {
+                    ls?.setItem("storyboard-r2v-model", next.model);
+                }
             }
             return updated;
         });
@@ -1772,7 +1781,7 @@ export default function StoryboardR2V() {
             // Decide which slot the batch's model lives in (I2V or R2V).
             if (!IS_CLOUD_DEPLOYMENT && VIDEO_R2V_MODELS.some(m => m.id === first.model)) {
                 updated.r2vModel = first.model!;
-            } else if (!IS_CLOUD_DEPLOYMENT && VIDEO_I2V_MODELS.some(m => m.id === first.model)) {
+            } else if (!IS_CLOUD_DEPLOYMENT && AVAILABLE_I2V_MODELS.some(m => m.id === first.model)) {
                 updated.model = first.model!;
             }
             if (first.duration) updated.duration = first.duration;
@@ -1961,7 +1970,7 @@ export default function StoryboardR2V() {
                     ).length;
                     const paramsState = paramsStateForShot(shot);
                     const isI2vTab = shot.tabMode === "t2i_i2v";
-                    const modelList = shot.tabMode === "direct_r2v" ? VIDEO_R2V_MODELS : VIDEO_I2V_MODELS;
+                    const modelList = shot.tabMode === "direct_r2v" ? VIDEO_R2V_MODELS : AVAILABLE_I2V_MODELS;
                     return (
                     /* Plain div (was motion.div) — staggered enter
                        animation re-fired every time the user switched
@@ -2022,7 +2031,7 @@ export default function StoryboardR2V() {
                             genSummary={`${
                                 shot.tabMode === "direct_r2v"
                                     ? (VIDEO_R2V_MODELS.find(m => m.id === videoConfig.r2vModel)?.name ?? videoConfig.r2vModel ?? "")
-                                    : (VIDEO_I2V_MODELS.find(m => m.id === videoConfig.model)?.name ?? videoConfig.model ?? "")
+                                    : (AVAILABLE_I2V_MODELS.find(m => m.id === videoConfig.model)?.name ?? videoConfig.model ?? "")
                             } · ${paramsState.duration}s`}
                             canGenerate={
                                 shot.prompt.trim().length > 0

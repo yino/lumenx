@@ -66,19 +66,20 @@ def test_generated_catalog_maps_to_inactive_reviewable_routes(catalog_seeder) ->
 
     assert created is True
     assert stored.status == "draft"
-    assert len(stored.draft.routes) == 45
+    assert len(stored.draft.routes) == 47
     assert len(
         {
             (route.capability, route.provider, route.provider_model_id)
             for route in stored.draft.routes
         }
-    ) == 45
+    ) == 47
     assert all(not route.enabled and not route.is_primary for route in stored.draft.routes)
     assert all(route.metering_formula.review_required for route in stored.draft.routes)
     assert {route.secret_ref for route in stored.draft.routes} == {
         "ARK_API_KEY",
         "DASHSCOPE_API_KEY",
         "MULEROUTER_API_KEY",
+        "XLINKS_API_KEY",
     }
     assert {item.value for item in stored.draft.platform.exposed_capabilities} == {
         "image.t2i",

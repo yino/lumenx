@@ -119,22 +119,55 @@ class DatabaseModelConfigurationProvider:
         configuration = self.configuration.get_active_for_runtime(
             self.runtime_identity
         )
+        requested_model = requested_parameters.get("model_choice")
+        if requested_model is not None:
+            if not isinstance(requested_model, str) or not requested_model.strip():
+                raise ModelRouteUnavailableError("模型选择不能为空")
+            requested_model = requested_model.strip()
         candidates = [
             route
             for route in configuration.draft.routes
             if route.enabled and route.capability == normalized_capability
         ]
-        primaries = [route for route in candidates if route.is_primary]
-        if len(primaries) != 1:
+        selected_route = None
+        if requested_model is not None:
+            candidates = [
+                route
+                for route in candidates
+                if route.provider_model_id == requested_model
+            ]
+            if not candidates:
+                raise ModelRouteUnavailableError(
+                    f"能力 {normalized_capability.value} 未启用模型 {requested_model}"
+                )
+            if len(candidates) > 1:
+                raise ModelRouteUnavailableError(
+                    f"能力 {normalized_capability.value} 的模型 {requested_model} 配置重复"
+                )
+            selected_route = candidates[0]
+            all_candidates = [
+                route
+                for route in configuration.draft.routes
+                if route.enabled and route.capability == normalized_capability
+            ]
+        else:
+            all_candidates = candidates
+        primaries = [route for route in all_candidates if route.is_primary]
+        if selected_route is None and len(primaries) != 1:
             raise ModelRouteUnavailableError(
                 f"能力 {normalized_capability.value} 没有唯一启用的主路由"
             )
-        primary = primaries[0]
+        primary = selected_route or primaries[0]
         fallbacks = sorted(
-            (route for route in candidates if not route.is_primary),
+            (route for route in all_candidates if route is not primary),
             key=lambda route: (route.priority, route.provider, route.provider_model_id),
         )
         routes = (primary, *fallbacks)
+        route_parameters = dict(requested_parameters)
+        # model_choice is a server-side allowlisted route selector. It must
+        # never be forwarded as a provider parameter or become part of a
+        # provider-specific parameter contract.
+        route_parameters.pop("model_choice", None)
         return CapabilityRoutePlan(
             config_version_id=configuration.id,
             capability=normalized_capability.value,
@@ -143,7 +176,7 @@ class DatabaseModelConfigurationProvider:
                 configuration.draft.platform.max_ai_concurrency_per_user
             ),
             routes=tuple(
-                self._snapshot(configuration, route, requested_parameters)
+                self._snapshot(configuration, route, route_parameters)
                 for route in routes
             ),
         )
@@ -317,9 +350,22 @@ class RequestScopedModelClientFactory:
 
     def create(self, snapshot: ModelRouteSnapshot) -> RequestScopedModelClient:
         if snapshot.capability.startswith("video."):
+            create_video_provider = self.video_providers.create
+            try:
+                video_adapter = create_video_provider(
+                    snapshot.provider_model_id,
+                    provider=snapshot.provider,
+                )
+            except TypeError as exc:
+                # Keep compatibility with integrations implementing the pre-channel
+                # factory contract while the built-in registry uses provider-aware
+                # selection.
+                if "unexpected keyword argument 'provider'" not in str(exc):
+                    raise
+                video_adapter = create_video_provider(snapshot.provider_model_id)
             return RequestScopedModelClient(
                 snapshot=snapshot,
-                adapter=self.video_providers.create(snapshot.provider_model_id),
+                adapter=video_adapter,
             )
         builder = self.builders.get(snapshot.provider)
         if builder is None:

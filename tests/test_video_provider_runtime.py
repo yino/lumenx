@@ -16,6 +16,7 @@ from src.platform.video_providers import (
 )
 from src.platform.video_providers.aliyun import AliyunWanVideoProvider
 from src.platform.video_providers.volcengine import VolcengineSeedanceProvider
+from src.platform.video_providers.xlinks import XlinksGrokVideoProvider
 
 
 class RecordingCredentials:
@@ -58,13 +59,20 @@ def test_model_id_selects_vendor_and_seedance_reads_local_ark_model(
 
     seedance = factory.create("seedance-2.0-r2v")
     wan = factory.create("wan2.7-i2v")
+    grok = factory.create("grok-imagine-video", provider="xlinks")
 
     assert isinstance(seedance, VolcengineSeedanceProvider)
     assert seedance.model_id == "seedance-2.0-r2v"
     assert seedance._client.model_name == "ep-local-seedance-2"
     assert isinstance(wan, AliyunWanVideoProvider)
     assert wan.model_id == "wan2.7-i2v"
-    assert credentials.references == ["ARK_API_KEY", "DASHSCOPE_API_KEY"]
+    assert isinstance(grok, XlinksGrokVideoProvider)
+    assert grok.model_id == "grok-imagine-video"
+    assert credentials.references == [
+        "ARK_API_KEY",
+        "DASHSCOPE_API_KEY",
+        "XLINKS_API_KEY",
+    ]
 
 
 def test_request_scoped_client_delegates_video_selection_by_model_id() -> None:
@@ -74,7 +82,7 @@ def test_request_scoped_client_delegates_video_selection_by_model_id() -> None:
         def __init__(self) -> None:
             self.model_ids: list[str] = []
 
-        def create(self, model_id: str):
+        def create(self, model_id: str, *, provider: str | None = None):
             self.model_ids.append(model_id)
             return SimpleNamespace(model_id=model_id)
 

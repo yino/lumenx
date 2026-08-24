@@ -466,6 +466,7 @@ describe("云端 API 客户端", () => {
       generation_mode: "i2v",
       media_ids: [mediaId],
       parameters: {
+        model_choice: "happyhorse-i2v",
         duration: 3,
         resolution: "720p",
         ratio: "16:9",

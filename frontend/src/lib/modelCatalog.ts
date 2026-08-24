@@ -390,6 +390,16 @@ export const SERIES_I2V_MODELS = getVisibleModels('i2v', 'series_settings').map(
 export const GLOBAL_I2V_MODELS = getVisibleModels('i2v', 'global_settings').map(toI2VModel);
 export const GLOBAL_R2V_MODELS = getVisibleModels('r2v', 'global_settings').map(toI2VModel);
 export const VIDEO_I2V_MODELS = getVisibleModels('i2v', 'video_sidebar').map(toI2VModel);
+// The local cloud deployment intentionally enables only these two I2V
+// routes. Keep this allowlist in the UI aligned with scripts/set_local_ai_mode.py;
+// the server still performs the authoritative route check.
+export const CLOUD_VIDEO_I2V_MODEL_IDS = [
+    'grok-imagine-video',
+    'seedance-2.0-i2v',
+] as const;
+export const CLOUD_VIDEO_I2V_MODELS = CLOUD_VIDEO_I2V_MODEL_IDS
+    .map((id) => VIDEO_I2V_MODELS.find((model) => model.id === id))
+    .filter((model): model is I2VModelConfig => Boolean(model));
 
 export const T2I_MODELS = PROJECT_T2I_MODELS;
 export const I2I_MODELS = PROJECT_I2I_MODELS;

@@ -9,6 +9,7 @@ from ..contracts import CredentialProvider
 from .aliyun import AliyunWanVideoProvider
 from .interface import VideoProvider
 from .volcengine import VolcengineSeedanceProvider
+from .xlinks import XlinksGrokVideoProvider
 
 
 class VideoProviderUnavailableError(LookupError):
@@ -24,6 +25,7 @@ class VideoProviderRegistration:
     model_prefixes: tuple[str, ...]
     secret_ref: str
     builder: VideoProviderBuilder
+    provider: str = ""
 
     def matches(self, model_id: str) -> bool:
         return any(model_id.startswith(prefix) for prefix in self.model_prefixes)
@@ -32,15 +34,24 @@ class VideoProviderRegistration:
 DEFAULT_VIDEO_PROVIDERS = (
     VideoProviderRegistration(
         name="volcengine-seedance",
+        provider="ark",
         model_prefixes=("seedance-2.0-", "seedance/seedance-"),
         secret_ref="ARK_API_KEY",
         builder=VolcengineSeedanceProvider,
     ),
     VideoProviderRegistration(
         name="aliyun-wan",
+        provider="dashscope",
         model_prefixes=("wan2.", "wan/wan"),
         secret_ref="DASHSCOPE_API_KEY",
         builder=AliyunWanVideoProvider,
+    ),
+    VideoProviderRegistration(
+        name="xlinks-grok-imagine-video",
+        provider="xlinks",
+        model_prefixes=("grok-imagine-video",),
+        secret_ref="XLINKS_API_KEY",
+        builder=XlinksGrokVideoProvider,
     ),
 )
 
@@ -58,7 +69,7 @@ class ModelIdVideoProviderFactory:
             DEFAULT_VIDEO_PROVIDERS if registrations is None else registrations
         )
 
-    def create(self, model_id: str) -> VideoProvider:
+    def create(self, model_id: str, *, provider: str | None = None) -> VideoProvider:
         normalized = str(model_id).strip()
         if not normalized:
             raise VideoProviderUnavailableError("视频模型 ID 不能为空")
@@ -66,6 +77,11 @@ class ModelIdVideoProviderFactory:
             registration
             for registration in self.registrations
             if registration.matches(normalized)
+            and (
+                provider is None
+                or not registration.provider
+                or registration.provider == provider
+            )
         ]
         if not matches:
             raise VideoProviderUnavailableError(

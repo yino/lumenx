@@ -1,0 +1,67 @@
+family: xlinks-grok-video
+display_name: "Grok Imagine Video (Xlinks)"
+provider: xlinks
+routing_prefixes:
+  - grok-imagine-video
+supported_backends:
+  - xlinks
+default_backend: xlinks
+credential_sources:
+  xlinks:
+    - XLINKS_API_KEY
+supported_modalities:
+  - t2v
+  - i2v
+docs:
+  official_snapshot_ids:
+    - newapi/video-generations/2026-08-25
+transport:
+  image_input_mode:
+    xlinks: xlinks_video_image_url
+  audio_input_mode:
+    xlinks: xlinks_audio_url
+  reference_video_input_mode:
+    xlinks: xlinks_reference_video_url
+models:
+  - id: grok-imagine-video
+    display_name: Grok Imagine Video
+    description: Xlinks NewAPI-compatible text-to-video and image-to-video generation
+    status: active
+    release_stage: stable
+    capabilities: [t2v, i2v]
+    docs:
+      context_hub_doc_ids:
+        - newapi/video-generations
+    runtime:
+      xlinks:
+        gateway: xlinks
+        capabilities: [t2v, i2v]
+    ui:
+      selection_group: i2v
+      visible_in: [project_settings, series_settings, video_sidebar, global_settings]
+      order: 75
+      recommended: true
+      badges: [new]
+    duration:
+      type: slider
+      min: 1
+      max: 10
+      step: 1
+      default: 5
+    params:
+      resolution:
+        options: [480p, 720p, 1080p]
+        default: 720p
+      fps:
+        options: [24, 30]
+        default: 30
+      seed: true
+      negativePrompt: true
+      style: true
+      qualityLevel: true
+      watermark: false
+      audio: false
+    inputs:
+      reference_images:
+        max: 1
+        reference_type: image

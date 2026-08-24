@@ -24,7 +24,6 @@ import { useTranslations } from "next-intl";
 import type { I2VModelConfig, DurationConfig, ModelParamSupport } from "@/lib/modelCatalog";
 import { usePanelSectionState } from "./usePanelSectionState";
 import SectionShell from "./SectionShell";
-import { IS_CLOUD_DEPLOYMENT } from "@/lib/deployment";
 // PR-3c · Loader2/Sparkles/WorkflowActionButton removed with the Generate
 // CTA — generation lives in ShotCard's inline row now.
 
@@ -176,7 +175,7 @@ export default function ParamsSection({
             title={title}
             open={open}
             onToggle={() => setOpen(!open)}
-            subtitle={!IS_CLOUD_DEPLOYMENT && activeModel ? `${activeModel.name}` : undefined}
+            subtitle={activeModel ? `${activeModel.name}` : undefined}
             trailing={inFlightCount > 0 ? (
                 <span className="rounded-full border border-status-processing-border bg-status-processing-bg px-1.5 py-0.5 text-[0.5625rem] font-semibold leading-none text-status-processing-fg">
                     {`${inFlightCount} ${t("inFlightShort")}`}
@@ -185,7 +184,7 @@ export default function ParamsSection({
         >
             <div className="space-y-3">
                 {/* Model picker — dropdown (scales past a pill wall). */}
-                {!IS_CLOUD_DEPLOYMENT && <ParamRow label="Model">
+                <ParamRow label="Model">
                     <div className="relative">
                         <button
                             ref={trigRef}
@@ -231,7 +230,7 @@ export default function ParamsSection({
                             document.body
                         )}
                     </div>
-                </ParamRow>}
+                </ParamRow>
 
                 {/* Duration */}
                 <ParamRow label="Duration">

@@ -22,6 +22,7 @@ from sqlalchemy import select
 
 from src.platform.configuration_schemas import (
     AICapability,
+    FallbackPolicy,
     ModelRouteConfig,
 )
 from src.platform.configuration_service import ConfigurationService
@@ -36,8 +37,11 @@ TEXT_CAPABILITIES = (AICapability.SCRIPT_ANALYSIS, AICapability.PROMPT_POLISH)
 DEFAULT_TTS_MODEL = "cosyvoice-v2"
 CATALOG_ROUTE_MODELS = {
     AICapability.IMAGE_I2I: "wan2.7-image-pro",
-    AICapability.VIDEO_I2V: "seedance-2.0-i2v",
+    AICapability.VIDEO_I2V: "grok-imagine-video",
     AICapability.VIDEO_R2V: "seedance-2.0-r2v",
+}
+SECONDARY_CATALOG_ROUTE_MODELS = {
+    AICapability.VIDEO_I2V: ("seedance-2.0-i2v",),
 }
 
 
@@ -175,18 +179,30 @@ def _catalog_route(
     model = dict(raw_model)
     model.setdefault("id", model_id)
     route = ModelCatalogSeeder._route(model, capability)
-    return route.model_copy(
-        update={
-            "display_name_zh": (
-                f"{route.display_name_zh.removesuffix('（目录导入）')}（本地）"
-            ),
-            "enabled": True,
-            "is_primary": True,
-            "metering_formula": route.metering_formula.model_copy(
-                update={"review_required": False}
-            ),
-        }
-    )
+    updates = {
+        "display_name_zh": (
+            f"{route.display_name_zh.removesuffix('（目录导入）')}（本地）"
+        ),
+        "enabled": True,
+        "is_primary": True,
+        "metering_formula": route.metering_formula.model_copy(
+            update={"review_required": False}
+        ),
+    }
+    if capability is AICapability.VIDEO_I2V and model_id == "grok-imagine-video":
+        # The enabled Seedance route is a selectable secondary channel. Keep
+        # the normal non-billable provider fallback available when Xlinks is
+        # temporarily unavailable, while never switching after a billable
+        # provider submission.
+        updates["fallback_policy"] = FallbackPolicy.model_validate(
+            {
+                "enabled": True,
+                "eligible_error_codes": ["PROVIDER_UNAVAILABLE"],
+                "max_attempts": 2,
+                "require_nonbillable_previous_attempt": True,
+            }
+        )
+    return route.model_copy(update=updates)
 
 
 def _replace_primary_route(
@@ -210,6 +226,40 @@ def _replace_primary_route(
         updated.append(route.model_copy(update={"enabled": False, "is_primary": False}))
     if not inserted:
         updated.append(desired)
+    return updated
+
+
+def _enable_secondary_route(
+    routes: list[ModelRouteConfig],
+    desired: ModelRouteConfig,
+) -> list[ModelRouteConfig]:
+    """Upsert one explicitly allowlisted non-primary route.
+
+    The local bootstrap keeps the Xlinks route as the I2V primary while
+    enabling Seedance as a selectable secondary route. Other catalog routes
+    remain disabled so the browser cannot select a provider that this local
+    deployment did not explicitly opt into.
+    """
+    updated: list[ModelRouteConfig] = []
+    inserted = False
+    for route in routes:
+        if (
+            route.capability is desired.capability
+            and route.provider == desired.provider
+            and route.provider_model_id == desired.provider_model_id
+        ):
+            if inserted:
+                continue
+            updated.append(
+                desired.model_copy(update={"enabled": True, "is_primary": False})
+            )
+            inserted = True
+        else:
+            updated.append(route)
+    if not inserted:
+        updated.append(
+            desired.model_copy(update={"enabled": True, "is_primary": False})
+        )
     return updated
 
 
@@ -276,6 +326,11 @@ def main() -> int:
         for desired in desired_routes:
             routes = _replace_primary_route(routes, desired)
             capabilities.add(desired.capability)
+        for capability, model_ids in SECONDARY_CATALOG_ROUTE_MODELS.items():
+            for model_id in model_ids:
+                desired = _catalog_route(capability, model_id, catalog)
+                routes = _enable_secondary_route(routes, desired)
+                capabilities.add(desired.capability)
 
         feature_flags = active.draft.platform.feature_flags
         if not feature_flags.new_ai_tasks_enabled:
@@ -327,6 +382,10 @@ def main() -> int:
                 "catalog_route_models": {
                     capability.value: catalog_model_id
                     for capability, catalog_model_id in CATALOG_ROUTE_MODELS.items()
+                },
+                "secondary_catalog_route_models": {
+                    capability.value: list(model_ids)
+                    for capability, model_ids in SECONDARY_CATALOG_ROUTE_MODELS.items()
                 },
                 "image_t2i_route": {
                     "provider": "xlinks",

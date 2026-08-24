@@ -59,6 +59,7 @@ describe('model catalog selectors', () => {
             'seedance-2.0-i2v',
             'pixverse-c1-i2v',
             'wan2.7-i2v',
+            'grok-imagine-video',
             'viduq3-pro-i2v',
             'viduq3-turbo-i2v',
         ]);
