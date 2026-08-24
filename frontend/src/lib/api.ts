@@ -1,6 +1,6 @@
 import axiosFactory from "axios";
 import type { AxiosError, InternalAxiosRequestConfig } from "axios";
-import { DEFAULT_I2V_MODEL_ID } from "@/lib/modelCatalog";
+import { DEFAULT_I2V_MODEL_ID, VIDEO_I2V_MODELS } from "@/lib/modelCatalog";
 import { IS_CLOUD_DEPLOYMENT, withoutCloudModelOverrides } from "@/lib/deployment";
 
 // Dynamic API URL detection (no port enumeration):
@@ -2608,26 +2608,31 @@ export const api = {
             ...referenceVideoUrls,
             ...referenceImageUrls,
         ].map(parseMediaReference).filter((value): value is string => Boolean(value));
-        const cloudParameters = generationMode === "r2v"
-            ? {
-                model_choice: model,
-                duration,
-                resolution,
-                output_count: 1,
-                ...(seed != null ? { seed } : {}),
-                ...(watermark != null ? { watermark } : {}),
-            }
-            : {
-                model_choice: model,
-                duration,
-                resolution,
-                ratio: ratio || "16:9",
-                output_count: 1,
-                prompt_extend: promptExtend,
-                ...(negativePrompt ? { negative_prompt: negativePrompt } : {}),
-                ...(seed != null ? { seed } : {}),
-                ...(watermark != null ? { watermark } : {}),
-            };
+        const selectedI2VModel = VIDEO_I2V_MODELS.find((item) => item.id === model);
+        const supportsParameter = (name: keyof NonNullable<typeof selectedI2VModel>["params"]): boolean =>
+            // The server is authoritative for model routing. Preserve the
+            // historical payload for catalog entries that predate the
+            // parameter-support metadata, while filtering known models to
+            // their declared provider contract.
+            !selectedI2VModel || Boolean(selectedI2VModel.params[name]);
+        const cloudParameters = {
+            model_choice: model,
+            duration,
+            resolution,
+            output_count: 1,
+            ...(generationMode !== "r2v" && supportsParameter("ratio")
+                ? { ratio: ratio || "16:9" }
+                : {}),
+            ...(generationMode !== "r2v" && supportsParameter("promptExtend")
+                ? { prompt_extend: promptExtend }
+                : {}),
+            ...(supportsParameter("audio") ? { audio: generateAudio } : {}),
+            ...(supportsParameter("negativePrompt") && negativePrompt
+                ? { negative_prompt: negativePrompt }
+                : {}),
+            ...(supportsParameter("seed") && seed != null ? { seed } : {}),
+            ...(supportsParameter("watermark") && watermark != null ? { watermark } : {}),
+        };
         const legacyMediaPayload = IS_CLOUD_DEPLOYMENT
             ? {}
             : {

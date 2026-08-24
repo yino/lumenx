@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import copy
+import logging
 import time
 from collections.abc import Mapping
 from dataclasses import dataclass, field, replace
@@ -22,6 +23,8 @@ from .ticket_settlement import TicketSettlementService
 
 
 WORKER_IDENTITY = SystemContext(service_name="ai-worker")
+
+logger = logging.getLogger(__name__)
 
 
 class AIWorkerError(RuntimeError):
@@ -342,6 +345,16 @@ class AIWorkerService:
         if provider_rejection is not None:
             error_code = provider_rejection.safe_error_code
             message = provider_rejection.safe_error_message
+            logger.warning(
+                "AI provider rejected request task_id=%s attempt_id=%s "
+                "provider=%s model=%s provider_code=%s message=%s",
+                lease.task_id,
+                lease.attempt_id,
+                lease.model_route.provider,
+                lease.model_route.provider_model_id,
+                provider_rejection.provider_code,
+                str(provider_rejection)[:400],
+            )
         elif stage == "model_client":
             error_code = "MODEL_CLIENT_UNAVAILABLE"
             message = "模型服务暂时不可用，请稍后重试"

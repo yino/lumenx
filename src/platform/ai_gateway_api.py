@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import copy
 import json
+import logging
 from collections.abc import Mapping
 from typing import Any, Protocol
 
@@ -37,6 +38,9 @@ from .ticket_reservation import (
     TicketReservationScopeNotFoundError,
     TicketReservationService,
 )
+
+
+logger = logging.getLogger(__name__)
 
 
 class AITaskSubmitter(Protocol):
@@ -450,7 +454,13 @@ def install_cloud_ai_gateway_api(
         )
 
     @app.exception_handler(AIGatewayConfigurationError)
-    def handle_configuration_error(_request: Request, exc: AIGatewayConfigurationError):
+    def handle_configuration_error(request: Request, exc: AIGatewayConfigurationError):
+        logger.warning(
+            "AI gateway configuration unavailable path=%s code=%s message=%s",
+            request.url.path,
+            "AI_CONFIGURATION_UNAVAILABLE",
+            str(exc),
+        )
         return JSONResponse(
             status_code=503,
             content={"code": "AI_CONFIGURATION_UNAVAILABLE", "message": str(exc)},

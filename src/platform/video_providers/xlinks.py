@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import base64
+import binascii
 import os
 import tempfile
 import time
@@ -22,7 +24,9 @@ from .interface import VideoGenerationRequest
 
 
 DEFAULT_MAX_VIDEO_BYTES = 512 * 1024 * 1024
+DEFAULT_MAX_INPUT_IMAGE_BYTES = 20 * 1024 * 1024
 SUPPORTED_MODES = frozenset({"t2v", "i2v"})
+SUPPORTED_IMAGE_MEDIA_TYPES = frozenset({"image/jpeg", "image/png", "image/webp"})
 SUPPORTED_RESOLUTIONS = {
     "720p": (1280, 720),
     "1080p": (1920, 1080),
@@ -48,6 +52,7 @@ class XlinksGrokVideoProvider:
         poll_interval: float = 15,
         max_wait_seconds: float = 900,
         maximum_video_bytes: int = DEFAULT_MAX_VIDEO_BYTES,
+        maximum_input_image_bytes: int = DEFAULT_MAX_INPUT_IMAGE_BYTES,
         maximum_redirects: int = 3,
     ) -> None:
         self.model_id = str(model_id).strip()
@@ -61,6 +66,7 @@ class XlinksGrokVideoProvider:
         self.poll_interval = float(poll_interval)
         self.max_wait_seconds = float(max_wait_seconds)
         self.maximum_video_bytes = int(maximum_video_bytes)
+        self.maximum_input_image_bytes = int(maximum_input_image_bytes)
         self.maximum_redirects = int(maximum_redirects)
         self._validate_configuration()
 
@@ -81,6 +87,8 @@ class XlinksGrokVideoProvider:
             raise ValueError("Xlinks video timeouts must be positive")
         if self.maximum_video_bytes <= 0:
             raise ValueError("Xlinks video byte limit must be positive")
+        if self.maximum_input_image_bytes <= 0:
+            raise ValueError("Xlinks video input image byte limit must be positive")
         if self.maximum_redirects < 0 or self.maximum_redirects > 5:
             raise ValueError("Xlinks video redirect limit is invalid")
 
@@ -138,7 +146,43 @@ class XlinksGrokVideoProvider:
         if value is not None:
             payload[name] = XlinksGrokVideoProvider._positive_integer(value, name=name)
 
-    def _request_body(self, request: VideoGenerationRequest) -> dict[str, Any]:
+    @staticmethod
+    def _validate_data_uri(value: str, *, maximum_bytes: int) -> str:
+        prefix, separator, encoded = value.partition(",")
+        if not separator or not prefix.lower().startswith("data:"):
+            raise ValueError("Xlinks video input image data URI is invalid")
+        media_type, *parameters = prefix[5:].split(";")
+        if media_type.lower() not in SUPPORTED_IMAGE_MEDIA_TYPES:
+            raise ValueError("Xlinks video input image MIME type is unsupported")
+        if "base64" not in {item.lower() for item in parameters}:
+            raise ValueError("Xlinks video input image data URI must be base64")
+        if not encoded or len(encoded) > ((maximum_bytes + 2) // 3) * 4 + 8:
+            raise ValueError("Xlinks video input image exceeds the size limit")
+        try:
+            decoded = base64.b64decode(encoded, validate=True)
+        except (binascii.Error, ValueError) as exc:
+            raise ValueError("Xlinks video input image data URI is invalid") from exc
+        if len(decoded) > maximum_bytes:
+            raise ValueError("Xlinks video input image exceeds the size limit")
+        return value
+
+    def _validate_image_reference(self, value: str) -> str:
+        if value.lower().startswith("data:"):
+            return self._validate_data_uri(
+                value,
+                maximum_bytes=self.maximum_input_image_bytes,
+            )
+        parsed = urlparse(value)
+        if parsed.scheme != "https" or not parsed.netloc or parsed.username:
+            raise ValueError("Xlinks video input image must use HTTPS")
+        return value
+
+    def _request_body(
+        self,
+        request: VideoGenerationRequest,
+        *,
+        image_override: str | None = None,
+    ) -> dict[str, Any]:
         mode = str(request.mode).strip().lower()
         if mode not in SUPPORTED_MODES:
             raise ValueError(f"Xlinks video mode is unsupported: {request.mode}")
@@ -154,11 +198,12 @@ class XlinksGrokVideoProvider:
         if mode == "i2v":
             if len(request.input_urls) != 1:
                 raise ValueError("Xlinks i2v requires exactly one input image")
-            image_url = str(request.input_urls[0]).strip()
-            image_parsed = urlparse(image_url)
-            if image_parsed.scheme != "https" or not image_parsed.netloc or image_parsed.username:
-                raise ValueError("Xlinks video input image must use HTTPS")
-            payload["image"] = image_url
+            image_url = str(image_override or request.input_urls[0]).strip()
+            # Xlinks exposes the NewAPI video route, but its current xAI
+            # channel expects the upstream alias `image_url` for i2v. Sending
+            # the generic `image` field reaches the channel but is rejected
+            # by xAI with a pre-task 422.
+            payload["image_url"] = self._validate_image_reference(image_url)
         elif request.input_urls:
             raise ValueError("Xlinks t2v does not accept input images")
 
@@ -271,26 +316,90 @@ class XlinksGrokVideoProvider:
         if not isinstance(payload, Mapping):
             raise RuntimeError("Xlinks video creation response is not a JSON object")
         task_id = payload.get("task_id")
+        if not isinstance(task_id, str) and isinstance(payload.get("data"), Mapping):
+            task_id = payload["data"].get("task_id")
         if not isinstance(task_id, str) or not task_id.strip():
             raise RuntimeError("Xlinks video creation response has no task_id")
         return task_id.strip()
 
-    @staticmethod
-    def _status_payload(payload: Any) -> tuple[str, str | None, Mapping[str, Any]]:
+    def _status_payload(self, payload: Any) -> tuple[str, str | None, Mapping[str, Any]]:
         if not isinstance(payload, Mapping):
             raise RuntimeError("Xlinks video status response is not a JSON object")
-        status = str(payload.get("status") or "").strip().lower()
-        url = payload.get("url") or payload.get("video_url")
-        if not url and isinstance(payload.get("data"), Mapping):
-            url = payload["data"].get("url") or payload["data"].get("video_url")
-        return status, str(url).strip() if isinstance(url, str) and url.strip() else None, payload
+        # NewAPI documents a flat status/url response, while Xlinks wraps
+        # the same task in {code, data} and reports SUCCESS/QUEUED states.
+        # Normalize both contracts at the provider boundary.
+        nested = payload.get("data") if isinstance(payload.get("data"), Mapping) else None
+        # Prefer the Xlinks business object so its result_url wins over the
+        # legacy nested video.url value, which may point at a stale token.
+        candidates = [nested, payload] if nested is not None else [payload]
+        status = ""
+        for candidate in candidates:
+            if not isinstance(candidate, Mapping):
+                continue
+            raw_status = candidate.get("status")
+            if raw_status:
+                status = str(raw_status).strip().lower()
+                break
+        status_aliases = {
+            "pending": "queued",
+            "not_start": "queued",
+            "not_started": "queued",
+            "waiting": "queued",
+            "wait": "queued",
+            "queued": "queued",
+            "submitted": "queued",
+            "processing": "in_progress",
+            "starting": "in_progress",
+            "start": "in_progress",
+            "running": "in_progress",
+            "executing": "in_progress",
+            "in_progress": "in_progress",
+            "success": "completed",
+            "done": "completed",
+            "completed": "completed",
+            "failure": "failed",
+            "failed": "failed",
+            "error": "failed",
+            "canceled": "failed",
+            "cancelled": "failed",
+        }
+        status = status_aliases.get(status, status)
 
-    def _submit(self, request: VideoGenerationRequest) -> tuple[str, str | None]:
+        url: Any = None
+        for candidate in candidates:
+            if not isinstance(candidate, Mapping):
+                continue
+            url = candidate.get("url") or candidate.get("video_url") or candidate.get("result_url")
+            if url:
+                break
+            video = candidate.get("video")
+            if isinstance(video, Mapping):
+                url = video.get("url") or video.get("video_url")
+                if url:
+                    break
+            candidate_data = candidate.get("data")
+            if isinstance(candidate_data, Mapping):
+                video = candidate_data.get("video")
+                if isinstance(video, Mapping):
+                    url = video.get("url") or video.get("video_url")
+                    if url:
+                        break
+        if isinstance(url, str) and url.strip():
+            normalized_url = url.strip()
+            parsed = urlparse(normalized_url)
+            if not parsed.scheme:
+                normalized_url = urljoin(f"{self.base_url}/", normalized_url)
+            url = normalized_url
+        else:
+            url = None
+        return status, url, payload
+
+    def _submit_body(self, body: Mapping[str, Any]) -> tuple[str, str | None]:
         try:
             response = self.session.post(
                 f"{self.base_url}/video/generations",
                 headers=self._headers(),
-                json=self._request_body(request),
+                json=dict(body),
                 timeout=(self.connect_timeout, self.read_timeout),
             )
         except requests.RequestException as exc:
@@ -306,6 +415,91 @@ class XlinksGrokVideoProvider:
         if request_id is None and isinstance(payload.get("request_id"), str):
             request_id = payload["request_id"].strip()[:255] or None
         return self._task_id(payload), request_id
+
+    @staticmethod
+    def _is_image_fetch_rejection(error: ProviderRequestRejectedError) -> bool:
+        evidence = f"{error.provider_code} {error}".lower()
+        return any(
+            marker in evidence
+            for marker in (
+                "fail_to_fetch_task",
+                "fail to fetch",
+                "fetch image",
+                "image fetch",
+                "download image",
+            )
+        )
+
+    def _inline_image_data_uri(self, image_url: str) -> str:
+        current_url = image_url
+        for redirect_index in range(self.maximum_redirects + 1):
+            parsed = urlparse(current_url)
+            if parsed.scheme != "https" or not parsed.netloc or parsed.username:
+                raise RuntimeError("Xlinks video input image URL must use HTTPS")
+            try:
+                response = self.session.get(
+                    current_url,
+                    headers={"Accept": "image/jpeg,image/png,image/webp"},
+                    timeout=(self.connect_timeout, self.read_timeout),
+                    stream=True,
+                    allow_redirects=False,
+                )
+            except requests.RequestException as exc:
+                raise RuntimeError("Xlinks video input image download failed") from exc
+            if response.status_code in {301, 302, 303, 307, 308}:
+                if redirect_index >= self.maximum_redirects:
+                    raise RuntimeError("Xlinks video input image exceeded the redirect limit")
+                location = response.headers.get("Location")
+                if not location:
+                    raise RuntimeError("Xlinks video input image redirect is missing Location")
+                current_url = urljoin(current_url, location)
+                continue
+            self._raise_for_status(response)
+            content_type = response.headers.get("Content-Type", "").split(";", 1)[0].strip().lower()
+            if content_type not in SUPPORTED_IMAGE_MEDIA_TYPES:
+                raise RuntimeError("Xlinks video input image content type is unsupported")
+            declared_length = response.headers.get("Content-Length")
+            if declared_length:
+                try:
+                    if int(declared_length) > self.maximum_input_image_bytes:
+                        raise RuntimeError("Xlinks video input image exceeds the size limit")
+                except ValueError as exc:
+                    raise RuntimeError("Xlinks video input image Content-Length is invalid") from exc
+            chunks: list[bytes] = []
+            total = 0
+            for chunk in response.iter_content(chunk_size=64 * 1024):
+                if not chunk:
+                    continue
+                total += len(chunk)
+                if total > self.maximum_input_image_bytes:
+                    raise RuntimeError("Xlinks video input image exceeds the size limit")
+                chunks.append(chunk)
+            content = b"".join(chunks)
+            if not content:
+                raise RuntimeError("Xlinks video input image is empty")
+            encoded = base64.b64encode(content).decode("ascii")
+            return f"data:{content_type};base64,{encoded}"
+        raise RuntimeError("Xlinks video input image download did not complete")
+
+    def _submit(self, request: VideoGenerationRequest) -> tuple[str, str | None]:
+        body = self._request_body(request)
+        try:
+            return self._submit_body(body)
+        except ProviderRequestRejectedError as error:
+            # Some Xlinks deployments cannot fetch private/signed object-store
+            # URLs. A rejected, pre-task fetch failure is safe to retry inline;
+            # ambiguous network errors and accepted tasks are never retried.
+            if (
+                request.mode.strip().lower() != "i2v"
+                or len(request.input_urls) != 1
+                or request.input_urls[0].lower().startswith("data:")
+                or not self._is_image_fetch_rejection(error)
+            ):
+                raise
+            inline_image = self._inline_image_data_uri(request.input_urls[0])
+            return self._submit_body(
+                self._request_body(request, image_override=inline_image)
+            )
 
     def _poll(self, task_id: str) -> tuple[str, Mapping[str, Any]]:
         started_at = time.monotonic()
@@ -341,6 +535,11 @@ class XlinksGrokVideoProvider:
             if status == "failed":
                 error = raw.get("error")
                 message = error.get("message") if isinstance(error, Mapping) else None
+                if not message:
+                    message = raw.get("fail_reason") or raw.get("message")
+                if not message and isinstance(raw.get("data"), Mapping):
+                    nested = raw["data"]
+                    message = nested.get("fail_reason") or nested.get("message")
                 raise ProviderTerminalFailureError(
                     str(message or "Xlinks video task failed")[:400],
                     provider_status=status,
@@ -367,9 +566,18 @@ class XlinksGrokVideoProvider:
             if parsed.scheme != "https" or not parsed.netloc or parsed.username:
                 raise RuntimeError("Xlinks video URL must use HTTPS")
             try:
+                request_headers = {"Accept": "video/mp4"}
+                base_parsed = urlparse(self.base_url)
+                if (
+                    parsed.hostname == base_parsed.hostname
+                    and (parsed.port or 443) == (base_parsed.port or 443)
+                ):
+                    # Xlinks result_url requires Bearer auth. Do not forward
+                    # the credential if the URL redirects to an external CDN.
+                    request_headers["Authorization"] = f"Bearer {self.api_key}"
                 response = self.session.get(
                     current_url,
-                    headers={"Accept": "video/mp4"},
+                    headers=request_headers,
                     timeout=(self.connect_timeout, self.read_timeout),
                     stream=True,
                     allow_redirects=False,

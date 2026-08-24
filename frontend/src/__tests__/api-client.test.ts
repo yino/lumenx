@@ -479,6 +479,83 @@ describe("云端 API 客户端", () => {
     expect(captured[0].data).not.toHaveProperty("reference_image_urls");
   });
 
+  it("Grok 视频只提交其 Xlinks 参数契约", async () => {
+    const { api, apiClient } = await import("@/lib/api");
+    const captured: CapturedRequest[] = [];
+    apiClient.defaults.adapter = captureAdapter(captured);
+
+    await api.createVideoTask(
+      "project-1",
+      "media:107",
+      "镜头推进",
+      5,
+      42,
+      "720p",
+      true,
+      "",
+      true,
+      "反向模糊",
+      1,
+      "grok-imagine-video",
+      "frame-1",
+      "single",
+      "i2v",
+      [],
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      [],
+      "16:9",
+      "t2i_i2v",
+    );
+
+    const data = captured[0].data as { parameters: Record<string, unknown> };
+    expect(data.parameters).toEqual({
+      model_choice: "grok-imagine-video",
+      duration: 5,
+      resolution: "720p",
+      output_count: 1,
+      negative_prompt: "反向模糊",
+      seed: 42,
+    });
+    expect(data.parameters).not.toHaveProperty("ratio");
+    expect(data.parameters).not.toHaveProperty("prompt_extend");
+    expect(data.parameters).not.toHaveProperty("audio");
+  });
+
+  it("Seedance I2V 只提交其服务端白名单参数", async () => {
+    const { api, apiClient } = await import("@/lib/api");
+    const captured: CapturedRequest[] = [];
+    apiClient.defaults.adapter = captureAdapter(captured);
+
+    await api.createVideoTask(
+      "project-1",
+      "media:107",
+      "镜头推进",
+      5,
+      undefined,
+      "1080p",
+      false,
+      "",
+      true,
+      "",
+      1,
+      "seedance-2.0-i2v",
+      "frame-1",
+    );
+
+    const data = captured[0].data as { parameters: Record<string, unknown> };
+    expect(data.parameters).toEqual({
+      model_choice: "seedance-2.0-i2v",
+      duration: 5,
+      resolution: "1080p",
+      output_count: 1,
+      audio: false,
+    });
+  });
+
   it("并发分镜写入遇到版本冲突后刷新版本并自动重试", async () => {
     const { api, apiClient, setActiveWorkspaceId } = await import("@/lib/api");
     const patchVersions: Array<string | undefined> = [];

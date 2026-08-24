@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 from pathlib import Path
 
 import pytest
@@ -69,7 +70,7 @@ def test_xlinks_video_creates_polls_downloads_and_persists_task_id(
                 {
                     "task_id": "task-42",
                     "status": "completed",
-                    "url": "https://cdn.example/video.mp4",
+                    "url": "https://api.xlinks.site/v1/videos/task-42/content",
                     "metadata": {"duration": 5, "width": 1280, "height": 720},
                 },
             ),
@@ -107,10 +108,12 @@ def test_xlinks_video_creates_polls_downloads_and_persists_task_id(
     assert submitted == [("xlinks", "task-42", "req-42")]
     assert session.calls[0][0:2] == ("POST", "https://api.xlinks.site/v1/video/generations")
     assert session.calls[0][2]["headers"]["Authorization"] == "Bearer xlinks-secret"
+    download_calls = [call for call in session.calls if call[0] == "GET" and call[2].get("stream")]
+    assert download_calls[0][2]["headers"]["Authorization"] == "Bearer xlinks-secret"
     assert session.calls[0][2]["json"] == {
         "model": "grok-imagine-video",
         "prompt": "一个人在城市街道上慢慢走过",
-        "image": "https://assets.example/image.png",
+        "image_url": "https://assets.example/image.png",
         "duration": 5,
         "fps": 30,
         "width": 1280,
@@ -147,6 +150,168 @@ def test_xlinks_t2v_uses_newapi_json_fields(tmp_path):
         "height": 1080,
         "metadata": {"negative_prompt": "文字水印", "quality_level": "high"},
     }
+
+
+def test_xlinks_accepts_xlinks_wrapped_status_and_result_url(tmp_path):
+    provider = XlinksGrokVideoProvider(
+        "grok-imagine-video",
+        SecretStr("test"),
+        base_url="https://api.xlinks.site/v1",
+    )
+
+    queued_status, queued_url, _ = provider._status_payload(
+        {
+            "code": "success",
+            "data": {
+                "task_id": "task-1",
+                "status": "QUEUED",
+                "data": {"status": "pending", "progress": 1},
+            },
+        }
+    )
+    assert queued_status == "queued"
+    assert queued_url is None
+
+    not_started_status, _, _ = provider._status_payload(
+        {"data": {"status": "not_start"}}
+    )
+    assert not_started_status == "queued"
+
+    completed_status, completed_url, _ = provider._status_payload(
+        {
+            "code": "success",
+            "data": {
+                "task_id": "task-1",
+                "status": "SUCCESS",
+                "result_url": "https://api.xlinks.site/v1/videos/task-1/content",
+                "data": {
+                    "status": "done",
+                    "video": {"url": "/v1/videos/task-1/content"},
+                },
+            },
+        }
+    )
+    assert completed_status == "completed"
+    assert completed_url == "https://api.xlinks.site/v1/videos/task-1/content"
+
+
+def test_xlinks_i2v_accepts_a_base64_data_uri(tmp_path):
+    image = base64.b64encode(b"png-bytes").decode("ascii")
+    provider = XlinksGrokVideoProvider(
+        "grok-imagine-video",
+        SecretStr("test"),
+        base_url="https://api.xlinks.site/v1",
+    )
+
+    payload = provider._request_body(
+        _request(
+            tmp_path / "result.mp4",
+            inputs=(f"data:image/png;base64,{image}",),
+        )
+    )
+
+    assert payload["image_url"] == f"data:image/png;base64,{image}"
+
+
+def test_xlinks_retries_fetch_rejection_with_inline_image(tmp_path, monkeypatch):
+    mp4 = b"\x00\x00\x00\x18ftypisom\x00\x00\x00\x00video"
+    source_image = b"source-image"
+
+    class RetrySession(FakeSession):
+        def __init__(self):
+            super().__init__(
+                None,
+                [
+                    FakeResponse(
+                        422,
+                        {
+                            "code": "fail_to_fetch_task",
+                            "message": "xAI upstream returned status 422",
+                        },
+                    ),
+                    FakeResponse(202, {"task_id": "task-inline", "status": "queued"}),
+                ],
+                FakeResponse(
+                    200,
+                    headers={"Content-Length": str(len(mp4))},
+                    content=mp4,
+                ),
+            )
+            self.post_responses = list(self.poll_responses)
+            self.poll_responses = [
+                FakeResponse(200, {"task_id": "task-inline", "status": "completed", "url": "https://cdn.example/video.mp4"}),
+            ]
+
+        def post(self, url, **kwargs):
+            self.calls.append(("POST", url, kwargs))
+            return self.post_responses.pop(0)
+
+        def get(self, url, **kwargs):
+            self.calls.append(("GET", url, kwargs))
+            if kwargs.get("stream") and url == "https://assets.example/image.png":
+                return FakeResponse(
+                    200,
+                    headers={
+                        "Content-Type": "image/png",
+                        "Content-Length": str(len(source_image)),
+                    },
+                    content=source_image,
+                )
+            if kwargs.get("stream"):
+                return self.download_response
+            return self.poll_responses.pop(0)
+
+    monkeypatch.setattr("src.platform.video_providers.xlinks.time.sleep", lambda _: None)
+    session = RetrySession()
+    output = tmp_path / "result.mp4"
+    XlinksGrokVideoProvider(
+        "grok-imagine-video",
+        SecretStr("xlinks-secret"),
+        session=session,
+        base_url="https://api.xlinks.site/v1",
+        poll_interval=0.01,
+    ).generate(_request(output, inputs=("https://assets.example/image.png",)))
+
+    assert output.read_bytes() == mp4
+    post_calls = [call for call in session.calls if call[0] == "POST"]
+    assert len(post_calls) == 2
+    retry_body = post_calls[1][2]["json"]
+    assert retry_body["image_url"] == (
+        "data:image/png;base64," + base64.b64encode(source_image).decode("ascii")
+    )
+    download_calls = [
+        call
+        for call in session.calls
+        if call[0] == "GET" and call[1] == "https://cdn.example/video.mp4"
+    ]
+    assert "Authorization" not in download_calls[0][2]["headers"]
+
+
+def test_xlinks_does_not_retry_non_fetch_rejections(tmp_path):
+    session = FakeSession(
+        FakeResponse(
+            422,
+            {"code": "invalid_parameter", "message": "duration is invalid"},
+        ),
+        [],
+        FakeResponse(500),
+    )
+    provider = XlinksGrokVideoProvider(
+        "grok-imagine-video",
+        SecretStr("xlinks-secret"),
+        session=session,
+        base_url="https://api.xlinks.site/v1",
+    )
+
+    with pytest.raises(ProviderRequestRejectedError):
+        provider.generate(
+            _request(
+                tmp_path / "result.mp4",
+                inputs=("https://assets.example/image.png",),
+            )
+        )
+
+    assert len([call for call in session.calls if call[0] == "POST"]) == 1
 
 
 @pytest.mark.parametrize(
