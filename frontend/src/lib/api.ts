@@ -2615,6 +2615,13 @@ export const api = {
             // parameter-support metadata, while filtering known models to
             // their declared provider contract.
             !selectedI2VModel || Boolean(selectedI2VModel.params[name]);
+        // The local cloud Seedance route currently exposes only the common
+        // duration/resolution/seed contract. Keep provider-specific audio and
+        // watermark controls out of this PC request until that route schema is
+        // versioned with those fields; otherwise the gateway rejects the task
+        // before it reaches ARK.
+        const cloudSupportsSeedanceAudio = model !== "seedance-2.0-i2v";
+        const cloudSupportsSeedanceWatermark = model !== "seedance-2.0-i2v";
         const cloudParameters = {
             model_choice: model,
             duration,
@@ -2626,12 +2633,16 @@ export const api = {
             ...(generationMode !== "r2v" && supportsParameter("promptExtend")
                 ? { prompt_extend: promptExtend }
                 : {}),
-            ...(supportsParameter("audio") ? { audio: generateAudio } : {}),
+            ...(supportsParameter("audio") && cloudSupportsSeedanceAudio
+                ? { audio: generateAudio }
+                : {}),
             ...(supportsParameter("negativePrompt") && negativePrompt
                 ? { negative_prompt: negativePrompt }
                 : {}),
             ...(supportsParameter("seed") && seed != null ? { seed } : {}),
-            ...(supportsParameter("watermark") && watermark != null ? { watermark } : {}),
+            ...(supportsParameter("watermark") && cloudSupportsSeedanceWatermark && watermark != null
+                ? { watermark }
+                : {}),
         };
         const legacyMediaPayload = IS_CLOUD_DEPLOYMENT
             ? {}

@@ -525,7 +525,7 @@ describe("云端 API 客户端", () => {
     expect(data.parameters).not.toHaveProperty("audio");
   });
 
-  it("Seedance I2V 只提交其服务端白名单参数", async () => {
+  it("Seedance I2V 只提交当前云端服务端白名单参数", async () => {
     const { api, apiClient } = await import("@/lib/api");
     const captured: CapturedRequest[] = [];
     apiClient.defaults.adapter = captureAdapter(captured);
@@ -544,6 +544,18 @@ describe("云端 API 客户端", () => {
       1,
       "seedance-2.0-i2v",
       "frame-1",
+      "single",
+      "i2v",
+      [],
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      [],
+      "16:9",
+      "t2i_i2v",
+      true,
     );
 
     const data = captured[0].data as { parameters: Record<string, unknown> };
@@ -552,7 +564,6 @@ describe("云端 API 客户端", () => {
       duration: 5,
       resolution: "1080p",
       output_count: 1,
-      audio: false,
     });
   });
 
