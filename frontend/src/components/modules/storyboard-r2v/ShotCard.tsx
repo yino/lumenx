@@ -33,6 +33,8 @@ import PreviewImage from "@/components/shared/preview/PreviewImage";
 import PreviewVideo from "@/components/shared/preview/PreviewVideo";
 import { useProjectStore } from "@/store/projectStore";
 import { selectedVariantUrl } from "@/lib/characterImage";
+import { assetTagForName, extractAssetTags, preserveAssetTags } from "@/lib/assetTags";
+import TaggedPromptTextarea from "./TaggedPromptTextarea";
 
 export interface ShotNode {
     id: string;
@@ -218,12 +220,9 @@ export default function ShotCard({
     const r2vSlots = useCallback((): { description: string }[] => {
         if (shot.tabMode !== "direct_r2v") return [];
         const bySlot = new Map<number, string>();
-        const tagPattern = /\[character(\d+):([^\]]+)\]/g;
-        let match;
-        while ((match = tagPattern.exec(shot.prompt)) !== null) {
-            const slotN = parseInt(match[1], 10);
-            if (bySlot.has(slotN)) continue;
-            const name = match[2];
+        for (const reference of extractAssetTags(shot.prompt)) {
+            const slotN = reference.slot;
+            const name = reference.name;
             const char = characters.find((c: any) => c.name === name);
             bySlot.set(slotN, char?.description ? `${name}: ${char.description}` : name);
         }
@@ -242,17 +241,26 @@ export default function ShotCard({
         if (shot.tabMode === "direct_r2v") {
             const out: string[] = [];
             const seen = new Set<string>();
-            const tagPattern = /\[character\d*:([^\]]+)\]/g;
-            let m;
-            while ((m = tagPattern.exec(shot.prompt)) !== null) {
-                const [, name] = m;
+            for (const reference of extractAssetTags(shot.prompt)) {
+                const name = reference.name;
                 const char = characters.find((c: any) => c.name === name);
-                if (!char || seen.has(char.id)) continue;
-                seen.add(char.id);
-                const url = char.headshot_image_url || char.image_url || char.full_body_image_url
-                    || selectedVariantUrl(char.reference_sheet)
-                    || (char.full_body_asset?.variants?.[0]?.url);
-                if (url) out.push(url);
+                const scene = scenes.find((s: any) => s.name === name);
+                const prop = props.find((p: any) => p.name === name);
+                const asset = char
+                    ? {
+                        id: char.id,
+                        url: char.headshot_image_url || char.image_url || char.full_body_image_url
+                            || selectedVariantUrl(char.reference_sheet)
+                            || char.full_body_asset?.variants?.[0]?.url,
+                    }
+                    : scene
+                        ? { id: scene.id, url: scene.image_asset?.variants?.find((v: any) => v.id === scene.image_asset?.selected_id)?.url || scene.image_asset?.variants?.[0]?.url }
+                        : prop
+                            ? { id: prop.id, url: prop.image_asset?.variants?.find((v: any) => v.id === prop.image_asset?.selected_id)?.url || prop.image_asset?.variants?.[0]?.url }
+                            : null;
+                if (!asset || seen.has(asset.id)) continue;
+                seen.add(asset.id);
+                if (asset.url) out.push(asset.url);
             }
             return out.slice(0, 4); // cap at 4 to keep payload reasonable
         }
@@ -261,7 +269,7 @@ export default function ShotCard({
             ? shot.t2iImageUrls[Math.max(0, Math.min(shot.t2iSelectedIndex ?? 0, shot.t2iImageUrls.length - 1))]
             : (shot.t2iImageUrl || shot.imageUrl);
         return active ? [active] : [];
-    }, [shot.tabMode, shot.prompt, shot.t2iImageUrls, shot.t2iSelectedIndex, shot.t2iImageUrl, shot.imageUrl, characters])();
+    }, [shot.tabMode, shot.prompt, shot.t2iImageUrls, shot.t2iSelectedIndex, shot.t2iImageUrl, shot.imageUrl, characters, scenes, props])();
 
     // castAvatars — character avatar group for the "Cast:" row above
     // the prompt textarea (L5 borrow from 火山剧创's 出镜角色). De-
@@ -270,10 +278,8 @@ export default function ShotCard({
     const castAvatars = useCallback((): Array<{ id: string; name: string; avatarUrl?: string }> => {
         const out: Array<{ id: string; name: string; avatarUrl?: string }> = [];
         const seen = new Set<string>();
-        const tagPattern = /\[character\d*:([^\]]+)\]/g;
-        let match;
-        while ((match = tagPattern.exec(shot.prompt)) !== null) {
-            const [, name] = match;
+        for (const reference of extractAssetTags(shot.prompt)) {
+            const name = reference.name;
             const char = characters.find((c: any) => c.name === name);
             if (!char || seen.has(char.id)) continue;
             seen.add(char.id);
@@ -503,37 +509,8 @@ export default function ShotCard({
 
     const handleInsertAssetFromChip = (_type: string, name: string) => {
         const currentPrompt = shot.prompt;
-        // Each unique character gets one fixed slot number throughout this
-        // prompt: slot N → reference_image_urls[N-1] in HappyHorse R2V, so
-        // referencing the same actor twice must reuse the same slot —
-        // otherwise the model would expect two separate reference images.
-        // Examples:
-        //   first @小兔子 → [character1:小兔子]
-        //   then @小狗 → [character2:小狗]
-        //   then @小兔子 again → [character1:小兔子]   (reuse, NOT [character3:…])
-        const escapedName = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-        const existingTagRe = new RegExp(`\\[character(\\d+):${escapedName}\\]`);
-        const existingMatch = currentPrompt.match(existingTagRe);
-
-        let slot: number;
-        if (existingMatch) {
-            slot = parseInt(existingMatch[1], 10);
-        } else {
-            // Map of (slot → name) already in the prompt; first-seen wins
-            // per slot so accidental dup tags don't inflate the count.
-            const usedSlotByName = new Map<number, string>();
-            const slotRe = /\[character(\d+):([^\]]+)\]/g;
-            let m;
-            while ((m = slotRe.exec(currentPrompt)) !== null) {
-                const slotN = parseInt(m[1], 10);
-                if (!usedSlotByName.has(slotN)) {
-                    usedSlotByName.set(slotN, m[2]);
-                }
-            }
-            const usedSlots = Array.from(usedSlotByName.keys());
-            slot = usedSlots.length > 0 ? Math.max(...usedSlots) + 1 : 1;
-        }
-        const tag = `[character${slot}:${name}]`;
+        const tag = assetTagForName(currentPrompt, name);
+        if (!tag) return;
 
         const textarea = textareaRef.current;
         if (textarea) {
@@ -728,7 +705,7 @@ export default function ShotCard({
 
                         {/* Prompt Editor wrapper — with left accent line */}
                         <div className="relative">
-                            <textarea
+                            <TaggedPromptTextarea
                                 ref={textareaRef}
                                 value={shot.prompt}
                                 onChange={(e) => onUpdatePrompt(e.target.value)}
@@ -739,6 +716,7 @@ export default function ShotCard({
                                     }
                                 }}
                                 placeholder={t("promptPlaceholder")}
+                                highlightClassName="pl-3.5 pr-8 py-1 text-[13px] leading-[1.7] text-foreground"
                                 className="w-full resize-none bg-transparent border-l-2 border-glass-border pl-3.5 pr-8 py-1 text-[13px] leading-[1.7] text-foreground placeholder:text-text-muted focus:outline-none focus:border-l-primary/40 focus:bg-glass/30 transition-all duration-200 min-h-[80px] max-h-[260px] overflow-y-auto"
                                 rows={5}
                             />
@@ -767,7 +745,7 @@ export default function ShotCard({
                             scriptId={currentProjectId ?? ""}
                             slots={r2vSlots}
                             imageUrls={polishImageUrls}
-                            onApply={onUpdatePrompt}
+                            onApply={(text) => onUpdatePrompt(preserveAssetTags(shot.prompt, text))}
                         />
 
                         {/* Structured field tags — interactive Popover editors */}

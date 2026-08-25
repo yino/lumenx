@@ -343,8 +343,8 @@ export default function PolishPanel({
             <BorderGlow
                 animated={!!polished}
                 glowColor="262 80 70"
-                colors={["#646cff", "#a855f7", "#ec4899"]}
-                backgroundColor="rgba(20, 17, 31, 0.92)"
+                colors={["var(--color-primary)", "var(--color-accent)", "var(--color-primary-hover)"]}
+                backgroundColor="var(--color-bg-surface)"
                 borderRadius={8}
                 glowRadius={28}
                 glowIntensity={0.85}
@@ -430,7 +430,7 @@ function BilingualColumn({
                             type="button"
                             onClick={onApply}
                             title={applyHint}
-                            className="btn-tip inline-flex items-center gap-1 rounded bg-primary/90 px-2 py-0.5 font-mono text-chrome font-semibold text-on-accent transition-colors duration-fast ease-out-quart hover:bg-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/55"
+                            className="btn-tip inline-flex items-center gap-1 rounded border border-primary/70 bg-primary px-2 py-0.5 font-mono text-chrome font-semibold text-on-accent shadow-[0_1px_6px_-2px_var(--color-primary)] transition-colors duration-fast ease-out-quart hover:bg-primary-hover hover:border-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/55"
                         >
                             <CornerDownLeft size={10} aria-hidden="true" />
                             {applyLabel}

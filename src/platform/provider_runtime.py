@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import hashlib
 import json
+import logging
 import mimetypes
+import re
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
@@ -17,8 +20,247 @@ from src.apps.comic_gen.llm import (
 
 from .ai_io import DownloadedProviderOutput, ProviderOutputReference
 from .ai_worker import ProviderInvocationOutcome
+from .credentials import is_sensitive_config_key
+from .observability import events
 from .settings import DeploymentMode, DeploymentSettings, ProviderAdapter
 from .video_providers import VideoGenerationRequest
+
+
+logger = logging.getLogger(__name__)
+
+_CONTENT_KEY_NAMES = frozenset(
+    {
+        "content",
+        "input",
+        "messages",
+        "output",
+        "payload",
+        "prompt",
+        "provider_payload",
+        "raw_provider_usage",
+        "request_payload",
+        "response_payload",
+        "script",
+        "text",
+    }
+)
+_CONTENT_KEY_MARKERS = (
+    "content",
+    "description",
+    "instruction",
+    "message",
+    "negative_prompt",
+    "prompt",
+    "script",
+    "text",
+)
+_MEDIA_KEY_MARKERS = (
+    "audio",
+    "file",
+    "image",
+    "media",
+    "path",
+    "url",
+    "video",
+)
+_OMIT_PARAMETER_KEYS = frozenset(
+    {
+        "on_provider_ids",
+        "on_provider_submission",
+    }
+)
+_SAFE_STRING_PARAMETER_KEYS = frozenset(
+    {
+        "background",
+        "family_override",
+        "model",
+        "mode",
+        "output_format",
+        "provider",
+        "quality",
+        "resolution",
+        "response_format",
+        "size",
+        "type",
+        "voice_id",
+    }
+)
+
+
+def _normalized_parameter_key(value: object) -> str:
+    return re.sub(r"[^a-z0-9]+", "_", str(value).lower()).strip("_") or "parameter"
+
+
+def _text_digest(value: object) -> dict[str, Any]:
+    text = str(value)
+    return {
+        "chars": len(text),
+        "sha256": hashlib.sha256(text.encode("utf-8")).hexdigest(),
+    }
+
+
+def _looks_like_media(value: str) -> bool:
+    text = value.strip().lower()
+    return text.startswith(("data:", "file:", "http://", "https://", "oss://")) or Path(
+        value
+    ).is_absolute()
+
+
+def _parameter_key_category(raw_key: object, value: object) -> str:
+    key = _normalized_parameter_key(raw_key)
+    if key in _OMIT_PARAMETER_KEYS:
+        return "omit"
+    if is_sensitive_config_key(raw_key):
+        return "secret"
+    if key in _CONTENT_KEY_NAMES or any(marker in key for marker in _CONTENT_KEY_MARKERS):
+        return "content"
+    if any(marker in key for marker in _MEDIA_KEY_MARKERS) and not isinstance(
+        value, (bool, int, float)
+    ):
+        return "media"
+    if isinstance(value, str) and _looks_like_media(value):
+        return "media"
+    return "value"
+
+
+def _safe_parameter_key(raw_key: object, category: str) -> str:
+    key = _normalized_parameter_key(raw_key)
+    if category == "secret":
+        return f"{key}_redacted"
+    if category in {"content", "media"}:
+        return f"{key}_summary"
+    return key
+
+
+def _summarize_parameter_value(raw_key: object, value: object) -> Any:
+    category = _parameter_key_category(raw_key, value)
+    if category == "omit":
+        return None
+    if category == "secret":
+        return {"redacted": True, "present": bool(value)}
+    if category == "content":
+        return _text_digest(value)
+    if category == "media":
+        if isinstance(value, (list, tuple, set)):
+            return {"redacted": True, "count": len(value)}
+        return {"redacted": True, "present": bool(value)}
+    if isinstance(value, Mapping):
+        result: dict[str, Any] = {}
+        for index, (child_key, child_value) in enumerate(value.items()):
+            if index >= 50:
+                result["truncated_count"] = len(value) - index
+                break
+            child_category = _parameter_key_category(child_key, child_value)
+            if child_category == "omit":
+                continue
+            result[_safe_parameter_key(child_key, child_category)] = (
+                _summarize_parameter_value(child_key, child_value)
+            )
+        return result
+    if isinstance(value, (list, tuple, set)):
+        values = list(value)
+        return {
+            "count": len(values),
+            "items": [
+                _summarize_parameter_value(f"item_{index}", item)
+                for index, item in enumerate(values[:20])
+            ],
+            **({"truncated_count": len(values) - 20} if len(values) > 20 else {}),
+        }
+    if isinstance(value, str):
+        key = _normalized_parameter_key(raw_key)
+        if key in _SAFE_STRING_PARAMETER_KEYS and len(value) <= 120:
+            return value
+        return _text_digest(value)
+    if value is None or isinstance(value, (bool, int, float)):
+        return value
+    return {"type": type(value).__name__}
+
+
+def summarize_provider_parameters(parameters: Mapping[str, Any]) -> dict[str, Any]:
+    """Return a bounded, content-safe summary suitable for provider request logs."""
+
+    result: dict[str, Any] = {}
+    for index, (raw_key, value) in enumerate(parameters.items()):
+        if index >= 100:
+            result["truncated_count"] = len(parameters) - index
+            break
+        category = _parameter_key_category(raw_key, value)
+        if category == "omit":
+            continue
+        result[_safe_parameter_key(raw_key, category)] = _summarize_parameter_value(
+            raw_key, value
+        )
+    return result
+
+
+def _summarize_messages(messages: list[dict[str, Any]]) -> dict[str, int]:
+    text_chars = 0
+    image_count = 0
+    for message in messages:
+        content = message.get("content")
+        if isinstance(content, str):
+            text_chars += len(content)
+        elif isinstance(content, list):
+            for item in content:
+                if not isinstance(item, Mapping):
+                    continue
+                if item.get("type") == "text":
+                    text_chars += len(str(item.get("text") or ""))
+                elif item.get("type") == "image_url":
+                    image_count += 1
+    return {
+        "message_count": len(messages),
+        "message_text_chars": text_chars,
+        "message_image_count": image_count,
+    }
+
+
+def _emit_provider_request_log(
+    task,
+    *,
+    model_id: str,
+    parameters: Mapping[str, Any],
+    prompt: str | None = None,
+    mode: str | None = None,
+    input_count: int = 0,
+    request_summary: Mapping[str, Any] | None = None,
+) -> None:
+    fields: dict[str, Any] = {
+        "task_id": task.task_id,
+        "attempt_id": task.attempt_id,
+        "capability": task.capability,
+        "provider": task.model_route.provider,
+        "provider_model_id": model_id,
+        "input_count": input_count,
+        "parameter_summary": summarize_provider_parameters(parameters),
+    }
+    request_payload = getattr(task, "request_payload", {}) or {}
+    content = (
+        request_payload.get("content")
+        if isinstance(request_payload, Mapping)
+        else None
+    )
+    if isinstance(content, Mapping) and isinstance(content.get("operation"), str):
+        fields["operation"] = content["operation"].strip()[:120]
+    if mode is not None:
+        fields["mode"] = mode
+    if prompt is not None:
+        fields["prompt_summary"] = {
+            "present": bool(prompt.strip()),
+            **_text_digest(prompt),
+        }
+    if request_summary:
+        fields["request_summary"] = dict(request_summary)
+    try:
+        events.emit("ai.provider_request", **fields)
+    except Exception:
+        # Observability must never make an otherwise valid provider request fail.
+        logger.warning(
+            "AI provider request log could not be encoded task_id=%s attempt_id=%s",
+            task.task_id,
+            task.attempt_id,
+        )
 
 
 class ProductionProviderInvoker:
@@ -250,6 +492,27 @@ class ProductionProviderInvoker:
         total_characters = 0
         for index, item in enumerate(items):
             output_path = self._output_path(task, ".mp3", index=index)
+            speech_parameters = {
+                **dict(getattr(task.model_route, "parameters", {}) or {}),
+                "voice_id": item["voice_id"],
+                "speed": float(item.get("speed", 1.0)),
+                "pitch": float(item.get("pitch", 1.0)),
+                "volume": int(item.get("volume", 50)),
+                "instructions": item.get("instructions"),
+                "model_override": item.get("model_override"),
+                "family_override": item.get("family_override"),
+            }
+            _emit_provider_request_log(
+                task,
+                model_id=task.model_route.provider_model_id,
+                parameters=speech_parameters,
+                request_summary={
+                    "operation": operation,
+                    "item_index": index,
+                    "item_count": len(items),
+                    "text_chars": len(item["text"]),
+                },
+            )
             generated_path, _delay, request_id = client.adapter.synthesize(
                 item["text"],
                 str(output_path),
@@ -292,17 +555,38 @@ class ProductionProviderInvoker:
         if capability in {"script.analysis", "prompt.polish"}:
             messages, response_format = self._text_request(task)
             max_output_tokens = task.model_route.metering_formula.get("max_output_tokens")
+            max_tokens = (
+                max_output_tokens
+                if isinstance(max_output_tokens, int)
+                and not isinstance(max_output_tokens, bool)
+                and max_output_tokens > 0
+                else None
+            )
+            _emit_provider_request_log(
+                task,
+                model_id=task.model_route.provider_model_id,
+                parameters={
+                    "response_format": response_format,
+                    "max_tokens": max_tokens,
+                    "enable_thinking": False,
+                },
+                input_count=sum(
+                    1
+                    for message in messages
+                    if isinstance(message, Mapping)
+                    and isinstance(message.get("content"), list)
+                    and any(
+                        isinstance(item, Mapping) and item.get("type") == "image_url"
+                        for item in message["content"]
+                    )
+                ),
+                request_summary=_summarize_messages(messages),
+            )
             result = client.adapter.chat_with_usage(
                 messages,
                 model=task.model_route.provider_model_id,
                 response_format=response_format,
-                max_tokens=(
-                    max_output_tokens
-                    if isinstance(max_output_tokens, int)
-                    and not isinstance(max_output_tokens, bool)
-                    and max_output_tokens > 0
-                    else None
-                ),
+                max_tokens=max_tokens,
                 enable_thinking=False,
             )
             on_provider_submission(
@@ -320,15 +604,22 @@ class ProductionProviderInvoker:
             parameters = client.execution_parameters()
             parameters.pop("model", None)
             mode = capability.removeprefix("video.")
+            input_urls = tuple(item.signed_url for item in task.provider_inputs)
+            _emit_provider_request_log(
+                task,
+                model_id=task.model_route.provider_model_id,
+                parameters=parameters,
+                prompt=prompt,
+                mode=mode,
+                input_count=len(input_urls),
+            )
             generated = client.adapter.generate(
                 VideoGenerationRequest(
                     model_id=task.model_route.provider_model_id,
                     prompt=prompt,
                     output_path=str(output_path),
                     mode=mode,
-                    input_urls=tuple(
-                        item.signed_url for item in task.provider_inputs
-                    ),
+                    input_urls=input_urls,
                     parameters=parameters,
                     on_provider_submission=on_provider_submission,
                 )
@@ -357,6 +648,14 @@ class ProductionProviderInvoker:
             if input_urls:
                 parameters["ref_image_paths"] = input_urls
 
+        _emit_provider_request_log(
+            task,
+            model_id=task.model_route.provider_model_id,
+            parameters=parameters,
+            prompt=prompt,
+            mode=capability.removeprefix("image."),
+            input_count=len(input_urls),
+        )
         generated = client.adapter.generate_with_usage(
             prompt,
             str(output_path),

@@ -18,6 +18,7 @@ import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { X, Minimize2 } from "lucide-react";
 import { useTranslations } from "next-intl";
+import TaggedPromptTextarea from "./TaggedPromptTextarea";
 
 interface PromptExpandModalProps {
     /** Current prompt text. Modal owns its own draft until commit so
@@ -157,12 +158,14 @@ export default function PromptExpandModal({
                     </div>
                 </header>
                 <div className="flex flex-1 flex-col overflow-hidden px-4 py-4">
-                    <textarea
+                    <TaggedPromptTextarea
                         ref={textareaRef}
                         value={draft}
                         onChange={(e) => setDraft(e.target.value)}
                         placeholder={placeholder}
                         spellCheck={false}
+                        highlightClassName="px-4 py-3 font-sans text-body leading-relaxed text-foreground"
+                        containerClassName="min-h-0 flex-1"
                         className="flex-1 w-full resize-none rounded-md border border-glass-border bg-black/30 px-4 py-3 font-sans text-body text-foreground leading-relaxed placeholder:text-text-muted outline-none transition-colors duration-fast ease-out-quart focus:border-primary/55 focus-visible:ring-2 focus-visible:ring-primary/45"
                     />
                 </div>

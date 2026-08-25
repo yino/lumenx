@@ -38,6 +38,7 @@ import TaskQueuePanel from "./storyboard-r2v/shot-panel/TaskQueuePanel";
 import { GenerationBanner, type BannerState } from "./storyboard-r2v/GenerationBanner";
 import { IS_CLOUD_DEPLOYMENT } from "@/lib/deployment";
 import { clientStorageKey } from "@/lib/clientCacheScope";
+import { assetTagForName, extractAssetTags } from "@/lib/assetTags";
 
 const AVAILABLE_I2V_MODELS = IS_CLOUD_DEPLOYMENT
     ? CLOUD_VIDEO_I2V_MODELS
@@ -786,14 +787,10 @@ export default function StoryboardR2V() {
         // not two. Without this, model expectations (characterN → URL[N-1])
         // would shift right and downstream slots would point to the wrong
         // images.
-        const seenSlot = new Set<number>();
         const slots: { idx: number; url: string }[] = [];
-        const tagPattern = /\[character(\d+):([^\]]+)\]/g;
-        let match;
-        while ((match = tagPattern.exec(prompt)) !== null) {
-            const slotNum = parseInt(match[1], 10);
-            if (seenSlot.has(slotNum)) continue;
-            const name = match[2];
+        for (const reference of extractAssetTags(prompt)) {
+            const slotNum = reference.slot;
+            const name = reference.name;
             let url: string | undefined;
 
             // Try character first
@@ -826,7 +823,6 @@ export default function StoryboardR2V() {
 
             if (url) {
                 slots.push({ idx: slotNum, url });
-                seenSlot.add(slotNum);
             }
         }
         // Sort by slot number so URL array matches HappyHorse's positional mapping
@@ -835,15 +831,13 @@ export default function StoryboardR2V() {
     }, [characters, scenes, props]);
 
     const hasAssetTags = useCallback((prompt: string): boolean => {
-        return /\[character\d+:[^\]]+\]/.test(prompt);
+        return extractAssetTags(prompt).length > 0;
     }, []);
 
     const getUnresolvedAssetNames = useCallback((prompt: string): string[] => {
         const unresolved: string[] = [];
-        const tagPattern = /\[character\d+:([^\]]+)\]/g;
-        let match;
-        while ((match = tagPattern.exec(prompt)) !== null) {
-            const name = match[1];
+        for (const reference of extractAssetTags(prompt)) {
+            const name = reference.name;
             let hasImage = false;
             // Check character
             const char = characters.find((c: any) => c.name === name);
@@ -867,7 +861,10 @@ export default function StoryboardR2V() {
 
     // Strip tags from prompt for clean text
     const cleanPrompt = (prompt: string): string => {
-        return prompt.replace(/\[character\d+:[^\]]+\]/g, "").replace(/\s+/g, " ").trim();
+        return prompt
+            .replace(/\[(?:character\d+|character|scene|prop):[^\]]+\]/g, "")
+            .replace(/\s+/g, " ")
+            .trim();
     };
 
     // Generate T2I image for a shot (t2i_i2v mode stage 1)
@@ -1407,11 +1404,12 @@ export default function StoryboardR2V() {
     }, [shots, persistWorkbench, currentProject?.id]);
 
     // Insert asset tag from drawer into target shot
-    const insertAssetFromDrawer = useCallback((type: string, name: string) => {
+    const insertAssetFromDrawer = useCallback((_type: string, name: string) => {
         const shotIndex = drawerState.targetShotIndex;
         if (shotIndex === null || shotIndex === undefined) return;
 
-        const tag = `[${type}:${name}]`;
+        const tag = assetTagForName(shots[shotIndex]?.prompt ?? "", name);
+        if (!tag) return;
         const textarea = textareaRefs.current.get(shotIndex) ?? null;
         if (textarea) {
             const start = textarea.selectionStart;
@@ -1999,10 +1997,9 @@ export default function StoryboardR2V() {
                             onDuplicate={() => duplicateShot(index)}
                             onSetTabMode={(mode) => setTabMode(index, mode)}
                             onOpenDrawer={() => setDrawerState({ isOpen: true, targetShotIndex: index })}
-                            onInsertAsset={(type, name) => {
-                                // Direct chip insert (same as chip bar logic, delegated to chip bar)
-                                const tag = `[${type}:${name}]`;
-                                updatePrompt(index, shots[index].prompt + " " + tag);
+                            onInsertAsset={(_type, name) => {
+                                const tag = assetTagForName(shots[index].prompt, name);
+                                if (tag) updatePrompt(index, shots[index].prompt + " " + tag);
                             }}
                             onCancelVideo={
                                 shot.videoTaskId && currentProject
