@@ -1,9 +1,9 @@
 "use client";
 
-import Image from "next/image";
 import { useEffect, useId, useState, type FormEvent, type ReactNode } from "react";
 import { ArrowRight, KeyRound, Loader2, LockKeyhole, LogOut, ShieldCheck, UserRound } from "lucide-react";
 
+import LumenXBranding from "@/components/layout/LumenXBranding";
 import {
   ADMIN_SESSION_EXPIRED_EVENT,
   adminAuthApi,
@@ -50,9 +50,9 @@ function AdminLoginScreen({
       <div className="mx-auto flex min-h-[calc(100vh-4rem)] w-full max-w-[1120px] flex-col">
         <header className="flex items-center justify-between border-b border-glass-border pb-5">
           <div className="flex items-center gap-3">
-            <Image src="/logo-dark.png" alt="LumenX" width={38} height={38} className="h-9 w-9 object-contain" />
+            <LumenXBranding size="sm" showSlogan={false} markOnly />
             <div>
-              <p className="font-display text-base font-semibold">LumenX 系统后台</p>
+              <p className="font-display text-base font-semibold">漫屿AIGC 系统后台</p>
               <p className="text-xs text-text-muted">独立管理员身份域</p>
             </div>
           </div>

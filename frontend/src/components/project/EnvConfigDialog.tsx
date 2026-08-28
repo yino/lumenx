@@ -325,13 +325,13 @@ export default function EnvConfigDialog({ isOpen, onClose, isRequired = false }:
                     <div>
                       <label className="flex items-center justify-between text-sm font-medium text-foreground mb-2">
                         <span>OSS 基础路径</span>
-                        <span className="text-text-muted font-normal text-xs">例如 lumenx</span>
+                        <span className="text-text-muted font-normal text-xs">例如 manyu-aigc</span>
                       </label>
                       <input
                         type="text"
                         value={config.OSS_BASE_PATH}
                         onChange={(e) => handleChange("OSS_BASE_PATH", e.target.value)}
-                        placeholder="lumenx"
+                        placeholder="manyu-aigc"
                         className={inputClass}
                       />
                     </div>

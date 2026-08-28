@@ -215,6 +215,12 @@ const SORTED_MODEL_ENTRIES = [...CATALOG_MODELS].sort((left, right) => {
     return left.display_name.localeCompare(right.display_name);
 });
 
+// R2V is temporarily exposed through Xlinks Grok only. Other catalog entries
+// stay intact so their adapters and metadata can be re-enabled without a
+// migration when product rollout resumes.
+export const ENABLED_R2V_MODEL_IDS = ['grok-imagine-video'] as const;
+const ENABLED_R2V_MODEL_ID_SET = new Set<string>(ENABLED_R2V_MODEL_IDS);
+
 function isVisibleModel(model: CatalogModel, surface: VisibilitySurface): boolean {
     return (
         model.status !== 'planned' &&
@@ -225,6 +231,14 @@ function isVisibleModel(model: CatalogModel, surface: VisibilitySurface): boolea
 }
 
 function getVisibleModels(group: SelectionGroup, surface: VisibilitySurface): CatalogModel[] {
+    if (group === 'r2v') {
+        return SORTED_MODEL_ENTRIES.filter(
+            (model) =>
+                ENABLED_R2V_MODEL_ID_SET.has(model.id) &&
+                model.capabilities.includes('r2v') &&
+                isVisibleModel(model, surface)
+        );
+    }
     // Strict match: model declared its primary selection_group as `group`.
     const direct = SORTED_MODEL_ENTRIES.filter(
         (model) => model.ui.selection_group === group && isVisibleModel(model, surface)
@@ -442,13 +456,7 @@ for (const model of SORTED_MODEL_ENTRIES) {
     }
 }
 
-export const VIDEO_R2V_MODELS: I2VModelConfig[] = SORTED_MODEL_ENTRIES
-    .filter(
-        (model) =>
-            (model.ui.selection_group === 'r2v' || model.capabilities.includes('r2v')) &&
-            isVisibleModel(model, 'video_sidebar')
-    )
-    .map(toI2VModel);
+export const VIDEO_R2V_MODELS: I2VModelConfig[] = getVisibleModels('r2v', 'video_sidebar').map(toI2VModel);
 export const DEFAULT_R2V_MODEL_ID = VIDEO_R2V_MODELS[0]?.id ?? R2V_SELECTION_MODEL_ID;
 
 /**

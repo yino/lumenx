@@ -117,7 +117,7 @@ describe("平台用户管理", () => {
     render(<PlatformAdminPage section="dashboard" />);
 
     expect(await screen.findByText("当前没有需要人工处理的异常")).toBeInTheDocument();
-    expect(screen.getAllByText("LumenX 系统后台").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("漫屿AIGC 系统后台").length).toBeGreaterThan(0);
     expect(screen.getByRole("navigation", { name: "系统管理分区" })).toBeInTheDocument();
     expect(screen.getByRole("combobox", { name: "选择系统管理分区" })).toHaveValue("dashboard");
     expect(screen.queryByRole("navigation", { name: "主导航" })).not.toBeInTheDocument();

@@ -1,8 +1,8 @@
 "use client";
 
-import Image from "next/image";
 import { useEffect, type ReactNode } from "react";
 
+import LumenXBranding from "@/components/layout/LumenXBranding";
 import { IS_CLOUD_DEPLOYMENT } from "@/lib/deployment";
 import { useAuthStore } from "@/store/authStore";
 import { useWorkspaceStore } from "@/store/workspaceStore";
@@ -26,13 +26,7 @@ export default function WorkspaceGate({ children }: { children: ReactNode }) {
     return (
       <main className="grid min-h-screen place-items-center bg-background text-foreground">
         <div className="flex flex-col items-center gap-4" role="status" aria-live="polite">
-          <Image
-            src="/logo-dark.png"
-            alt="LumenX"
-            width={52}
-            height={52}
-            className="h-12 w-12 object-contain [filter:hue-rotate(-64deg)_saturate(1.35)_brightness(1.08)]"
-          />
+          <LumenXBranding size="md" showSlogan={false} markOnly />
           <span className="text-sm text-text-secondary">正在进入工作区</span>
         </div>
       </main>

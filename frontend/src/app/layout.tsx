@@ -11,7 +11,7 @@ export default function RootLayout({
   return (
     <html lang="zh" className="atelier-dark" suppressHydrationWarning>
       <head>
-        <title>LumenX 创作平台</title>
+        <title>漫屿AIGC 创作平台</title>
         <meta name="description" content="AI 漫剧与视频创作平台" />
         <script
           dangerouslySetInnerHTML={{

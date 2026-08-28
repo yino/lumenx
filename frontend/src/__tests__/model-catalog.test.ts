@@ -5,10 +5,12 @@ import {
     DEFAULT_MODEL_SETTINGS,
     GLOBAL_I2I_MODELS,
     GLOBAL_I2V_MODELS,
+    GLOBAL_R2V_MODELS,
     GLOBAL_IMAGE_MODELS,
     GLOBAL_T2I_MODELS,
     R2V_ROUTE_MODEL_ID,
     R2V_SELECTION_MODEL_ID,
+    VIDEO_R2V_MODELS,
     getCanonicalDefaults,
     getCanonicalModeEntry,
     getCanonicalModeId,
@@ -63,6 +65,8 @@ describe('model catalog selectors', () => {
             'viduq3-pro-i2v',
             'viduq3-turbo-i2v',
         ]);
+        expect(GLOBAL_R2V_MODELS.map((model) => model.id)).toEqual(['grok-imagine-video']);
+        expect(VIDEO_R2V_MODELS.map((model) => model.id)).toEqual(['grok-imagine-video']);
     });
 
     it('keeps hidden and planned catalog entries out of visible selectors', () => {
@@ -169,25 +173,17 @@ describe('model catalog fallbacks', () => {
 
         expect(compatI2vModels.map((model) => model.id)).not.toContain('wan2.6-i2v');
         expect(compatI2vModels.some((model) => model.id === 'wan/wan2.6-video#i2v')).toBe(false);
-        // R2V selection/route ids follow the catalog meta default
-        // (defaults.model_settings.r2v_model = happyhorse-1.1-r2v) via
-        // getFallbackVisibleModelId, not raw ui.order. Several R2V models
-        // share order=80, so anchoring to the explicit meta default keeps the
-        // default route deterministic. Selection and route are unified
-        // (R2V_ROUTE_MODEL_ID = R2V_SELECTION_MODEL_ID).
-        expect(compatR2vSelectionModelId).toBe('happyhorse-1.1-r2v');
-        expect(compatR2vRouteModelId).toBe('happyhorse-1.1-r2v');
+        // R2V rollout is deliberately allowlisted to Xlinks Grok even when
+        // compatibility metadata contains additional provider routes.
+        expect(compatR2vSelectionModelId).toBe('grok-imagine-video');
+        expect(compatR2vRouteModelId).toBe('grok-imagine-video');
     });
 });
 
 describe('model catalog runtime helpers', () => {
     it('derives the current R2V selection and route ids from catalog data', () => {
-        // Selection and route both resolve to the catalog meta default R2V
-        // model (defaults.model_settings.r2v_model = happyhorse-1.1-r2v) via
-        // getFallbackVisibleModelId — deterministic regardless of the order=80
-        // tie among visible R2V models (happyhorse/kling/seedance/wan2.7).
-        expect(R2V_SELECTION_MODEL_ID).toBe('happyhorse-1.1-r2v');
-        expect(R2V_ROUTE_MODEL_ID).toBe('happyhorse-1.1-r2v');
+        expect(R2V_SELECTION_MODEL_ID).toBe('grok-imagine-video');
+        expect(R2V_ROUTE_MODEL_ID).toBe('grok-imagine-video');
     });
 
     it('reads per-model reference image limits from catalog metadata', () => {

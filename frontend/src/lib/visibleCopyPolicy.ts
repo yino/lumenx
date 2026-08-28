@@ -2,7 +2,6 @@ export const REVIEWED_PROVIDER_BRANDS = [
   "Aliyun",
   "DashScope",
   "Kling",
-  "LumenX",
   "MuleRouter",
   "PixVerse",
   "Qwen",
@@ -13,6 +12,7 @@ export const REVIEWED_PROVIDER_BRANDS = [
 
 export const REVIEWED_TECHNICAL_TERMS = [
   "AI",
+  "AIGC",
   "API",
   "FPS",
   "HTTP",

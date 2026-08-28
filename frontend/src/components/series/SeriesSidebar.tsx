@@ -116,7 +116,7 @@ export default function SeriesSidebar({
             >
               <ChevronLeft size={16} />
             </button>
-            <span className="text-xs text-text-secondary truncate">LumenX</span>
+            <span className="text-xs text-text-secondary truncate">漫屿AIGC</span>
           </div>
 
           {/* Editable title */}

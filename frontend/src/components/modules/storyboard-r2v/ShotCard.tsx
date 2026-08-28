@@ -26,6 +26,7 @@ import { useTranslations } from "next-intl";
 import AssetChipBar from "./AssetChipBar";
 import PromptExpandModal from "./PromptExpandModal";
 import PolishPanel from "./PolishPanel";
+import { hasActiveVideoGeneration } from "./videoGenerationState";
 import FieldTagChip, { AddFieldButton, type FieldType } from "./FieldTagChip";
 import { buildAssembledPrompt } from "./buildAssembledPrompt";
 import { PendingTaskAffordance } from "@/components/shared/PendingTaskAffordance";
@@ -201,6 +202,7 @@ export default function ShotCard({
     const textareaRef = useRef<HTMLTextAreaElement>(null);
     const cardRef = useRef<HTMLDivElement>(null);
     const t = useTranslations("storyboardR2V");
+    const isVideoGenerationActive = hasActiveVideoGeneration(shot.videoStatus, inFlightCount);
     // Expand modal state (B5). Cmd/Ctrl+E in the small textarea
     // opens it; saving syncs back via onUpdatePrompt; cancel
     // discards the modal's draft without touching parent state.
@@ -344,9 +346,10 @@ export default function ShotCard({
                         <span className="text-[0.6875rem] text-status-failed-fg font-medium">{t("generationFailed")}</span>
                         <button
                             onClick={onGenerateVideo}
-                            className="text-[0.6875rem] text-primary hover:text-primary/80 transition-colors font-medium"
+                            disabled={isVideoGenerationActive}
+                            className="text-[0.6875rem] text-primary hover:text-primary/80 transition-colors font-medium disabled:cursor-not-allowed disabled:opacity-40"
                         >
-                            {t("retry")}
+                            {isVideoGenerationActive ? t("genInFlight") : t("retry")}
                         </button>
                     </div>
                 );
@@ -436,9 +439,10 @@ export default function ShotCard({
                     <span className="text-[0.6875rem] text-status-failed-fg font-medium">{t("generationFailed")}</span>
                     <button
                         onClick={onGenerateVideo}
-                        className="text-[0.6875rem] text-primary hover:text-primary/80 transition-colors font-medium"
+                        disabled={isVideoGenerationActive}
+                        className="text-[0.6875rem] text-primary hover:text-primary/80 transition-colors font-medium disabled:cursor-not-allowed disabled:opacity-40"
                     >
-                        {t("retry")}
+                        {isVideoGenerationActive ? t("genInFlight") : t("retry")}
                     </button>
                 </div>
             );
@@ -953,10 +957,11 @@ export default function ShotCard({
                                                 key={n}
                                                 type="button"
                                                 onClick={() => onSetGenerateCount?.(n)}
+                                                disabled={isVideoGenerationActive}
                                                 aria-pressed={active}
                                                 aria-label={`每次生成 ${n} 个候选镜头`}
                                                 title={t("genCandidatesEachTooltip", { n })}
-                                                className={`grid h-7 min-w-[28px] place-items-center rounded-full font-mono text-[0.625rem] font-semibold transition-colors duration-fast ease-out-quart focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/55 ${
+                                                className={`grid h-7 min-w-[28px] place-items-center rounded-full font-mono text-[0.625rem] font-semibold transition-colors duration-fast ease-out-quart focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/55 disabled:cursor-not-allowed disabled:opacity-40 ${
                                                     active
                                                         ? "bg-primary text-on-accent"
                                                         : "text-text-muted hover:text-foreground"
@@ -968,22 +973,24 @@ export default function ShotCard({
                                     })}
                                 </div>
                                 <motion.button
-                                    whileHover={canGenerate && inFlightCount === 0 ? { scale: 1.02 } : undefined}
-                                    whileTap={canGenerate && inFlightCount === 0 ? { scale: 0.98 } : undefined}
+                                    whileHover={canGenerate && !isVideoGenerationActive ? { scale: 1.02 } : undefined}
+                                    whileTap={canGenerate && !isVideoGenerationActive ? { scale: 0.98 } : undefined}
                                     type="button"
                                     onClick={() => onGenerateBatch?.(generateCount)}
-                                    disabled={!canGenerate || inFlightCount > 0}
-                                    title={!canGenerate
+                                    disabled={!canGenerate || isVideoGenerationActive}
+                                    title={isVideoGenerationActive
+                                        ? t("genInFlight")
+                                        : !canGenerate
                                         ? (shot.tabMode === "t2i_i2v"
                                             ? t("needFirstFrameTooltip")
                                             : t("needPromptInputTooltip"))
                                         : t("genVideoCandidatesTooltip", { count: generateCount })}
                                     className="inline-flex items-center justify-center gap-1.5 rounded-full px-[13px] py-[7px] font-sans text-[0.75rem] font-semibold tracking-tight transition-all duration-fast ease-out-quart focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/55 disabled:cursor-not-allowed disabled:opacity-40 bg-primary text-on-accent shadow-[var(--btn-pri-glow),inset_0_1.5px_0_rgba(255,255,255,0.14)] hover:bg-primary-hover hover:-translate-y-px disabled:hover:translate-y-0"
                                 >
-                                    {inFlightCount > 0 ? (
+                                    {isVideoGenerationActive ? (
                                         <>
                                             <Loader2 size={14} className="animate-spin" strokeWidth={2} />
-                                            <span>{t("genClusterInFlight", { count: inFlightCount })}</span>
+                                            <span>{t("genClusterInFlight", { count: inFlightCount || generateCount })}</span>
                                         </>
                                     ) : (
                                         <>

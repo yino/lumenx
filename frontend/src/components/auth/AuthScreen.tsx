@@ -10,6 +10,7 @@ import {
   type AuthUser,
   type RegistrationPolicy,
 } from "@/lib/api";
+import LumenXBranding from "@/components/layout/LumenXBranding";
 
 type AuthMode = "login" | "register";
 
@@ -141,20 +142,8 @@ export default function AuthScreen({
   return (
     <main className="min-h-screen bg-background text-foreground lg:grid lg:grid-cols-[minmax(420px,0.88fr)_minmax(560px,1.12fr)]">
       <section className="relative z-10 flex min-h-screen flex-col border-b border-glass-border bg-background/95 px-6 py-6 backdrop-blur-xl sm:px-10 lg:border-b-0 lg:border-r lg:px-[clamp(3rem,6vw,6.5rem)] lg:py-9">
-        <div className="flex items-center gap-3" aria-label="LumenX 创作台">
-          <Image
-            src="/logo-dark.png"
-            alt="LumenX"
-            width={44}
-            height={44}
-            className="h-11 w-11 object-contain [filter:hue-rotate(-64deg)_saturate(1.35)_brightness(1.08)]"
-          />
-          <div>
-            <div className="font-mono text-lg font-bold leading-none text-foreground">
-              LUMEN<span className="text-primary">X</span>
-            </div>
-            <div className="mt-1 text-xs text-text-muted">创作台</div>
-          </div>
+        <div aria-label="漫屿AIGC 创作台">
+          <LumenXBranding size="sm" showSlogan={false} />
         </div>
 
         <div className="my-auto w-full max-w-[420px] py-12 lg:py-16">

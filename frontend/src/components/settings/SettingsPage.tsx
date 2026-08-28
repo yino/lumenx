@@ -995,7 +995,7 @@ export default function SettingsPage() {
           type="text"
           value={config.OSS_BASE_PATH}
           onChange={(e) => handleChange("OSS_BASE_PATH", e.target.value)}
-          placeholder="lumenx"
+          placeholder="manyu-aigc"
           className={settingsInputClass + " font-mono text-[0.71875rem]"}
         />
       </FormRow>
@@ -1025,7 +1025,7 @@ export default function SettingsPage() {
   const renderAbout = () => {
     const ff = system?.ffmpeg;
     const aboutRows: { k: string; v: string; tone?: "ok" | "warn" }[] = [
-      { k: t("aboutAppVersion"), v: `LumenX Studio ${APP_VERSION}` },
+      { k: t("aboutAppVersion"), v: `漫屿AIGC ${APP_VERSION}` },
       { k: t("aboutBackendApi"), v: API_URL },
       { k: t("aboutDataDir"), v: dataDir || "—" },
       { k: t("logDirLabel"), v: logDir || "—" },
@@ -1035,8 +1035,8 @@ export default function SettingsPage() {
         {/* Line B brand signature block — teal-glow logo, serif name, amber tagline */}
         <div className="flex flex-col items-start gap-3 pb-6 mb-6 border-b border-glass-border">
           <LumenXBranding size="md" showSlogan={false} />
-          <p className="font-display atelier-display text-base italic text-accent leading-snug">
-            “Render Noise into Narrative”
+          <p className="font-display atelier-display text-base text-accent leading-snug">
+            “让灵感，生长为故事”
           </p>
           <div className="font-mono text-[0.625rem] tracking-[0.08em] text-text-muted uppercase">
             VERSION {APP_VERSION.replace(/^v/, "")} · BUILD 20260613

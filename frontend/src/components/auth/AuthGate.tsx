@@ -1,8 +1,8 @@
 "use client";
 
 import { useEffect, type ReactNode } from "react";
-import Image from "next/image";
 
+import LumenXBranding from "@/components/layout/LumenXBranding";
 import {
   SESSION_EXPIRED_EVENT,
   authApi,
@@ -64,13 +64,7 @@ export default function AuthGate({ children }: AuthGateProps) {
     return (
       <main className="grid min-h-screen place-items-center bg-background text-foreground">
         <div className="flex flex-col items-center gap-4" role="status" aria-live="polite">
-          <Image
-            src="/logo-dark.png"
-            alt="LumenX"
-            width={56}
-            height={56}
-            className="h-14 w-14 object-contain [filter:hue-rotate(-64deg)_saturate(1.35)_brightness(1.08)]"
-          />
+          <LumenXBranding size="md" showSlogan={false} markOnly />
           <span className="text-sm text-text-secondary">正在恢复创作现场</span>
         </div>
       </main>

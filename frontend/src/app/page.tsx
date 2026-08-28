@@ -452,7 +452,7 @@ function EpisodeBreadcrumbWrapper({ seriesId, episodeId }: { seriesId: string; e
   }, [seriesId, episodeId]);
 
   const segments = [
-    { label: "LumenX", hash: "#/" },
+    { label: "漫屿AIGC", hash: "#/" },
     { label: seriesTitle || t("series"), hash: `#/series/${seriesId}` },
     { label: episodeNumber != null ? t("episodeNum", { number: episodeNumber }) : t("episodeLabel") },
   ];
@@ -787,7 +787,7 @@ function StudioApplication() {
           <div className="xyq-orbit xyq-orbit-right" aria-hidden="true" />
           <div className="relative z-[1] mx-auto max-w-4xl">
             <div className="font-mono text-[0.59375rem] font-medium uppercase tracking-[0.24em] text-text-muted">
-              LumenX Story Agent · {currentWorkspace?.name || "本地工作区"}
+              漫屿AIGC 故事智能体 · {currentWorkspace?.name || "本地工作区"}
             </div>
             <h1 className="mt-4 text-balance font-display text-[2.15rem] font-semibold leading-[1.05] tracking-[-0.045em] text-foreground md:text-[3.35rem]">
               让一个灵感，长成一部故事

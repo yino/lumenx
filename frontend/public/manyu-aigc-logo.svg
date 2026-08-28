@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-labelledby="title desc">
+  <title id="title">漫屿AIGC</title>
+  <desc id="desc">由取景框、岛屿和海浪组成的漫屿AIGC标志</desc>
+  <path fill="#646CFF" d="M16 3h32l13 13v32L48 61H16L3 48V16L16 3Z"/>
+  <path fill="#0B0C14" d="M18.5 8h27L56 18.5v27L45.5 56h-27L8 45.5v-27L18.5 8Z"/>
+  <circle cx="45" cy="18" r="4" fill="#FF3D91"/>
+  <path fill="#F7F8FF" d="m12 41 11.5-18 8.7 11.2L40.5 19 53 41H12Z"/>
+  <path fill="#646CFF" d="m23.5 23 8.7 11.2 2.8-5.1L41.5 41H15.8l7.7-18Z" opacity=".82"/>
+  <path fill="#FF3D91" d="M11 43.5c6.8-3.6 12.9-3.6 19.7 0 6.9 3.6 13 3.6 22.3 0V50H11v-6.5Z"/>
+  <path fill="none" stroke="#F7F8FF" stroke-linecap="round" stroke-width="2.5" d="M17 48.5h30" opacity=".88"/>
+</svg>

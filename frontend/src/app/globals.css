@@ -859,7 +859,7 @@ html.atelier-light .atelier-display {
 }
 
 /* Slogan-style overlay: when font-mono + atelier-display sit together
-   (LumenXBranding's "Render Noise into Narrative"), bump the size and
+   (the compact brand signature), bump the size and
    slightly relax tracking so Fraunces stays legible at small mass.
    This rule is doubly-scoped (both class names + atelier theme) so it
    only fires on the brand slogan and only on atelier. */

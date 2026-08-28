@@ -13,6 +13,7 @@ import { debugLog } from "@/lib/debugLog";
 import type { BatchSummary } from "./storyboard-r2v/shot-panel/CandidatesSection";
 import { getR2vRouteModelId, isR2vImageBased, VIDEO_I2V_MODELS, CLOUD_VIDEO_I2V_MODELS, VIDEO_R2V_MODELS, DEFAULT_I2V_MODEL_ID, DEFAULT_R2V_MODEL_ID } from "@/lib/modelCatalog";
 import ShotCard, { type ShotNode } from "./storyboard-r2v/ShotCard";
+import { hasActiveVideoGeneration } from "./storyboard-r2v/videoGenerationState";
 import { buildAssembledPrompt } from "./storyboard-r2v/buildAssembledPrompt";
 import DialogueAudioRow from "./storyboard-r2v/DialogueAudioRow";
 import StoryboardGenerateDialog from "./storyboard-r2v/StoryboardGenerateDialog";
@@ -175,9 +176,8 @@ export default function StoryboardR2V() {
     // Refs to each shot's outer wrapper so the task-queue panel can
     // jump-scroll the canvas to a specific frame.
     const shotWrapperRefs = useRef<Map<string, HTMLDivElement | null>>(new Map());
-    // Per-shot submission lockout (Issue 17) — debounce double-clicks and
-    // strict-mode double-effects. Holds shot.id strings; entries auto-expire
-    // after 500ms via setTimeout in generateVideoBatch.
+    // Per-shot submit guard closes the render-to-request race. Reactive shot
+    // and task state take over once the provider request has returned.
     const submittingShotsRef = useRef<Set<string>>(new Set());
 
     // Inline per-shot validation error messages (shown by ParamsSection
@@ -450,6 +450,7 @@ export default function StoryboardR2V() {
     // setShots() when the new frames come back.
     const [genDialogOpen, setGenDialogOpen] = useState(false);
     const [generating, setGenerating] = useState(false);
+    const smartGenerationInFlightRef = useRef(false);
     const [bannerState, setBannerState] = useState<BannerState>(
         () => (currentProject?.frames?.length ?? 0) > 0 ? "summary" : "idle"
     );
@@ -524,12 +525,14 @@ export default function StoryboardR2V() {
 
     const handleSmartGenerate = useCallback(async (maxClipSeconds: 15 | 30 = 15) => {
         if (!currentProject?.id) return;
+        if (smartGenerationInFlightRef.current) return;
         const projectId = currentProject.id;
         const scriptText = (currentProject as any).originalText || (currentProject as any).original_text || "";
         if (!scriptText.trim()) {
             toast.warning(t("genToastNoScript"));
             return;
         }
+        smartGenerationInFlightRef.current = true;
         setGenerating(true);
         setBannerState("phase1");
         try {
@@ -570,6 +573,7 @@ export default function StoryboardR2V() {
             const detail = err?.response?.data?.detail || err?.message || t("genToastErrUnknown");
             toast.error(`${t("genToastErr")}: ${String(detail).slice(0, 200)}`);
         } finally {
+            smartGenerationInFlightRef.current = false;
             setGenerating(false);
             setRefineProgress(null);
             // Determine final banner state based on actual current shots
@@ -917,6 +921,16 @@ export default function StoryboardR2V() {
     const generateVideo = useCallback(async (index: number) => {
         const shot = shots[index];
         if (!currentProject || !shot.prompt.trim()) return;
+        const hasActiveTask = ((currentProject as any).video_tasks ?? []).some(
+            (task: VideoTask) =>
+                task.frame_id === shot.id &&
+                (task.status === "pending" || task.status === "processing"),
+        );
+        if (
+            hasActiveVideoGeneration(shot.videoStatus, hasActiveTask ? 1 : 0) ||
+            submittingShotsRef.current.has(shot.id)
+        ) return;
+        submittingShotsRef.current.add(shot.id);
 
         const promptText = buildAssembledPrompt(shot);
 
@@ -1055,6 +1069,8 @@ export default function StoryboardR2V() {
             setShots(prev => prev.map((s, i) =>
                 i === index ? { ...s, videoStatus: "failed" } : s
             ));
+        } finally {
+            submittingShotsRef.current.delete(shot.id);
         }
     }, [shots, currentProject, videoConfig, parseAssetTags]);
 
@@ -1075,6 +1091,18 @@ export default function StoryboardR2V() {
         const promptText = buildAssembledPrompt(shot);
         const tabMode = shot.tabMode;
         const effectiveCount = Math.max(1, Math.min(6, count || 1));
+        const hasActiveTask = ((currentProject as any).video_tasks ?? []).some(
+            (task: VideoTask) =>
+                task.frame_id === shot.id &&
+                (task.status === "pending" || task.status === "processing"),
+        );
+        if (
+            hasActiveVideoGeneration(shot.videoStatus, hasActiveTask ? 1 : 0) ||
+            submittingShotsRef.current.has(shot.id)
+        ) {
+            debugLog.warn("Studio", "generateVideoBatch: refused while the shot has an active task");
+            return;
+        }
 
         // Pre-flight: R2V tab needs reference inputs. Without them
         // the backend rejects with 400 anyway, but historically the
@@ -1109,19 +1137,9 @@ export default function StoryboardR2V() {
             }
         }
 
-        // Per-shot submission lockout (Issue 17). The earlier in-flight guard
-        // (`shot.videoStatus === "pending"|"processing"`) had a false positive
-        // problem: when a shot has multiple tasks (batch ×4), one fails + others
-        // still processing, retrying the failed one was BLOCKED by the others'
-        // status. Replace with a 500ms debounce on the SHOT specifically — that
-        // catches double-clicks / strict-mode double-fires without entangling
-        // status semantics.
-        if (submittingShotsRef.current.has(shot.id)) {
-            debugLog.warn("Studio", "generateVideoBatch: refused — same shot submitted < 500ms ago");
-            return;
-        }
+        // Lock immediately, before React can commit the optimistic pending
+        // state. The task status keeps controls disabled after submission.
         submittingShotsRef.current.add(shot.id);
-        window.setTimeout(() => submittingShotsRef.current.delete(shot.id), 500);
         // Clear any prior error once this attempt is valid; success
         // path or backend-side rejection will overwrite if needed.
         setShotErrors(prev => {
@@ -1257,6 +1275,8 @@ export default function StoryboardR2V() {
             setShots(prev => prev.map((s, i) =>
                 i === index ? { ...s, videoStatus: "failed" as const } : s
             ));
+        } finally {
+            submittingShotsRef.current.delete(shot.id);
         }
     }, [shots, currentProject, videoConfig, parseAssetTags, missingRefsMessage]);
 
