@@ -431,7 +431,11 @@ export function isR2vSelectionModel(modelId: string): boolean {
 /** Map from family name to R2V route model ID. */
 const R2V_ROUTE_MAP: Record<string, string> = {};
 for (const model of SORTED_MODEL_ENTRIES) {
-    if (model.capabilities.includes('r2v') && model.ui.selection_group === 'r2v') {
+    // Accept any visible r2v-capable model, not only `selection_group: r2v`
+    // ones: the xlinks family ships a single flat model
+    // (`grok-imagine-video`, selection_group `i2v`) that handles both i2v and
+    // r2v, and routing it to its own family keeps R2V generation on xlinks.
+    if (model.capabilities.includes('r2v')) {
         if (!R2V_ROUTE_MAP[model.family]) {
             R2V_ROUTE_MAP[model.family] = model.id;
         }
@@ -439,7 +443,11 @@ for (const model of SORTED_MODEL_ENTRIES) {
 }
 
 export const VIDEO_R2V_MODELS: I2VModelConfig[] = SORTED_MODEL_ENTRIES
-    .filter((model) => model.ui.selection_group === 'r2v' && isVisibleModel(model, 'video_sidebar'))
+    .filter(
+        (model) =>
+            (model.ui.selection_group === 'r2v' || model.capabilities.includes('r2v')) &&
+            isVisibleModel(model, 'video_sidebar')
+    )
     .map(toI2VModel);
 export const DEFAULT_R2V_MODEL_ID = VIDEO_R2V_MODELS[0]?.id ?? R2V_SELECTION_MODEL_ID;
 
@@ -462,5 +470,6 @@ export function isR2vImageBased(modelId: string): boolean {
     const family = model?.family;
     if (family === 'wan' && modelId === 'wan2.6-r2v') return false;
     return family === 'happyhorse' || family === 'wan' || family === 'kling'
-        || family === 'pixverse' || family === 'vidu' || family === 'seedance';
+        || family === 'pixverse' || family === 'vidu' || family === 'seedance'
+        || family === 'xlinks';
 }

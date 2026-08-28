@@ -216,6 +216,32 @@ def _summarize_messages(messages: list[dict[str, Any]]) -> dict[str, int]:
     }
 
 
+def _summarize_video_inputs(
+    mode: str, input_urls: tuple[str, ...]
+) -> dict[str, Any]:
+    """Return a content-safe summary of the images actually sent to a video
+    provider (image_url for i2v / images array for r2v), without leaking the
+    signed object-store URLs themselves."""
+
+    if mode == "t2v" or not input_urls:
+        return {
+            "mode": mode,
+            "image_count": 0,
+            "image_field": None,
+        }
+    # i2v sends a single `image_url`; r2v sends an `images` array. Both take
+    # either a signed remote URL or an inline data-URI (on fetch-failure retry).
+    def _kind(url: str) -> str:
+        return "data_uri" if url.strip().lower().startswith("data:") else "remote"
+
+    return {
+        "mode": mode,
+        "image_count": len(input_urls),
+        "image_field": "image_url" if mode == "i2v" else "images",
+        "image_kinds": [_kind(url) for url in input_urls],
+    }
+
+
 def _emit_provider_request_log(
     task,
     *,
@@ -612,6 +638,7 @@ class ProductionProviderInvoker:
                 prompt=prompt,
                 mode=mode,
                 input_count=len(input_urls),
+                request_summary=_summarize_video_inputs(mode, input_urls),
             )
             generated = client.adapter.generate(
                 VideoGenerationRequest(

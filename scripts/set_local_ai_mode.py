@@ -38,10 +38,11 @@ DEFAULT_TTS_MODEL = "cosyvoice-v2"
 CATALOG_ROUTE_MODELS = {
     AICapability.IMAGE_I2I: "wan2.7-image-pro",
     AICapability.VIDEO_I2V: "grok-imagine-video",
-    AICapability.VIDEO_R2V: "seedance-2.0-r2v",
+    AICapability.VIDEO_R2V: "grok-imagine-video",
 }
 SECONDARY_CATALOG_ROUTE_MODELS = {
     AICapability.VIDEO_I2V: ("seedance-2.0-i2v",),
+    AICapability.VIDEO_R2V: ("seedance-2.0-r2v",),
 }
 
 
@@ -189,7 +190,10 @@ def _catalog_route(
             update={"review_required": False}
         ),
     }
-    if capability is AICapability.VIDEO_I2V and model_id == "grok-imagine-video":
+    if model_id == "grok-imagine-video" and capability in {
+        AICapability.VIDEO_I2V,
+        AICapability.VIDEO_R2V,
+    }:
         # The enabled Seedance route is a selectable secondary channel. Keep
         # the normal non-billable provider fallback available when Xlinks is
         # temporarily unavailable, while never switching after a billable

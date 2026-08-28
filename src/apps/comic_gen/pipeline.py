@@ -2259,7 +2259,9 @@ class ComicGenPipeline:
         # If R2V mode is selected, use the appropriate R2V model
         if generation_mode == "r2v":
             # Skip auto-switch if user already selected an R2V model directly
-            if not (model and model.endswith("-r2v")):
+            # (a "-r2v" suffix, or xlinks grok-imagine-video which natively
+            # supports reference-to-video on the same model id)
+            if not (model and (model.endswith("-r2v") or model == "grok-imagine-video")):
                 if model and model.startswith("happyhorse-"):
                     model = "happyhorse-1.1-r2v"
                 elif model and model.startswith("wan2.7-"):
@@ -2287,9 +2289,13 @@ class ComicGenPipeline:
         # kling-v3-r2v, pixverse-c1-r2v, pixverse-v5.6-r2v,
         # viduq3-pro-r2v, viduq3-turbo-r2v — all need refs too. We
         # now match on the "-r2v" suffix so new R2V families inherit
-        # the check automatically. Only wan2.6-r2v (legacy) takes
-        # video refs; everything else takes image refs.
-        is_r2v_model = isinstance(model, str) and model.endswith("-r2v")
+        # the check automatically. Xlinks grok-imagine-video also serves
+        # reference-to-video (image refs) on its single model id. Only
+        # wan2.6-r2v (legacy) takes video refs; everything else takes
+        # image refs.
+        is_r2v_model = isinstance(model, str) and (
+            model.endswith("-r2v") or model == "grok-imagine-video"
+        )
         if is_r2v_model:
             needs_video_refs = model == "wan2.6-r2v"
             refs = (

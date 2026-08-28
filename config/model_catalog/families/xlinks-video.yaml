@@ -12,6 +12,7 @@ credential_sources:
 supported_modalities:
   - t2v
   - i2v
+  - r2v
 docs:
   official_snapshot_ids:
     - newapi/video-generations/2026-08-25
@@ -25,17 +26,17 @@ transport:
 models:
   - id: grok-imagine-video
     display_name: Grok Imagine Video
-    description: Xlinks NewAPI-compatible text-to-video and image-to-video generation
+    description: Xlinks NewAPI-compatible text-to-video, image-to-video and reference-to-video generation
     status: active
     release_stage: stable
-    capabilities: [t2v, i2v]
+    capabilities: [t2v, i2v, r2v]
     docs:
       context_hub_doc_ids:
         - newapi/video-generations
     runtime:
       xlinks:
         gateway: xlinks
-        capabilities: [t2v, i2v]
+        capabilities: [t2v, i2v, r2v]
     ui:
       selection_group: i2v
       visible_in: [project_settings, series_settings, video_sidebar, global_settings]
@@ -63,5 +64,5 @@ models:
       audio: false
     inputs:
       reference_images:
-        max: 1
+        max: 9
         reference_type: image

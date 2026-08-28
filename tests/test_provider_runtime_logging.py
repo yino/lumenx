@@ -7,6 +7,7 @@ from types import SimpleNamespace
 from src.platform.observability import StructuredEventLogger
 from src.platform.provider_runtime import (
     _emit_provider_request_log,
+    _summarize_video_inputs,
     summarize_provider_parameters,
 )
 
@@ -95,3 +96,97 @@ def test_provider_request_log_contains_route_identity_and_safe_summaries(monkeyp
     }
     assert payload["prompt_summary"]["chars"] == 6
     assert "生成一个镜头" not in handler.messages[-1]
+
+
+def test_video_input_summary_reports_field_count_and_kind_without_urls() -> None:
+    # i2v single image -> `image_url`
+    i2v = _summarize_video_inputs(
+        "i2v",
+        ("https://signed.example/first.png?X-Amz-Signature=secret",),
+    )
+    assert i2v == {
+        "mode": "i2v",
+        "image_count": 1,
+        "image_field": "image_url",
+        "image_kinds": ["remote"],
+    }
+
+    # r2v multiple images -> `images` array
+    r2v = _summarize_video_inputs(
+        "r2v",
+        (
+            "https://signed.example/first.png?X-Amz-Signature=secret",
+            "https://signed.example/second.png?X-Amz-Signature=secret",
+        ),
+    )
+    assert r2v == {
+        "mode": "r2v",
+        "image_count": 2,
+        "image_field": "images",
+        "image_kinds": ["remote", "remote"],
+    }
+
+    # inline data-uri retry
+    inline = _summarize_video_inputs(
+        "r2v",
+        (
+            "data:image/png;base64,aW1n",
+            "https://signed.example/remote.png?X-Amz-Signature=secret",
+        ),
+    )
+    assert inline["image_kinds"] == ["data_uri", "remote"]
+
+    # t2v / no images
+    assert _summarize_video_inputs("t2v", ()) == {
+        "mode": "t2v",
+        "image_count": 0,
+        "image_field": None,
+    }
+
+    encoded = json.dumps(r2v)
+    assert "signed.example" not in encoded
+    assert "Signature=secret" not in encoded
+
+
+def test_provider_request_log_emits_video_request_summary(monkeypatch) -> None:
+    logger = logging.getLogger("test-provider-request-log-video-summary")
+    logger.setLevel(logging.INFO)
+    logger.propagate = False
+    handler = RecordingHandler()
+    logger.addHandler(handler)
+    monkeypatch.setattr(
+        "src.platform.provider_runtime.events",
+        StructuredEventLogger(logger),
+    )
+
+    task = SimpleNamespace(
+        task_id="task-123",
+        attempt_id="attempt-456",
+        capability="video.r2v",
+        model_route=SimpleNamespace(provider="xlinks"),
+    )
+    _emit_provider_request_log(
+        task,
+        model_id="grok-imagine-video",
+        parameters={"duration": 4, "fps": 30, "resolution": "720p"},
+        prompt="生成一个镜头",
+        mode="r2v",
+        input_count=2,
+        request_summary=_summarize_video_inputs(
+            "r2v",
+            (
+                "https://signed.example/first.png?X-Amz-Signature=secret",
+                "https://signed.example/second.png?X-Amz-Signature=secret",
+            ),
+        ),
+    )
+
+    payload = json.loads(handler.messages[-1])
+    assert payload["request_summary"] == {
+        "mode": "r2v",
+        "image_count": 2,
+        "image_field": "images",
+        "image_kinds": ["remote", "remote"],
+    }
+    assert "signed.example" not in handler.messages[-1]
+    assert "Signature=secret" not in handler.messages[-1]

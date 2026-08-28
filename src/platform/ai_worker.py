@@ -619,6 +619,9 @@ class AIWorkerService:
             capability=lease.capability,
             provider=lease.model_route.provider,
             metering_tokens=metering_tokens,
+            elapsed_seconds=round(
+                max(time.perf_counter() - execution_started_at, 0.0), 3
+            ),
         )
         if self.output_finalizer is not None:
             finalized = self.output_finalizer.finalize(

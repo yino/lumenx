@@ -213,6 +213,52 @@ def test_xlinks_i2v_accepts_a_base64_data_uri(tmp_path):
     assert payload["image_url"] == f"data:image/png;base64,{image}"
 
 
+def test_xlinks_r2v_sends_images_array_for_multiple_inputs(tmp_path):
+    provider = XlinksGrokVideoProvider(
+        "grok-imagine-video",
+        SecretStr("test"),
+        base_url="https://api.xlinks.site/v1",
+    )
+
+    payload = provider._request_body(
+        _request(
+            tmp_path / "result.mp4",
+            mode="r2v",
+            inputs=(
+                "https://assets.example/first.png",
+                "https://assets.example/second.png",
+            ),
+        )
+    )
+
+    assert "image_url" not in payload
+    assert payload["images"] == [
+        "https://assets.example/first.png",
+        "https://assets.example/second.png",
+    ]
+
+
+def test_xlinks_r2v_images_override_supports_multiple_inline_images(tmp_path):
+    provider = XlinksGrokVideoProvider(
+        "grok-imagine-video",
+        SecretStr("test"),
+        base_url="https://api.xlinks.site/v1",
+    )
+
+    payload = provider._request_body(
+        _request(tmp_path / "result.mp4", mode="r2v"),
+        images_override=(
+            "data:image/png;base64,aW1n",
+            "https://assets.example/remote.png",
+        ),
+    )
+
+    assert payload["images"] == [
+        "data:image/png;base64,aW1n",
+        "https://assets.example/remote.png",
+    ]
+
+
 def test_xlinks_retries_fetch_rejection_with_inline_image(tmp_path, monkeypatch):
     mp4 = b"\x00\x00\x00\x18ftypisom\x00\x00\x00\x00video"
     source_image = b"source-image"
@@ -287,6 +333,99 @@ def test_xlinks_retries_fetch_rejection_with_inline_image(tmp_path, monkeypatch)
     assert "Authorization" not in download_calls[0][2]["headers"]
 
 
+def test_xlinks_retries_r2v_fetch_rejection_with_inline_images(
+    tmp_path, monkeypatch
+):
+    mp4 = b"\x00\x00\x00\x18ftypisom\x00\x00\x00\x00video"
+    first_image = b"first-source-image"
+    second_image = b"second-source-image"
+
+    class MultiImageRetrySession(FakeSession):
+        def __init__(self):
+            super().__init__(
+                None,
+                [
+                    FakeResponse(
+                        422,
+                        {
+                            "code": "fail_to_fetch_task",
+                            "message": "xAI upstream returned status 422",
+                        },
+                    ),
+                    FakeResponse(202, {"task_id": "task-inline", "status": "queued"}),
+                ],
+                FakeResponse(
+                    200,
+                    headers={"Content-Length": str(len(mp4))},
+                    content=mp4,
+                ),
+            )
+            self.post_responses = list(self.poll_responses)
+            self.poll_responses = [
+                FakeResponse(
+                    200,
+                    {
+                        "task_id": "task-inline",
+                        "status": "completed",
+                        "url": "https://cdn.example/video.mp4",
+                    },
+                ),
+            ]
+
+        def post(self, url, **kwargs):
+            self.calls.append(("POST", url, kwargs))
+            return self.post_responses.pop(0)
+
+        def get(self, url, **kwargs):
+            self.calls.append(("GET", url, kwargs))
+            if kwargs.get("stream"):
+                images = {
+                    "https://assets.example/first.png": first_image,
+                    "https://assets.example/second.png": second_image,
+                }
+                if url in images:
+                    return FakeResponse(
+                        200,
+                        headers={
+                            "Content-Type": "image/png",
+                            "Content-Length": str(len(images[url])),
+                        },
+                        content=images[url],
+                    )
+                return self.download_response
+            return self.poll_responses.pop(0)
+
+    monkeypatch.setattr("src.platform.video_providers.xlinks.time.sleep", lambda _: None)
+    session = MultiImageRetrySession()
+    output = tmp_path / "result.mp4"
+    XlinksGrokVideoProvider(
+        "grok-imagine-video",
+        SecretStr("xlinks-secret"),
+        session=session,
+        base_url="https://api.xlinks.site/v1",
+        poll_interval=0.01,
+    ).generate(
+        _request(
+            output,
+            mode="r2v",
+            inputs=(
+                "https://assets.example/first.png",
+                "https://assets.example/second.png",
+            ),
+        )
+    )
+
+    assert output.read_bytes() == mp4
+    post_calls = [call for call in session.calls if call[0] == "POST"]
+    assert len(post_calls) == 2
+    retry_body = post_calls[1][2]["json"]
+    assert "image_url" not in retry_body
+    assert retry_body["images"] == [
+        "data:image/png;base64," + base64.b64encode(first_image).decode("ascii"),
+        "data:image/png;base64," + base64.b64encode(second_image).decode("ascii"),
+    ]
+
+
 def test_xlinks_does_not_retry_non_fetch_rejections(tmp_path):
     session = FakeSession(
         FakeResponse(
@@ -316,7 +455,12 @@ def test_xlinks_does_not_retry_non_fetch_rejections(tmp_path):
 
 @pytest.mark.parametrize(
     "mode,inputs",
-    [("i2v", ()), ("i2v", ("https://a", "https://b")), ("t2v", ("https://a",))],
+    [
+        ("i2v", ()),
+        ("i2v", ("https://a", "https://b")),
+        ("r2v", ()),
+        ("t2v", ("https://a",)),
+    ],
 )
 def test_xlinks_video_rejects_invalid_input_modes(tmp_path, mode, inputs):
     provider = XlinksGrokVideoProvider(

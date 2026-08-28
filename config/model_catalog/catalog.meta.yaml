@@ -4,5 +4,5 @@ defaults:
     t2i_model: wan2.7-image-pro
     i2i_model: wan2.7-image-pro
     i2v_model: happyhorse-1.1-i2v
-    r2v_model: happyhorse-1.1-r2v
+    r2v_model: grok-imagine-video
     image_model: wan2.7-image-pro

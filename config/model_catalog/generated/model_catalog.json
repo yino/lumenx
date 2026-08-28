@@ -48,14 +48,14 @@
       "i2i_model": "wan/wan2.7-image-pro#image",
       "i2v_model": "happyhorse/happyhorse-1.1-video#i2v",
       "image_model": "wan/wan2.7-image-pro#image",
-      "r2v_model": "happyhorse/happyhorse-1.1-video#r2v",
+      "r2v_model": "xlinks-grok-video/grok-imagine-video#i2v",
       "t2i_model": "wan/wan2.7-image-pro#image"
     },
     "model_settings": {
       "i2i_model": "wan2.7-image-pro",
       "i2v_model": "happyhorse-1.1-i2v",
       "image_model": "wan2.7-image-pro",
-      "r2v_model": "happyhorse-1.1-r2v",
+      "r2v_model": "grok-imagine-video",
       "t2i_model": "wan2.7-image-pro"
     }
   },
@@ -490,7 +490,8 @@
       ],
       "supported_modalities": [
         "t2v",
-        "i2v"
+        "i2v",
+        "r2v"
       ],
       "transport": {
         "audio_input_mode": {
@@ -2222,7 +2223,7 @@
         ]
       },
       "default_backend": "xlinks",
-      "description": "Xlinks NewAPI-compatible text-to-video and image-to-video generation",
+      "description": "Xlinks NewAPI-compatible text-to-video, image-to-video and reference-to-video generation",
       "display_name": "Grok Imagine Video",
       "docs": {
         "context_hub_doc_ids": [
@@ -2249,7 +2250,8 @@
         "xlinks": {
           "capabilities": [
             "t2v",
-            "i2v"
+            "i2v",
+            "r2v"
           ],
           "gateway": "xlinks"
         }
@@ -2260,7 +2262,8 @@
       ],
       "supported_modalities": [
         "t2v",
-        "i2v"
+        "i2v",
+        "r2v"
       ],
       "transport": {
         "audio_input_mode": {
@@ -2370,7 +2373,8 @@
       "backend_env_key": null,
       "capabilities": [
         "t2v",
-        "i2v"
+        "i2v",
+        "r2v"
       ],
       "credential_sources": {
         "xlinks": [
@@ -2378,7 +2382,7 @@
         ]
       },
       "default_backend": "xlinks",
-      "description": "Xlinks NewAPI-compatible text-to-video and image-to-video generation",
+      "description": "Xlinks NewAPI-compatible text-to-video, image-to-video and reference-to-video generation",
       "display_name": "Grok Imagine Video",
       "docs": {
         "context_hub_doc_ids": [
@@ -2399,7 +2403,7 @@
       "id": "grok-imagine-video",
       "inputs": {
         "reference_images": {
-          "max": 1,
+          "max": 9,
           "reference_type": "image"
         }
       },
@@ -8848,7 +8852,8 @@
       "backend_env_key": null,
       "capabilities": [
         "t2v",
-        "i2v"
+        "i2v",
+        "r2v"
       ],
       "credential_sources": {
         "xlinks": [
@@ -8856,7 +8861,7 @@
         ]
       },
       "default_backend": "xlinks",
-      "description": "Xlinks NewAPI-compatible text-to-video and image-to-video generation",
+      "description": "Xlinks NewAPI-compatible text-to-video, image-to-video and reference-to-video generation",
       "display_name": "Grok Imagine Video",
       "docs": {
         "context_hub_doc_ids": [
@@ -8877,7 +8882,7 @@
       "id": "xlinks-grok-video/grok-imagine-video#i2v",
       "inputs": {
         "reference_images": {
-          "max": 1,
+          "max": 9,
           "reference_type": "image"
         }
       },
@@ -8916,7 +8921,8 @@
         "xlinks": {
           "capabilities": [
             "t2v",
-            "i2v"
+            "i2v",
+            "r2v"
           ],
           "gateway": "xlinks"
         }

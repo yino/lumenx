@@ -5,7 +5,7 @@ import binascii
 import os
 import tempfile
 import time
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse, urljoin
@@ -25,7 +25,7 @@ from .interface import VideoGenerationRequest
 
 DEFAULT_MAX_VIDEO_BYTES = 512 * 1024 * 1024
 DEFAULT_MAX_INPUT_IMAGE_BYTES = 20 * 1024 * 1024
-SUPPORTED_MODES = frozenset({"t2v", "i2v"})
+SUPPORTED_MODES = frozenset({"t2v", "i2v", "r2v"})
 SUPPORTED_IMAGE_MEDIA_TYPES = frozenset({"image/jpeg", "image/png", "image/webp"})
 SUPPORTED_RESOLUTIONS = {
     "720p": (1280, 720),
@@ -181,7 +181,7 @@ class XlinksGrokVideoProvider:
         self,
         request: VideoGenerationRequest,
         *,
-        image_override: str | None = None,
+        images_override: Sequence[str] | None = None,
     ) -> dict[str, Any]:
         mode = str(request.mode).strip().lower()
         if mode not in SUPPORTED_MODES:
@@ -198,12 +198,23 @@ class XlinksGrokVideoProvider:
         if mode == "i2v":
             if len(request.input_urls) != 1:
                 raise ValueError("Xlinks i2v requires exactly one input image")
-            image_url = str(image_override or request.input_urls[0]).strip()
+            image_url = str(
+                images_override[0] if images_override else request.input_urls[0]
+            ).strip()
             # Xlinks exposes the NewAPI video route, but its current xAI
             # channel expects the upstream alias `image_url` for i2v. Sending
             # the generic `image` field reaches the channel but is rejected
             # by xAI with a pre-task 422.
             payload["image_url"] = self._validate_image_reference(image_url)
+        elif mode == "r2v":
+            images = [
+                str(url).strip() for url in (images_override or request.input_urls)
+            ]
+            if not images:
+                raise ValueError("Xlinks r2v requires at least one reference image")
+            payload["images"] = [
+                self._validate_image_reference(image) for image in images
+            ]
         elif request.input_urls:
             raise ValueError("Xlinks t2v does not accept input images")
 
@@ -489,16 +500,19 @@ class XlinksGrokVideoProvider:
             # Some Xlinks deployments cannot fetch private/signed object-store
             # URLs. A rejected, pre-task fetch failure is safe to retry inline;
             # ambiguous network errors and accepted tasks are never retried.
-            if (
-                request.mode.strip().lower() != "i2v"
-                or len(request.input_urls) != 1
-                or request.input_urls[0].lower().startswith("data:")
-                or not self._is_image_fetch_rejection(error)
-            ):
+            mode = request.mode.strip().lower()
+            if mode not in {"i2v", "r2v"} or not request.input_urls:
                 raise
-            inline_image = self._inline_image_data_uri(request.input_urls[0])
+            if any(
+                url.strip().lower().startswith("data:")
+                for url in request.input_urls
+            ) or not self._is_image_fetch_rejection(error):
+                raise
+            inline_images = [
+                self._inline_image_data_uri(url) for url in request.input_urls
+            ]
             return self._submit_body(
-                self._request_body(request, image_override=inline_image)
+                self._request_body(request, images_override=inline_images)
             )
 
     def _poll(self, task_id: str) -> tuple[str, Mapping[str, Any]]:

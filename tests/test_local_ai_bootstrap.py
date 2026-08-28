@@ -183,7 +183,15 @@ def test_local_ai_routes_are_valid_and_versioned() -> None:
             for route in activated.draft.routes
         )
         assert video_routes[AICapability.VIDEO_R2V].provider_model_id == (
-            "seedance-2.0-r2v"
+            "grok-imagine-video"
+        )
+        assert any(
+            route.capability is AICapability.VIDEO_R2V
+            and route.provider_model_id == "seedance-2.0-r2v"
+            and route.provider == "ark"
+            and route.enabled
+            and not route.is_primary
+            for route in activated.draft.routes
         )
         assert (
             video_routes[AICapability.VIDEO_I2V].provider,
@@ -192,6 +200,6 @@ def test_local_ai_routes_are_valid_and_versioned() -> None:
         assert (
             video_routes[AICapability.VIDEO_R2V].provider,
             video_routes[AICapability.VIDEO_R2V].secret_ref,
-        ) == ("ark", "ARK_API_KEY")
+        ) == ("xlinks", "XLINKS_API_KEY")
     finally:
         database.engine.dispose()
