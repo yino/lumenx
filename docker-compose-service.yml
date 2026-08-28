@@ -1,0 +1,219 @@
+name: lumenx-service
+
+# 漫屿AIGC 线上应用服务栈。
+#
+# PostgreSQL、Redis 和 OSS 使用线上已有的基础设施；本文件只部署应用服务。
+# 外部 PostgreSQL 需要预先创建迁移管理员和应用角色；应用角色必须是
+# NOSUPERUSER、NOBYPASSRLS，不能直接使用数据库管理员账号。
+# 生产启动前必须在 .env 或部署环境中配置：
+#   LUMENX_DATABASE_HOST/PORT/NAME/USER
+#   LUMENX_DATABASE_ADMIN_USER
+#   LUMENX_REDIS_URL
+#   LUMENX_OSS_ENDPOINT/LUMENX_OSS_BUCKET_NAME
+#   LUMENX_ALLOWED_ORIGINS
+#   LUMENX_BOOTSTRAP_ADMIN_USERNAME（首次初始化管理员时使用）
+#
+# 首次部署建议：
+#   docker compose -f docker-compose-service.yml up -d --build
+#   docker compose -f docker-compose-service.yml run --rm backend \
+#     python -m src.platform.bootstrap_admin --username admin
+#   上述命令会交互式询问管理员密码；不要把密码写入 Compose 文件。
+#
+# 数据库迁移是唯一的启动前置任务；管理员初始化、模型种子和注册策略切换
+# 都是人工受控操作，避免服务每次重启时修改平台配置。
+
+x-cloud-environment: &cloud-environment
+  LUMENX_DEPLOYMENT_MODE: cloud
+  LUMENX_DATABASE_HOST: ${LUMENX_DATABASE_HOST:?请设置 LUMENX_DATABASE_HOST}
+  LUMENX_DATABASE_PORT: ${LUMENX_DATABASE_PORT:-5432}
+  LUMENX_DATABASE_NAME: ${LUMENX_DATABASE_NAME:?请设置 LUMENX_DATABASE_NAME}
+  LUMENX_DATABASE_USER: ${LUMENX_DATABASE_USER:?请设置 LUMENX_DATABASE_USER}
+  LUMENX_DATABASE_PASSWORD_FILE: /run/secrets/database_app_password
+  LUMENX_DATABASE_RESOURCE_ID: ${LUMENX_DATABASE_RESOURCE_ID:-}
+  LUMENX_REDIS_URL: ${LUMENX_REDIS_URL:?请设置 LUMENX_REDIS_URL}
+  LUMENX_REDIS_RESOURCE_ID: ${LUMENX_REDIS_RESOURCE_ID:-}
+  LUMENX_OSS_ENDPOINT: ${LUMENX_OSS_ENDPOINT:?请设置 LUMENX_OSS_ENDPOINT}
+  LUMENX_OSS_BUCKET_NAME: ${LUMENX_OSS_BUCKET_NAME:?请设置 LUMENX_OSS_BUCKET_NAME}
+  LUMENX_OSS_ACCESS_KEY_ID_FILE: /run/secrets/oss_access_key_id
+  LUMENX_OSS_ACCESS_KEY_SECRET_FILE: /run/secrets/oss_access_key_secret
+  LUMENX_OSS_PRIVATE: "true"
+  LUMENX_SESSION_SECRET_FILE: /run/secrets/session_secret
+  LUMENX_MODEL_CATALOG_PATH: /app/config/model_catalog/generated/model_catalog.json
+  LUMENX_PROVIDER_SECRET_REFS: ${LUMENX_PROVIDER_SECRET_REFS:-DASHSCOPE_API_KEY,XLINKS_API_KEY}
+  LUMENX_PROVIDER_ACCOUNT_ID: ${LUMENX_PROVIDER_ACCOUNT_ID:-}
+  LUMENX_LOCAL_IMPORT_ROOT: /imports
+  LUMENX_LOCAL_IMPORT_MAX_BYTES: ${LUMENX_LOCAL_IMPORT_MAX_BYTES:-10737418240}
+  LUMENX_PROVIDER_OUTPUT_ROOT: /provider-results
+  LUMENX_ALLOWED_ORIGINS: ${LUMENX_ALLOWED_ORIGINS:?请设置 LUMENX_ALLOWED_ORIGINS}
+  # 上线默认关闭入口，完成灰度、对账和运营确认后再显式改为 false。
+  LUMENX_REGISTRATION_EMERGENCY_DISABLED: ${LUMENX_REGISTRATION_EMERGENCY_DISABLED:-true}
+  LUMENX_NEW_AI_TASKS_EMERGENCY_DISABLED: ${LUMENX_NEW_AI_TASKS_EMERGENCY_DISABLED:-true}
+  LUMENX_ADMIN_CONSOLE_ENABLED: ${LUMENX_ADMIN_CONSOLE_ENABLED:-true}
+  LUMENX_ADMIN_CONSOLE_MUTATIONS_ENABLED: ${LUMENX_ADMIN_CONSOLE_MUTATIONS_ENABLED:-true}
+  LUMENX_ADMIN_RATE_WINDOW_SECONDS: ${LUMENX_ADMIN_RATE_WINDOW_SECONDS:-60}
+  LUMENX_ADMIN_MUTATION_LIMIT: ${LUMENX_ADMIN_MUTATION_LIMIT:-120}
+  LUMENX_ADMIN_SENSITIVE_READ_LIMIT: ${LUMENX_ADMIN_SENSITIVE_READ_LIMIT:-60}
+  LUMENX_ADMIN_EXPORT_LIMIT: ${LUMENX_ADMIN_EXPORT_LIMIT:-20}
+  DASHSCOPE_API_KEY_FILE: /run/secrets/dashscope_api_key
+  XLINKS_API_KEY_FILE: /run/secrets/xlinks_api_key
+  XLINKS_BASE_URL: ${XLINKS_BASE_URL:-https://api.xlinks.site/v1}
+  NO_PROXY: "*.aliyuncs.com,localhost,127.0.0.1"
+
+x-cloud-secrets: &cloud-secrets
+  - database_app_password
+  - session_secret
+  - oss_access_key_id
+  - oss_access_key_secret
+  - dashscope_api_key
+  - xlinks_api_key
+
+services:
+  # Runs before all long-lived services and exits after the schema is current.
+  migration:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.backend
+    environment:
+      LUMENX_DEPLOYMENT_MODE: cloud
+      LUMENX_DATABASE_HOST: ${LUMENX_DATABASE_HOST:?请设置 LUMENX_DATABASE_HOST}
+      LUMENX_DATABASE_PORT: ${LUMENX_DATABASE_PORT:-5432}
+      LUMENX_DATABASE_NAME: ${LUMENX_DATABASE_NAME:?请设置 LUMENX_DATABASE_NAME}
+      LUMENX_DATABASE_USER: ${LUMENX_DATABASE_ADMIN_USER:?请设置 LUMENX_DATABASE_ADMIN_USER}
+      LUMENX_DATABASE_PASSWORD_FILE: /run/secrets/database_admin_password
+    secrets:
+      - database_admin_password
+    command: ["alembic", "upgrade", "head"]
+    restart: "no"
+
+  backend:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.backend
+    environment: *cloud-environment
+    secrets: *cloud-secrets
+    expose:
+      - "17177"
+    depends_on:
+      migration:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:17177/ready', timeout=5)"]
+      interval: 10s
+      timeout: 6s
+      retries: 12
+      start_period: 20s
+    restart: unless-stopped
+
+  ai-worker:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.backend
+    environment: *cloud-environment
+    secrets: *cloud-secrets
+    command: ["celery", "-A", "src.platform.worker:celery_app", "worker", "--loglevel=INFO", "--concurrency=${LUMENX_GLOBAL_WORKER_CONCURRENCY:-8}"]
+    volumes:
+      - lumenx-provider-results:/provider-results
+    depends_on:
+      migration:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD-SHELL", "/usr/local/bin/lumenx-cloud-entrypoint celery -A src.platform.worker:celery_app inspect ping -d celery@$${HOSTNAME} --timeout=5"]
+      interval: 20s
+      timeout: 10s
+      retries: 6
+      start_period: 30s
+    restart: unless-stopped
+
+  # Consumes the maintenance queue populated by scheduler.
+  maintenance-worker:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.backend
+    environment: *cloud-environment
+    secrets: *cloud-secrets
+    command: ["celery", "-A", "src.platform.worker:celery_app", "worker", "--loglevel=INFO", "--queues=maintenance", "--concurrency=1"]
+    volumes:
+      - lumenx-postgres-backups:/backups:ro
+    depends_on:
+      migration:
+        condition: service_completed_successfully
+    restart: unless-stopped
+
+  scheduler:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.backend
+    environment: *cloud-environment
+    secrets: *cloud-secrets
+    command: ["celery", "-A", "src.platform.worker:celery_app", "beat", "--loglevel=INFO"]
+    depends_on:
+      migration:
+        condition: service_completed_successfully
+    restart: unless-stopped
+
+  # The managed PostgreSQL instance remains external, but the application still
+  # keeps a verifiable custom-format backup for recovery drills and audit checks.
+  postgres-backup:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.postgres-tools
+    environment:
+      POSTGRES_HOST: ${LUMENX_DATABASE_HOST:?请设置 LUMENX_DATABASE_HOST}
+      PGPORT: ${LUMENX_DATABASE_PORT:-5432}
+      POSTGRES_DB: ${LUMENX_DATABASE_NAME:?请设置 LUMENX_DATABASE_NAME}
+      POSTGRES_USER: ${LUMENX_DATABASE_ADMIN_USER:?请设置 LUMENX_DATABASE_ADMIN_USER}
+      POSTGRES_PASSWORD_FILE: /run/secrets/database_admin_password
+      BACKUP_INTERVAL_SECONDS: ${BACKUP_INTERVAL_SECONDS:-86400}
+      BACKUP_RETENTION_DAYS: ${BACKUP_RETENTION_DAYS:-14}
+    secrets:
+      - database_admin_password
+    volumes:
+      - lumenx-postgres-backups:/backups
+    entrypoint: ["/bin/sh", "/usr/local/bin/lumenx-postgres-backup"]
+    depends_on:
+      migration:
+        condition: service_completed_successfully
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.frontend
+    environment:
+      # PC web uses /api/v1; legacy root routes are disabled by default.
+      LUMENX_LEGACY_API_COMPAT: ${LUMENX_LEGACY_API_COMPAT:-false}
+    ports:
+      - "${LUMENX_SERVICE_PORT:-3000}:80"
+    volumes:
+      - lumenx-nginx-legacy-logs:/var/log/lumenx
+    depends_on:
+      backend:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1/"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+      start_period: 10s
+    restart: unless-stopped
+
+volumes:
+  lumenx-provider-results:
+  lumenx-postgres-backups:
+  lumenx-nginx-legacy-logs:
+
+secrets:
+  database_admin_password:
+    file: ${LUMENX_DATABASE_ADMIN_PASSWORD_FILE:-./secrets/postgres_password.txt}
+  database_app_password:
+    file: ${LUMENX_DATABASE_APP_PASSWORD_FILE:-./secrets/postgres_app_password.txt}
+  session_secret:
+    file: ${LUMENX_SESSION_SECRET_FILE:-./secrets/session_secret.txt}
+  oss_access_key_id:
+    file: ${LUMENX_OSS_ACCESS_KEY_ID_FILE:-./secrets/oss_access_key_id.txt}
+  oss_access_key_secret:
+    file: ${LUMENX_OSS_ACCESS_KEY_SECRET_FILE:-./secrets/oss_access_key_secret.txt}
+  dashscope_api_key:
+    file: ${DASHSCOPE_API_KEY_FILE:-./secrets/dashscope_api_key.txt}
+  xlinks_api_key:
+    file: ${XLINKS_API_KEY_FILE:-./secrets/xlinks_api_key.txt}
