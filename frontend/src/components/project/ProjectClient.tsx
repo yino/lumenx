@@ -22,7 +22,7 @@ import EnvConfigDialog from "@/components/project/EnvConfigDialog";
 import PromptConfigModal from "@/components/project/PromptConfigModal";
 import StoryboardR2V from "@/components/modules/StoryboardR2V";
 import EntityConfirmModal from "@/components/modules/EntityConfirmModal";
-import DramaAgentStageRail, { type DramaAgentStageId } from "@/components/modules/short-drama/DramaAgentStageRail";
+import DramaAgentStageRail, { type DramaAgentStageId, type DramaAgentRunSummary } from "@/components/modules/short-drama/DramaAgentStageRail";
 import ShortDramaOutlineStage from "@/components/modules/short-drama/ShortDramaOutlineStage";
 import ShortDramaEpisodeStage from "@/components/modules/short-drama/ShortDramaEpisodeStage";
 import dynamic from "next/dynamic";
@@ -61,11 +61,27 @@ export default function ProjectClient({ id, breadcrumbSegments }: { id: string; 
     const [modelSettingsOpen, setModelSettingsOpen] = useState(false);
     const [envDialogOpen, setEnvDialogOpen] = useState(false);
     const [promptConfigOpen, setPromptConfigOpen] = useState(false);
+    const [agentRun, setAgentRun] = useState<DramaAgentRunSummary | null>(null);
     const t = useTranslations("project");
     const tp = useTranslations("pipeline");
 
     const selectProject = useProjectStore((state) => state.selectProject);
     const currentProject = useProjectStore((state) => state.currentProject);
+
+    useEffect(() => {
+        const runId = (currentProject as any)?.agent_run_id || (currentProject as any)?.agentRunId;
+        if (!runId || !currentProject?.id) {
+            setAgentRun(null);
+            return;
+        }
+        let cancelled = false;
+        const poll = () => import("@/lib/api").then(({ api }) => api.getShortDramaAgentRun(currentProject.id, String(runId)))
+            .then((run) => { if (!cancelled) setAgentRun(run); })
+            .catch(() => { if (!cancelled) setAgentRun(null); });
+        poll();
+        const timer = window.setInterval(poll, 5000);
+        return () => { cancelled = true; window.clearInterval(timer); };
+    }, [currentProject?.id, (currentProject as any)?.agent_run_id, (currentProject as any)?.agentRunId]);
 
     // R2V v2 Phase 6 — content_mode lives on the parent series; fetch on
     // mount when project has series_id, default to "scripted" otherwise.
@@ -287,6 +303,7 @@ export default function ProjectClient({ id, breadcrumbSegments }: { id: string; 
                                 activeStage={activeStep as DramaAgentStageId}
                                 onStageChange={setActiveStep}
                                 project={currentProject}
+                                agentRun={agentRun}
                             />
                         )}
                         {activeStep === "script" && (

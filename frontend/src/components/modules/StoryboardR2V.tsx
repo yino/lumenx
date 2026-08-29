@@ -48,6 +48,23 @@ const AVAILABLE_DEFAULT_I2V_MODEL_ID = IS_CLOUD_DEPLOYMENT
     ? (CLOUD_VIDEO_I2V_MODELS[0]?.id ?? DEFAULT_I2V_MODEL_ID)
     : DEFAULT_I2V_MODEL_ID;
 
+/** Merge newly-created local video tasks into the project snapshot without
+ * duplicating tasks already returned by a background refresh. Cloud tasks are
+ * persisted as candidates when their media is attached, so this helper only
+ * accepts the legacy project-task response shape. */
+function mergeVideoTaskHistory(existing: VideoTask[], additions: unknown[]): VideoTask[] {
+    const byId = new Map(existing.map((task) => [task.id, task]));
+    for (const value of additions) {
+        if (!value || typeof value !== "object") continue;
+        const task = value as Partial<VideoTask>;
+        if (typeof task.id !== "string" || !task.id) continue;
+        byId.set(task.id, task as VideoTask);
+    }
+    return Array.from(byId.values()).sort(
+        (a, b) => (Number(a.created_at) || 0) - (Number(b.created_at) || 0),
+    );
+}
+
 export default function StoryboardR2V() {
     const currentProject = useProjectStore((state) => state.currentProject);
     const updateProject = useProjectStore((state) => state.updateProject);
@@ -935,7 +952,11 @@ export default function StoryboardR2V() {
         const promptText = buildAssembledPrompt(shot);
 
         setShots(prev => prev.map((s, i) =>
-            i === index ? { ...s, videoStatus: "pending" } : s
+            // Clear the previous task mirror while the new request is being
+            // submitted. Otherwise the poller can observe the old completed
+            // task and hide the replacement state before the new task id is
+            // available.
+            i === index ? { ...s, videoTaskId: undefined, videoStatus: "pending" } : s
         ));
 
         try {
@@ -974,10 +995,21 @@ export default function StoryboardR2V() {
                     undefined, undefined, undefined, // kling params
                     undefined, undefined, // vidu params
                     imageBased ? referenceUrls : undefined, // referenceImageUrls
+                    undefined, // ratio
+                    shot.tabMode, // workbenchTab
+                    videoConfig.watermark,
                 );
                 const task = Array.isArray(tasks) ? tasks[0] : tasks;
 
                 if (task && task.id) {
+                    if (!IS_CLOUD_DEPLOYMENT && Array.isArray(tasks)) {
+                        updateProject(currentProject.id, {
+                            video_tasks: mergeVideoTaskHistory(
+                                ((currentProject as any).video_tasks ?? []) as VideoTask[],
+                                tasks,
+                            ),
+                        });
+                    }
                     setShots(prev => prev.map((s, i) =>
                         i === index ? { ...s, videoTaskId: task.id, videoStatus: "processing" } : s
                     ));
@@ -1053,10 +1085,21 @@ export default function StoryboardR2V() {
                     videoConfig.movementAmplitude,
                     // HappyHorse
                     undefined,
+                    undefined, // ratio
+                    shot.tabMode, // workbenchTab
+                    videoConfig.watermark,
                 );
                 const task = Array.isArray(tasks) ? tasks[0] : tasks;
 
                 if (task && task.id) {
+                    if (!IS_CLOUD_DEPLOYMENT && Array.isArray(tasks)) {
+                        updateProject(currentProject.id, {
+                            video_tasks: mergeVideoTaskHistory(
+                                ((currentProject as any).video_tasks ?? []) as VideoTask[],
+                                tasks,
+                            ),
+                        });
+                    }
                     setShots(prev => prev.map((s, i) =>
                         i === index ? { ...s, videoTaskId: task.id, videoStatus: "processing" } : s
                     ));
@@ -1072,7 +1115,7 @@ export default function StoryboardR2V() {
         } finally {
             submittingShotsRef.current.delete(shot.id);
         }
-    }, [shots, currentProject, videoConfig, parseAssetTags]);
+    }, [shots, currentProject, videoConfig, parseAssetTags, updateProject]);
 
     // Batch-aware generation. The user's "抽卡" mental model: one
     // click of Generate ×N fires N independent createVideoTask calls
@@ -1150,7 +1193,11 @@ export default function StoryboardR2V() {
         });
 
         setShots(prev => prev.map((s, i) =>
-            i === index ? { ...s, videoStatus: "pending" } : s
+            // Clear the previous task mirror while the new request is being
+            // submitted. Otherwise the poller can observe the old completed
+            // task and hide the replacement state before the new task id is
+            // available.
+            i === index ? { ...s, videoTaskId: undefined, videoStatus: "pending" } : s
         ));
 
         try {
@@ -1158,7 +1205,7 @@ export default function StoryboardR2V() {
             // requests through Promise.all — fail-fast on any one
             // failure leaves the others untouched on the backend (the
             // BG-task wrapper handles their lifecycle independently).
-            const createOne = async (): Promise<string | null> => {
+            const createOne = async (): Promise<VideoTask | null> => {
                 if (tabMode === "direct_r2v") {
                     const referenceUrls = parseAssetTags(shot.prompt);
                     const explicitR2v = params?.model ?? videoConfig.r2vModel;
@@ -1192,7 +1239,7 @@ export default function StoryboardR2V() {
                         params?.watermark,
                     );
                     const task = Array.isArray(tasks) ? tasks[0] : tasks;
-                    return task?.id ?? null;
+                    return task?.id ? task as VideoTask : null;
                 }
                 // I2V branch — same defensive check on the model.
                 const i2vModelId = params?.model ?? videoConfig.model;
@@ -1230,14 +1277,23 @@ export default function StoryboardR2V() {
                     params?.watermark,
                 );
                 const task = Array.isArray(tasks) ? tasks[0] : tasks;
-                return task?.id ?? null;
+                return task?.id ? task as VideoTask : null;
             };
 
-            const taskIds = (await Promise.all(
+            const createdTasks = (await Promise.all(
                 Array.from({ length: effectiveCount }, createOne),
-            )).filter((id): id is string => !!id);
+            )).filter((task): task is VideoTask => !!task?.id);
+            const taskIds = createdTasks.map((task) => task.id);
 
             if (taskIds.length > 0) {
+                if (!IS_CLOUD_DEPLOYMENT) {
+                    updateProject(currentProject.id, {
+                        video_tasks: mergeVideoTaskHistory(
+                            ((currentProject as any).video_tasks ?? []) as VideoTask[],
+                            createdTasks,
+                        ),
+                    });
+                }
                 setShotErrors(prev => {
                     if (!prev[shot.id]) return prev;
                     const next = { ...prev };
@@ -1278,7 +1334,7 @@ export default function StoryboardR2V() {
         } finally {
             submittingShotsRef.current.delete(shot.id);
         }
-    }, [shots, currentProject, videoConfig, parseAssetTags, missingRefsMessage]);
+    }, [shots, currentProject, videoConfig, parseAssetTags, missingRefsMessage, updateProject]);
 
     // Project-level task refresh: when any task on any shot is in
     // flight, refetch the whole project every 5s. The candidates

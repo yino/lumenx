@@ -135,6 +135,38 @@ export interface SafeAPIError {
     correlationId?: string;
 }
 
+export interface AgentRunResponse {
+    run_id: string;
+    project_id: string;
+    workspace_id: string;
+    target_profile: string;
+    generation_mode: "t2v" | "i2v" | "r2v";
+    status: string;
+    current_stage: string;
+    stage_status: string;
+    task_status: string;
+    validation_report: {
+        status: string;
+        findings: Array<{ severity: string; code: string; message: string; shot_id?: string | null }>;
+    };
+    approval: { decision: string; actor_id?: string | null; reason?: string | null };
+    submitted_task_ids: string[];
+    [key: string]: unknown;
+}
+
+export interface AgentProfileResponse {
+    profile_id: string;
+    model_id: string;
+    provider: string;
+    display_name: string;
+    modes: string[];
+    duration: { min: number; max: number };
+    resolutions: string[];
+    default_resolution?: string;
+    max_reference_images: number;
+    supports_audio: boolean;
+}
+
 const API_ERROR_MESSAGES: Record<string, string> = {
     ACCESS_DENIED: "当前操作没有权限",
     ACCOUNT_SUSPENDED: "账号已停用，请联系平台管理员",
@@ -4138,6 +4170,49 @@ export const api = {
         const response = await apiClient.post(`${API_URL}/series/import/confirm`, data);
         return response.data;
     },
+
+    /** Generic short-drama Agent endpoints. */
+    createShortDramaAgentRun: async (
+        projectId: string,
+        payload: {
+            shots: Array<Record<string, unknown>>;
+            profile?: string;
+            generation_mode?: "t2v" | "i2v" | "r2v";
+            idempotency_key?: string;
+            skill?: string;
+            skill_alias?: string;
+            input_summary?: Record<string, unknown>;
+        },
+    ): Promise<AgentRunResponse> => {
+        const idempotencyKey = payload.idempotency_key || createIdempotencyKey("agent");
+        const response = await apiClient.post<AgentRunResponse>(
+            `${API_URL}/projects/${projectId}/agent-runs`,
+            { ...payload, idempotency_key: idempotencyKey },
+            { headers: { "Idempotency-Key": idempotencyKey } },
+        );
+        return response.data;
+    },
+
+    listShortDramaAgentProfiles: async (): Promise<AgentProfileResponse[]> =>
+        (await apiClient.get<AgentProfileResponse[]>(`${API_URL}/agent/profiles`)).data,
+
+    getShortDramaAgentRun: async (projectId: string, runId: string): Promise<AgentRunResponse> =>
+        (await apiClient.get<AgentRunResponse>(`${API_URL}/projects/${projectId}/agent-runs/${runId}`)).data,
+
+    getShortDramaProductionPackage: async (projectId: string, runId: string) =>
+        (await apiClient.get(`${API_URL}/projects/${projectId}/agent-runs/${runId}/production-package`)).data,
+
+    approveShortDramaAgentRun: async (projectId: string, runId: string, reason?: string) =>
+        (await apiClient.post<AgentRunResponse>(`${API_URL}/projects/${projectId}/agent-runs/${runId}/approve`, { reason })).data,
+
+    rejectShortDramaAgentRun: async (projectId: string, runId: string, reason: string) =>
+        (await apiClient.post<AgentRunResponse>(`${API_URL}/projects/${projectId}/agent-runs/${runId}/reject`, { reason })).data,
+
+    resumeShortDramaAgentRun: async (projectId: string, runId: string) =>
+        (await apiClient.post<AgentRunResponse>(`${API_URL}/projects/${projectId}/agent-runs/${runId}/resume`)).data,
+
+    cancelShortDramaAgentRun: async (projectId: string, runId: string) =>
+        (await apiClient.post<AgentRunResponse>(`${API_URL}/projects/${projectId}/agent-runs/${runId}/cancel`)).data,
 };
 
 // ============================================
@@ -4517,4 +4592,5 @@ export const playgroundApi = {
       media_reference: response.data.path,
     };
   },
+
 };

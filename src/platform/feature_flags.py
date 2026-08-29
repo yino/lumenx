@@ -21,6 +21,11 @@ class CloudFeatureState:
     registration_mode: RegistrationMode
     new_ai_tasks_enabled: bool
     config_version_id: str | None
+    short_drama_agent_enabled: bool = False
+    short_drama_agent_shadow_mode: bool = False
+    short_drama_agent_require_approval: bool = True
+    short_drama_agent_profiles: tuple[str, ...] = ()
+    short_drama_agent_max_concurrency: int = 2
 
     @property
     def registration_enabled(self) -> bool:
@@ -77,6 +82,11 @@ class CloudFeatureGate:
                     and not self.new_ai_tasks_emergency_disabled
                 ),
                 config_version_id=str(record.config_version_id),
+                short_drama_agent_enabled=bool(flags.get("short_drama_agent_enabled", False)),
+                short_drama_agent_shadow_mode=bool(flags.get("short_drama_agent_shadow_mode", False)),
+                short_drama_agent_require_approval=bool(flags.get("short_drama_agent_require_approval", True)),
+                short_drama_agent_profiles=tuple(str(item) for item in (flags.get("short_drama_agent_profiles") or ())),
+                short_drama_agent_max_concurrency=int(flags.get("short_drama_agent_max_concurrency", 2)),
             )
 
     def require_registration(self) -> CloudFeatureState:
@@ -94,3 +104,17 @@ class CloudFeatureGate:
                 "AI_NEW_TASKS_DISABLED",
                 "AI 新任务已暂停，已有任务仍可查询和处理",
             )
+
+    def require_short_drama_agent(self, profile: str | None = None) -> CloudFeatureState:
+        state = self.state()
+        if not state.short_drama_agent_enabled:
+            raise CloudFeatureDisabledError(
+                "SHORT_DRAMA_AGENT_DISABLED",
+                "短剧 Agent 暂未开放",
+            )
+        if profile and state.short_drama_agent_profiles and profile not in state.short_drama_agent_profiles:
+            raise CloudFeatureDisabledError(
+                "SHORT_DRAMA_AGENT_PROFILE_DISABLED",
+                "当前短剧 Agent 模型未在灰度名单中",
+            )
+        return state

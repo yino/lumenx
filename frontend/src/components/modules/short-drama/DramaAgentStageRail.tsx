@@ -6,6 +6,17 @@ import type { Project } from "@/store/projectStore";
 
 export type DramaAgentStageId = "script" | "cast" | "storyboard_r2v";
 
+export interface DramaAgentRunSummary {
+    status: string;
+    current_stage: string;
+    stage_status: string;
+    validation_report?: {
+        status?: string;
+        findings?: Array<{ severity?: string }>;
+    };
+    approval?: { decision?: string };
+}
+
 const STAGES: Array<{
     id: DramaAgentStageId;
     icon: typeof BookOpenText;
@@ -28,10 +39,12 @@ export default function DramaAgentStageRail({
     activeStage,
     onStageChange,
     project,
+    agentRun,
 }: {
     activeStage: DramaAgentStageId;
     onStageChange: (stage: DramaAgentStageId) => void;
     project: Project;
+    agentRun?: DramaAgentRunSummary | null;
 }) {
     const t = useTranslations("shortDrama");
     const styleName = project.art_direction?.style_config?.name || t("styleUnset");
@@ -80,6 +93,22 @@ export default function DramaAgentStageRail({
                     <span className="rounded-full border border-primary/25 bg-primary/10 px-3 py-1 font-mono text-[0.625rem] text-primary">
                         {t("clipLimit", { seconds: segmentLimit })}
                     </span>
+                    {agentRun && (
+                        <span
+                            data-testid="short-drama-agent-status"
+                            className={`max-w-[220px] truncate rounded-full border px-3 py-1 font-mono text-[0.625rem] ${
+                                agentRun.status === "blocked"
+                                    ? "border-accent/45 bg-accent/10 text-accent"
+                                    : agentRun.status === "needs_approval"
+                                        ? "border-primary/40 bg-primary/10 text-primary"
+                                        : "border-status-completed-border bg-status-completed-bg/10 text-status-completed-fg"
+                            }`}
+                            title={`${agentRun.current_stage} · ${agentRun.stage_status}`}
+                        >
+                            Agent · {agentRun.current_stage}
+                            {agentRun.approval?.decision === "pending" ? " · 待审批" : ""}
+                        </span>
+                    )}
                 </div>
             </div>
         </header>

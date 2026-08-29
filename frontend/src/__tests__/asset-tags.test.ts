@@ -1,7 +1,15 @@
 import { describe, expect, it } from "vitest";
-import { assetTagForName, extractAssetTags, preserveAssetTags, splitAssetTagText } from "@/lib/assetTags";
+import { assetTagForName, canonicalAssetReference, extractAssetTags, preserveAssetTags, splitAssetTagText } from "@/lib/assetTags";
 
 describe("asset tag helpers", () => {
+  it("builds canonical Agent media references", () => {
+    expect(canonicalAssetReference("character", 1, "张成", "42")).toEqual({
+      alias: "character1:张成",
+      type: "image",
+      purpose: "角色外观",
+      media_id: "42",
+    });
+  });
   it("uses canonical character slots for characters, scenes, and props", () => {
     const prompt = "角色在办公室里拿起手机";
 

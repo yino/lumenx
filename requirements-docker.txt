@@ -19,6 +19,8 @@ argon2-cffi==23.1.0
 phonenumbers==9.0.10
 redis==5.2.1
 celery[redis]==5.4.0
+langgraph==0.2.53
+langgraph-checkpoint-postgres==2.0.10
 
 # Utilities
 python-dotenv>=1.0.0

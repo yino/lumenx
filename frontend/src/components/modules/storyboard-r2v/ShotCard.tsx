@@ -318,16 +318,68 @@ export default function ShotCard({
         el.style.setProperty("--spotlight-y", `${e.clientY - rect.top}px`);
     }, []);
 
+    /**
+     * Keep the last completed take visible while a replacement is being
+     * rendered. The task state must sit above the old video; otherwise a
+     * second generation looks like a no-op until polling eventually swaps the
+     * URL.
+     */
+    const renderVideoWithGenerationStatus = (videoUrl: string) => {
+        const isReplacing = shot.videoStatus === "processing" || shot.videoStatus === "pending";
+        const isReplacementFailed = shot.videoStatus === "failed";
+
+        return (
+            <div className="relative w-full aspect-video" data-video-replacement-state={isReplacing ? shot.videoStatus : isReplacementFailed ? "failed" : "completed"}>
+                <PreviewVideo
+                    src={videoUrl}
+                    alt={t("generatedVideo") || "已生成视频"}
+                    className="w-full h-full"
+                    hoverPlay={!isReplacing && !isReplacementFailed}
+                />
+                {isReplacing ? (
+                    <div
+                        role="status"
+                        aria-live="polite"
+                        className="absolute inset-0 z-20 flex flex-col items-center justify-center gap-2 bg-black/70 px-4 text-center backdrop-blur-[1px]"
+                    >
+                        <PendingTaskAffordance
+                            statusLabel={shot.videoStatus === "pending" ? t("queued") : t("replacingVideo")}
+                            taskId={shot.videoTaskId}
+                            onCancel={onCancelVideo}
+                            compact
+                        />
+                        <span className="max-w-[15rem] text-[0.625rem] leading-relaxed text-foreground/75">
+                            {t("replaceCompletedHint")}
+                        </span>
+                    </div>
+                ) : null}
+                {isReplacementFailed ? (
+                    <div
+                        role="alert"
+                        className="absolute inset-0 z-20 flex flex-col items-center justify-center gap-2 bg-black/75 px-4 text-center backdrop-blur-[1px]"
+                    >
+                        <span className="text-[0.6875rem] font-medium text-status-failed-fg">{t("generationFailed")}</span>
+                        <span className="max-w-[16rem] text-[0.625rem] leading-relaxed text-foreground/75">
+                            {t("replaceFailedHint")}
+                        </span>
+                        <button
+                            type="button"
+                            onClick={onGenerateVideo}
+                            disabled={isVideoGenerationActive}
+                            className="text-[0.6875rem] font-medium text-primary transition-colors hover:text-primary/80 disabled:cursor-not-allowed disabled:opacity-40"
+                        >
+                            {isVideoGenerationActive ? t("genInFlight") : t("retry")}
+                        </button>
+                    </div>
+                ) : null}
+            </div>
+        );
+    };
+
     const renderPreview = () => {
         if (shot.tabMode === "t2i_i2v") {
             if (shot.videoUrl) {
-                return (
-                    <PreviewVideo
-                        src={shot.videoUrl}
-                        alt={t("generatedVideo") || "已生成视频"}
-                        className="w-full aspect-video"
-                    />
-                );
+                return renderVideoWithGenerationStatus(shot.videoUrl);
             }
             if (shot.videoStatus === "processing" || shot.videoStatus === "pending") {
                 return (
@@ -414,13 +466,7 @@ export default function ShotCard({
 
         // Direct R2V mode
         if (shot.videoUrl) {
-            return (
-                <PreviewVideo
-                    src={shot.videoUrl}
-                    alt={t("generatedVideo") || "已生成视频"}
-                    className="w-full aspect-video"
-                />
-            );
+            return renderVideoWithGenerationStatus(shot.videoUrl);
         }
         if (shot.videoStatus === "processing" || shot.videoStatus === "pending") {
             return (

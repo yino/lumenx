@@ -1,0 +1,8 @@
+interface:
+  display_name: "通用短剧生产 Agent"
+  short_description: "把短剧分镜编译为模型 Profile 生产包并完成素材与连续性质检"
+  default_prompt: "使用 $short-drama-production 将这份短剧分镜整理成可审批、可恢复的通用生产包。"
+  brand_color: "#646CFF"
+
+policy:
+  allow_implicit_invocation: true

@@ -9,6 +9,13 @@ export interface AssetTagTextSegment {
     isTag: boolean;
 }
 
+export interface CanonicalAssetReference {
+    alias: string;
+    type: "image" | "video" | "audio" | "text";
+    purpose: string;
+    media_id?: string;
+}
+
 // R2V sends reference images by positional characterN slots. The name may
 // refer to a character, scene, or prop, so all three UI entry points share
 // the same canonical tag shape.
@@ -47,7 +54,8 @@ export function extractAssetTags(prompt: string): AssetTagReference[] {
     const slotByName = new Map<string, number>();
     let match: RegExpExecArray | null;
 
-    while ((match = ASSET_TAG_PATTERN.exec(prompt)) !== null) {
+    const pattern = new RegExp(ASSET_TAG_PATTERN.source, "gi");
+    while ((match = pattern.exec(prompt)) !== null) {
         const kind = match[1].toLowerCase();
         const name = match[3].trim();
         if (!name) continue;
@@ -85,6 +93,24 @@ export function assetTagForName(prompt: string, name: string): string {
     const usedSlots = new Set(extractAssetTags(prompt).map((reference) => reference.slot));
     const slot = existing?.slot ?? nextSlot(usedSlots);
     return `[character${slot}:${normalizedName}]`;
+}
+
+/** Build the stable reference consumed by the generic short-drama Agent. */
+export function canonicalAssetReference(
+    kind: "character" | "scene" | "prop" | "image" | "video" | "audio" | "text",
+    slot: number | string,
+    name: string,
+    mediaId?: string,
+): CanonicalAssetReference {
+    const normalizedKind = kind === "character" || kind === "scene" || kind === "prop" ? "image" : kind;
+    return {
+        alias: (kind === "character" || kind === "scene" || kind === "prop")
+            ? `${kind}${slot}:${name.trim()}`
+            : `${kind}:${slot}`,
+        type: normalizedKind,
+        purpose: kind === "character" ? "角色外观" : kind === "scene" ? "场景外观" : kind === "prop" ? "道具外观" : "素材参考",
+        ...(mediaId ? { media_id: mediaId } : {}),
+    };
 }
 
 /** Keep reference tags when a generated polish result replaces the prompt. */

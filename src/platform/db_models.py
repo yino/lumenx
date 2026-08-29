@@ -261,6 +261,39 @@ class MediaObjectRecord(Base):
     retention_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
+class AgentRunRecord(Base):
+    """Scoped snapshot for a generic short-drama Agent Run.
+
+    The payload contains only redacted Agent state. Provider credentials and
+    signed URLs are intentionally not persisted here.
+    """
+
+    __tablename__ = "agent_runs"
+    __table_args__ = (
+        CheckConstraint("schema_version > 0", name="ck_agent_runs_schema_version_positive"),
+        CheckConstraint(
+            "status IN ('queued', 'running', 'needs_approval', 'blocked', 'failed', 'completed', 'cancelled')",
+            name="ck_agent_runs_status",
+        ),
+        UniqueConstraint("run_id", name="uq_agent_runs_run_id"),
+        UniqueConstraint("user_id", "workspace_id", "idempotency_key", name="uq_agent_runs_idempotency"),
+    )
+
+    id: Mapped[int] = mapped_column(DATABASE_ID, primary_key=True, autoincrement=True)
+    run_id: Mapped[str] = mapped_column(String(120), nullable=False)
+    user_id: Mapped[int] = mapped_column(DATABASE_ID, nullable=False)
+    workspace_id: Mapped[int] = mapped_column(DATABASE_ID, nullable=False)
+    project_id: Mapped[int] = mapped_column(DATABASE_ID, nullable=False)
+    idempotency_key: Mapped[str] = mapped_column(String(160), nullable=False)
+    status: Mapped[str] = mapped_column(String(32), default="queued", nullable=False)
+    current_stage: Mapped[str] = mapped_column(String(64), default="intake", nullable=False)
+    stage_status: Mapped[str] = mapped_column(String(32), default="pending", nullable=False)
+    schema_version: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
+    payload: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+
 class AssetRecord(Base):
     __tablename__ = "assets"
     __table_args__ = (

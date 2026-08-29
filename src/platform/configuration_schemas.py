@@ -247,6 +247,13 @@ class PlatformFeatureFlags(BaseModel):
 
     registration_mode: RegistrationMode = RegistrationMode.DISABLED
     new_ai_tasks_enabled: bool = False
+    # Generic short-drama Agent rollout controls. Defaults are fail-closed so
+    # existing storyboard/video routes remain unchanged until enabled.
+    short_drama_agent_enabled: bool = False
+    short_drama_agent_shadow_mode: bool = False
+    short_drama_agent_require_approval: bool = True
+    short_drama_agent_profiles: list[str] = Field(default_factory=lambda: ["grok-imagine-video"])
+    short_drama_agent_max_concurrency: int = Field(default=2, ge=1, le=100)
 
     @model_validator(mode="before")
     @classmethod

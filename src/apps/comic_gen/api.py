@@ -72,6 +72,8 @@ from ...platform.playground_api import install_cloud_playground_api
 from ...platform.storyboard_api import install_cloud_storyboard_api
 from ...platform.workspaces_api import install_workspace_api
 from ...platform.readiness import check_readiness
+from ...platform.feature_flags import CloudFeatureGate
+from ...agents.short_drama.api import install_short_drama_agent_api
 from ...platform.error_protocol import install_cloud_error_protocol
 from ...platform.edge import LegacyCloudAPICompatibilityMiddleware
 from fastapi.responses import JSONResponse
@@ -217,6 +219,15 @@ if app.state.deployment_adapters.cloud_authentication_required:
         app,
         cloud_auth,
         cloud_media,
+        ai_submitter=cloud_ai,
+    )
+    # Generic short-drama Agent API. The service is intentionally installed
+    # alongside, rather than inside, the storyboard routes so legacy clients
+    # retain their existing contract during rollout.
+    install_short_drama_agent_api(
+        app,
+        cloud_auth,
+        feature_gate=CloudFeatureGate(cloud_auth.database),
         ai_submitter=cloud_ai,
     )
     install_cloud_playground_api(
