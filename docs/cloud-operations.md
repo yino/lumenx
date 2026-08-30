@@ -22,8 +22,14 @@ export COMPOSE_FILE=docker-compose-service.yml
 backend 镜像默认使用阿里云 Debian 软件源以适配国内服务器。海外部署可在构建时覆盖：
 
 ```bash
-docker compose build --build-arg DEBIAN_MIRROR=https://deb.debian.org
+docker compose build \
+  --build-arg DEBIAN_MIRROR=https://deb.debian.org \
+  --build-arg PIP_INDEX_URL=https://pypi.org/simple
 ```
+
+Python 依赖默认通过阿里云 PyPI 镜像下载；在网络受限或海外环境中可用
+`PIP_INDEX_URL` 覆盖。构建输出应使用 Compose 的全局进度参数：
+`docker compose --progress=plain build`。
 
 检查 Compose 展开结果，不输出 secret 内容：
 
