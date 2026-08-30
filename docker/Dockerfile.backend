@@ -1,7 +1,18 @@
 FROM python:3.11-slim
 
 # Install FFmpeg, libass support, and a font with complete Simplified Chinese glyphs.
-RUN apt-get update && apt-get install -y --no-install-recommends \
+# Override DEBIAN_MIRROR at build time when deploying outside mainland China.
+ARG DEBIAN_MIRROR=https://mirrors.aliyun.com
+RUN set -eux; \
+    for source in /etc/apt/sources.list /etc/apt/sources.list.d/debian.sources; do \
+        if [ -f "$source" ]; then \
+            sed -i \
+                -e "s|https\\?://deb.debian.org|${DEBIAN_MIRROR}|g" \
+                -e "s|https\\?://security.debian.org|${DEBIAN_MIRROR}/debian-security|g" \
+                "$source"; \
+        fi; \
+    done; \
+    apt-get update && apt-get install -y --no-install-recommends \
     ffmpeg \
     fontconfig \
     fonts-noto-cjk \

@@ -19,6 +19,12 @@ export COMPOSE_FILE=docker-compose-service.yml
 6. 通过 Compose 或环境变量配置 `LUMENX_GLOBAL_WORKER_CONCURRENCY`，初始建议为 `8`。该值属于部署容量，只在管理页只读展示，不能通过数据库配置激活。
 7. 保持 `LUMENX_REGISTRATION_EMERGENCY_DISABLED=true` 和 `LUMENX_NEW_AI_TASKS_EMERGENCY_DISABLED=true`。默认 Compose 即为关闭入口；只有中文发布证据、staging canary 和对账全部通过后，才显式改为 `false` 并滚动发布。
 
+backend 镜像默认使用阿里云 Debian 软件源以适配国内服务器。海外部署可在构建时覆盖：
+
+```bash
+docker compose build --build-arg DEBIAN_MIRROR=https://deb.debian.org
+```
+
 检查 Compose 展开结果，不输出 secret 内容：
 
 ```bash
