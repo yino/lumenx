@@ -1,30 +1,29 @@
 # LumenX 云端运维手册
 
 本文档适用于 `cloud` 部署。桌面版仍使用本地适配器，不需要 PostgreSQL、Redis、OSS 或算力券结算。
+生产 Web 部署使用 `docker-compose-service.yml`，该文件包含 PostgreSQL、Redis、迁移、Worker 和前端；OSS 仍是外部私有对象存储。
 
 仓库中的 `docker-compose.override.yml` 仅用于本地 Docker。生产操作前必须固定基础文件，避免加载本地环境变量和命名卷覆盖：
 
 ```bash
-export COMPOSE_FILE=docker-compose.yml
+export COMPOSE_FILE=docker-compose-service.yml
 ```
 
 ## 上线前准备
 
-1. 准备 PostgreSQL 16、Redis 7.4、私有 OSS Bucket 和 HTTPS 域名。
-2. 从 `secrets/*.txt.example` 创建真实 secret 文件，权限限制为部署账号可读。`postgres_password.txt` 与 `postgres_app_password.txt` 必须使用不同随机密码。
-3. 配置 `LUMENX_ALLOWED_ORIGINS` 为真实前端源，不能使用通配符。
-4. 配置 `LUMENX_PROVIDER_SECRET_REFS`。数据库只保存引用名，不保存供应商明文密钥。
-5. 通过 Compose 或环境变量配置 `LUMENX_GLOBAL_WORKER_CONCURRENCY`，初始建议为 `8`。该值属于部署容量，只在管理页只读展示，不能通过数据库配置激活。
-6. 保持 `LUMENX_REGISTRATION_EMERGENCY_DISABLED=true` 和 `LUMENX_NEW_AI_TASKS_EMERGENCY_DISABLED=true`。默认 Compose 即为关闭入口；只有中文发布证据、staging canary 和对账全部通过后，才显式改为 `false` 并滚动发布。
+1. 准备 HTTPS 域名和私有 OSS Bucket；PostgreSQL 16、Redis 7.4 由 Compose 自动创建。
+2. 从 `secrets/*.txt.example` 创建真实 secret 文件，权限限制为部署账号可读。必须包含 `postgres_password.txt`、`postgres_app_password.txt`、`bootstrap_admin_password.txt`、`session_secret.txt`、OSS 凭据、`dashscope_api_key.txt` 和 `xlinks_api_key.txt`。
+3. `postgres_password.txt`、`postgres_app_password.txt` 和 `bootstrap_admin_password.txt` 必须使用不同的随机值；不要将它们写入 `.env`。
+4. 配置 `LUMENX_ALLOWED_ORIGINS` 为真实前端源，不能使用通配符，并配置 `LUMENX_OSS_ENDPOINT`、`LUMENX_OSS_BUCKET_NAME`。
+5. 配置 `LUMENX_PROVIDER_SECRET_REFS`。数据库只保存引用名，不保存供应商明文密钥。
+6. 通过 Compose 或环境变量配置 `LUMENX_GLOBAL_WORKER_CONCURRENCY`，初始建议为 `8`。该值属于部署容量，只在管理页只读展示，不能通过数据库配置激活。
+7. 保持 `LUMENX_REGISTRATION_EMERGENCY_DISABLED=true` 和 `LUMENX_NEW_AI_TASKS_EMERGENCY_DISABLED=true`。默认 Compose 即为关闭入口；只有中文发布证据、staging canary 和对账全部通过后，才显式改为 `false` 并滚动发布。
 
 检查 Compose 展开结果，不输出 secret 内容：
 
 ```bash
 docker compose config --quiet
-docker compose up -d postgres redis
-docker compose run --rm database-role-bootstrap
-docker compose run --rm migration
-docker compose up -d backend ai-worker maintenance-worker scheduler postgres-backup frontend
+docker compose up -d --build
 docker compose ps
 ```
 
@@ -51,14 +50,14 @@ docker compose run --rm migration alembic current
 
 ## 首个平台管理员
 
-Compose 会在迁移成功后通过 `admin-bootstrap` 幂等创建首个平台管理员。本地默认用户名是 `admin`；本地初始密码由 `.env` 的 `LUMENX_BOOTSTRAP_ADMIN_PASSWORD` 提供。生产部署必须在首次启动前替换该密码，禁止沿用仓库示例值。
+Compose 会在迁移成功后通过 `admin-bootstrap` 幂等创建首个平台管理员。默认用户名是 `admin`；生产初始密码从 `secrets/bootstrap_admin_password.txt` 注入，禁止写入 `.env` 或沿用仓库示例值。
 
 ```bash
-docker compose run --rm admin-bootstrap
+docker compose logs --no-log-prefix admin-bootstrap
 docker compose run --rm backend python -m src.platform.bootstrap_admin --username <管理员用户名>
 ```
 
-命令从 `LUMENX_BOOTSTRAP_ADMIN_PASSWORD` 读取密码，数据库只保存 Argon2 哈希。命令不会把密码输出到日志；重复执行不会重置既有管理员密码，也不会创建普通用户、钱包或工作区。记录输出的管理员 ID，后续模型种子和对账命令需要它。管理员遗失密码时，替换环境中的新密码后显式执行 `python -m src.platform.bootstrap_admin --username <管理员用户名> --rotate-existing`；该操作撤销全部后台会话并要求下次登录改密。完整后台操作和事故处置见 `docs/system-admin-console.md`。
+命令从 Docker secret 读取密码，数据库只保存 Argon2 哈希。命令不会把密码输出到日志；重复执行不会重置既有管理员密码，也不会创建普通用户、钱包或工作区。记录输出的管理员 ID，后续模型种子和对账命令需要它。管理员遗失密码时，替换 `bootstrap_admin_password.txt` 后显式执行 `python -m src.platform.bootstrap_admin --username <管理员用户名> --rotate-existing`；该操作撤销全部后台会话并要求下次登录改密。完整后台操作和事故处置见 `docs/system-admin-console.md`。
 
 本地 Compose 保留数据卷中若恰好有一个不同用户名的独立管理员，`docker-compose.override.yml` 会启用一次性自动接管：保留管理员 ID 和全部审计/财务关联，将其改为 `.env` 配置身份，撤销旧后台会话并追加审计。配置身份已存在时不会再次轮换密码；零个或多个异名管理员时拒绝自动接管。生产和发布配置不启用该开关，普通 bootstrap 继续失败关闭；确认目标后使用 `make docker-admin-adopt` 显式恢复。
 
@@ -127,6 +126,8 @@ python -m scripts.legacy_api_compat_evidence \
 ## 备份与恢复
 
 `postgres-backup` 每日生成 custom-format dump、SHA-256 文件和目录清单，并保留 14 天。`scheduler` 每日验证最新备份时效、校验和，以及审计/配置关键表是否在清单内。
+
+Compose 的 `lumenx-postgres-data`、`lumenx-redis-data`、`lumenx-app-output`、`lumenx-provider-results` 和 `lumenx-postgres-backups` 都是本机命名卷；`lumenx-postgres-backups` 不是异地备份。生产必须将 dump 目录复制到独立存储，并为 OSS Bucket 启用版本控制或生命周期备份。不要用 `docker compose down -v`，否则会删除这些卷。
 
 每月至少执行一次隔离恢复演练：
 

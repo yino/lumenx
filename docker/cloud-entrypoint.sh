@@ -22,6 +22,7 @@ load_secret LUMENX_OSS_ACCESS_KEY_SECRET
 load_secret DASHSCOPE_API_KEY
 load_secret XLINKS_API_KEY
 load_secret LUMENX_DATABASE_PASSWORD
+load_secret LUMENX_BOOTSTRAP_ADMIN_PASSWORD
 
 case "${LUMENX_DEPLOYMENT_MODE:-desktop}" in
 cloud|test)

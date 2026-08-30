@@ -4,13 +4,13 @@
 
 ## 入口与初始化
 
-完整 Compose 启动时，`admin-bootstrap` 在数据库迁移后自动运行。默认本地账号为 `admin`，密码来自 `.env` 的 `LUMENX_BOOTSTRAP_ADMIN_PASSWORD`。管理员只写入 `admin_users`，不会创建 `users`、钱包、工作区或用户资产。生产必须在首次启动前替换密码，并通过私密凭据系统注入。初始化幂等：配置账号已存在时不修改密码，也不创建第二个管理员；本地 Compose 若发现唯一的异名独立管理员，会自动保留其 ID、接管为配置账号、撤销旧会话并记录审计。多个管理员时仍拒绝启动。
+完整生产 Compose 启动时，`admin-bootstrap` 在数据库迁移后自动运行。默认账号为 `admin`，初始密码从 `secrets/bootstrap_admin_password.txt` 注入。管理员只写入 `admin_users`，不会创建 `users`、钱包、工作区或用户资产。生产必须在首次启动前设置该 secret，并通过私密凭据系统管理。初始化幂等：配置账号已存在时不修改密码，也不创建第二个管理员；本地 Compose 若发现唯一的异名独立管理员，会自动保留其 ID、接管为配置账号、撤销旧会话并记录审计。多个管理员时仍拒绝启动。
 
 管理员初始化完成后，独立的 `registration-mode-bootstrap` 才处理注册策略。本地 Compose 默认激活 `open`，允许手机号和密码直接注册且暂不校验验证码；生产 Compose 默认保持 `disabled`，必须由运营明确激活。两个任务相互独立，因此开放用户注册不会把管理员写入普通用户域。
 
 管理员通过 `#/admin` 登录，服务端认证接口为 `/api/v1/admin/auth/*`，使用独立的 `lumenx_admin_session` 和 `lumenx_admin_csrf` Cookie。首次初始化或显式恢复后的管理员必须先修改密码，后台页面在完成前不会挂载。普通用户访问管理路由时，前端不会挂载后台页面，后端 `/api/v1/admin/*` 也不会接受普通用户会话。后台使用独立导航，不显示创作者工作流侧栏。
 
-管理员遗失密码时，先把 `.env` 中 `LUMENX_BOOTSTRAP_ADMIN_PASSWORD` 改为新的强密码，再显式执行：
+管理员遗失密码时，先把 `secrets/bootstrap_admin_password.txt` 替换为新的强密码，再显式执行：
 
 ```bash
 make docker-admin-recover
