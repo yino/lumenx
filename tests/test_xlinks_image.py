@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import base64
+import json
+import logging
 from dataclasses import replace
 
 import pytest
@@ -203,6 +205,118 @@ def test_xlinks_redacts_secret_from_provider_rejection(tmp_path) -> None:
     assert caught.value.safe_error_code == "PROVIDER_AUTHENTICATION_FAILED"
 
 
+def test_xlinks_logs_full_request_and_failure_response(tmp_path, caplog) -> None:
+    response = FakeResponse(
+        status_code=502,
+        payload={
+            "error": {
+                "code": "upstream_generation_failed",
+                "message": "image channel timed out after 85 seconds",
+                "details": {"channel": "gpt-image-2-primary", "retryable": True},
+            }
+        },
+        headers={"x-oneapi-request-id": "req-xlinks-failed"},
+    )
+    session = FakeSession(response)
+
+    with caplog.at_level(logging.INFO, logger="src.models.xlinks"):
+        with pytest.raises(RuntimeError, match="upstream_generation_failed"):
+            _model(session).generate(
+                "完整记录这个角色提示词",
+                str(tmp_path / "failed.png"),
+                model="gpt-image-2",
+                size="1024x1024",
+                quality="high",
+                output_format="png",
+                background="auto",
+                n=1,
+            )
+
+    events = [json.loads(record.getMessage()) for record in caplog.records]
+    request_event = next(
+        event for event in events if event["event"] == "xlinks.image_request"
+    )
+    response_event = next(
+        event for event in events if event["event"] == "xlinks.image_response"
+    )
+    assert request_event["request_body"] == {
+        "model": "gpt-image-2",
+        "prompt": "完整记录这个角色提示词",
+        "n": 1,
+        "size": "1024x1024",
+        "quality": "high",
+        "output_format": "png",
+        "background": "auto",
+    }
+    assert "Authorization" not in request_event
+    assert response_event["status_code"] == 502
+    assert response_event["provider_request_id"] == "req-xlinks-failed"
+    assert response_event["response_body"] == response._payload
+    assert response_event["response_headers"] == {
+        "x-oneapi-request-id": "req-xlinks-failed"
+    }
+
+
+def test_xlinks_success_log_omits_only_large_base64_payload(tmp_path, caplog) -> None:
+    encoded = base64.b64encode(PNG).decode()
+    response = FakeResponse(
+        payload={
+            "created": 123,
+            "data": [{"b64_json": encoded, "revised_prompt": "完整响应字段"}],
+        }
+    )
+
+    with caplog.at_level(logging.INFO, logger="src.models.xlinks"):
+        _model(FakeSession(response)).generate(
+            "prompt",
+            str(tmp_path / "success.png"),
+        )
+
+    events = [json.loads(record.getMessage()) for record in caplog.records]
+    response_event = next(
+        event for event in events if event["event"] == "xlinks.image_response"
+    )
+    assert response_event["response_body"] == {
+        "created": 123,
+        "data": [
+            {
+                "b64_json": {
+                    "binary_omitted": True,
+                    "encoded_chars": len(encoded),
+                },
+                "revised_prompt": "完整响应字段",
+            }
+        ],
+    }
+
+
+def test_xlinks_logs_response_processing_failure(tmp_path, caplog) -> None:
+    response = FakeResponse(
+        payload={"created": 123, "data": [{}]},
+        headers={"x-request-id": "req-invalid-output"},
+    )
+
+    with caplog.at_level(logging.INFO, logger="src.models.xlinks"):
+        with pytest.raises(RuntimeError, match="usable output"):
+            _model(FakeSession(response)).generate(
+                "prompt",
+                str(tmp_path / "invalid-output.png"),
+            )
+
+    events = [json.loads(record.getMessage()) for record in caplog.records]
+    processing_event = next(
+        event
+        for event in events
+        if event["event"] == "xlinks.image_processing_failed"
+    )
+    assert processing_event["status_code"] == 200
+    assert processing_event["provider_request_id"] == "req-invalid-output"
+    assert processing_event["error_type"] == "RuntimeError"
+    assert processing_event["error_message"] == (
+        "Xlinks image response must contain one usable output"
+    )
+
+
 class CredentialProvider:
     def resolve(self, secret_ref: str) -> SecretStr:
         assert secret_ref == "XLINKS_API_KEY"
@@ -244,13 +358,21 @@ def test_cloud_factory_builds_xlinks_only_for_gpt_image_t2i(monkeypatch) -> None
         factory.create(replace(_snapshot(), provider_model_id="other"))
 
 
-def test_xlinks_timeout_is_not_retried(tmp_path) -> None:
+def test_xlinks_timeout_is_not_retried(tmp_path, caplog) -> None:
     class TimeoutSession(FakeSession):
         def post(self, url, **kwargs):
             self.posts.append((url, kwargs))
             raise requests.ReadTimeout("ambiguous timeout")
 
     session = TimeoutSession(None)
-    with pytest.raises(requests.ReadTimeout):
-        _model(session).generate("prompt", str(tmp_path / "output.png"))
+    with caplog.at_level(logging.INFO, logger="src.models.xlinks"):
+        with pytest.raises(requests.ReadTimeout):
+            _model(session).generate("prompt", str(tmp_path / "output.png"))
     assert len(session.posts) == 1
+    events = [json.loads(record.getMessage()) for record in caplog.records]
+    failure_event = next(
+        event for event in events if event["event"] == "xlinks.image_transport_failed"
+    )
+    assert failure_event["request_body"]["prompt"] == "prompt"
+    assert failure_event["error_type"] == "ReadTimeout"
+    assert failure_event["error_message"] == "ambiguous timeout"

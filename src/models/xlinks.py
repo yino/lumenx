@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import base64
 import binascii
+import json
+import logging
 import os
 import tempfile
 import time
@@ -23,6 +25,7 @@ PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
 DEFAULT_MAXIMUM_IMAGE_BYTES = 40 * 1024 * 1024
 SUPPORTED_QUALITIES = frozenset({"auto", "low", "medium", "high"})
 SUPPORTED_BACKGROUNDS = frozenset({"auto", "opaque", "transparent"})
+logger = logging.getLogger(__name__)
 
 
 class XlinksImageModel(ImageGenModel):
@@ -131,6 +134,45 @@ class XlinksImageModel(ImageGenModel):
             "Content-Type": "application/json",
             "Accept": "application/json",
         }
+
+    @staticmethod
+    def _log_event(event: str, *, level: int = logging.INFO, **fields: Any) -> None:
+        logger.log(
+            level,
+            json.dumps(
+                {"event": event, **fields},
+                ensure_ascii=False,
+                sort_keys=True,
+                default=str,
+            ),
+        )
+
+    @classmethod
+    def _successful_response_for_log(cls, value: Any) -> Any:
+        if isinstance(value, Mapping):
+            result = {}
+            for key, item in value.items():
+                if key == "b64_json" and isinstance(item, str):
+                    result[key] = {
+                        "binary_omitted": True,
+                        "encoded_chars": len(item),
+                    }
+                else:
+                    result[key] = cls._successful_response_for_log(item)
+            return result
+        if isinstance(value, list):
+            return [cls._successful_response_for_log(item) for item in value]
+        return value
+
+    @staticmethod
+    def _response_text(response: Any) -> str:
+        text = getattr(response, "text", None)
+        if isinstance(text, str):
+            return text
+        content = getattr(response, "content", b"")
+        if isinstance(content, bytes):
+            return content.decode("utf-8", errors="replace")
+        return str(content or "")
 
     def _safe_provider_error(self, response: Any) -> tuple[str, str]:
         code = f"HTTP_{getattr(response, 'status_code', 0)}"
@@ -303,26 +345,93 @@ class XlinksImageModel(ImageGenModel):
         body = self._request_body(prompt, kwargs)
         callback = kwargs.get("on_provider_ids")
         started_at = time.perf_counter()
-        response = self.session.post(
-            f"{self.base_url}/images/generations",
-            headers=self._headers(),
-            json=body,
-            timeout=(self.connect_timeout, self.read_timeout),
+        request_url = f"{self.base_url}/images/generations"
+        self._log_event(
+            "xlinks.image_request",
+            method="POST",
+            url=request_url,
+            request_body=body,
+            timeout={
+                "connect_seconds": self.connect_timeout,
+                "read_seconds": self.read_timeout,
+            },
         )
-        self._raise_for_status(response)
+        try:
+            response = self.session.post(
+                request_url,
+                headers=self._headers(),
+                json=body,
+                timeout=(self.connect_timeout, self.read_timeout),
+            )
+        except Exception as exc:
+            self._log_event(
+                "xlinks.image_transport_failed",
+                level=logging.ERROR,
+                method="POST",
+                url=request_url,
+                request_body=body,
+                elapsed_seconds=round(time.perf_counter() - started_at, 3),
+                error_type=type(exc).__name__,
+                error_message=str(exc),
+            )
+            raise
+
         request_id = self._request_id(response)
-        if callable(callback):
-            callback("xlinks", None, request_id)
+        response_json_error: Exception | None = None
         try:
             payload = response.json()
         except (TypeError, ValueError, requests.RequestException) as exc:
-            raise RuntimeError("Xlinks image response is not valid JSON") from exc
-        output_kind, output_value = self._extract_output(payload)
-        content = (
-            self._decode_png(output_value)
-            if output_kind == "b64_json"
-            else self._download_png(output_value)
+            payload = None
+            response_json_error = exc
+        response_body = (
+            payload
+            if int(response.status_code) >= 400
+            else self._successful_response_for_log(payload)
         )
+        if payload is None:
+            response_body = self._response_text(response)
+        self._log_event(
+            "xlinks.image_response",
+            level=(
+                logging.INFO
+                if 200 <= int(response.status_code) < 300
+                else logging.ERROR
+            ),
+            method="POST",
+            url=request_url,
+            status_code=int(response.status_code),
+            elapsed_seconds=round(time.perf_counter() - started_at, 3),
+            provider_request_id=request_id,
+            response_headers=dict(getattr(response, "headers", {}) or {}),
+            response_body=response_body,
+        )
+        self._raise_for_status(response)
+        if callable(callback):
+            callback("xlinks", None, request_id)
+        try:
+            if response_json_error is not None:
+                raise RuntimeError(
+                    "Xlinks image response is not valid JSON"
+                ) from response_json_error
+            output_kind, output_value = self._extract_output(payload)
+            content = (
+                self._decode_png(output_value)
+                if output_kind == "b64_json"
+                else self._download_png(output_value)
+            )
+        except Exception as exc:
+            self._log_event(
+                "xlinks.image_processing_failed",
+                level=logging.ERROR,
+                method="POST",
+                url=request_url,
+                status_code=int(response.status_code),
+                elapsed_seconds=round(time.perf_counter() - started_at, 3),
+                provider_request_id=request_id,
+                error_type=type(exc).__name__,
+                error_message=str(exc),
+            )
+            raise
         self._atomic_write(output_path, content)
         return ProviderGenerationResult(
             output_path=output_path,
