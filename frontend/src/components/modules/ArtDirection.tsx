@@ -9,6 +9,7 @@ import { api } from "@/lib/api";
 import StepPageHeader, { StepPill } from "@/components/shared/StepPageHeader";
 import WorkflowActionButton from "@/components/shared/WorkflowActionButton";
 import { toast } from "@/store/toastStore";
+import { getStaticAssetUrl } from "@/lib/staticAssets";
 
 export default function ArtDirection() {
     const ta = useTranslations("artDirection");
@@ -188,7 +189,10 @@ export default function ArtDirection() {
     const loadPresets = async () => {
         try {
             const data = await api.getStylePresets();
-            setPresets(data.presets || []);
+            setPresets((data.presets || []).map((preset: StylePreset) => ({
+                ...preset,
+                thumbnail: getStaticAssetUrl(preset.thumbnail),
+            })));
             setCategories(data.categories || []);
         } catch (error) {
             console.error("Failed to load presets:", error);

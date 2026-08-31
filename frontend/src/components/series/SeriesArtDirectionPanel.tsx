@@ -11,6 +11,7 @@ import { api } from "@/lib/api";
 import { useProjectStore } from "@/store/projectStore";
 import type { Series, StyleConfig, StylePreset, StylePresetCategory } from "@/store/projectStore";
 import WorkflowActionButton from "@/components/shared/WorkflowActionButton";
+import { getStaticAssetUrl } from "@/lib/staticAssets";
 
 interface SeriesArtDirectionPanelProps {
     seriesId: string;
@@ -44,7 +45,10 @@ export default function SeriesArtDirectionPanel({ seriesId, onSaved }: SeriesArt
         ]).then(([s, p]: any) => {
             if (cancelled) return;
             setSeries(s);
-            setPresets(p?.presets ?? []);
+            setPresets((p?.presets ?? []).map((preset: StylePreset) => ({
+                ...preset,
+                thumbnail: getStaticAssetUrl(preset.thumbnail),
+            })));
             setCategories(p?.categories ?? []);
             const sel = s?.art_direction?.style_config ?? null;
             setSelectedStyle(sel);

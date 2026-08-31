@@ -29,6 +29,7 @@ import { getAssetUrl } from "@/lib/utils";
 import PreviewImage from "@/components/shared/preview/PreviewImage";
 import GroupedModelGrid from "@/components/common/GroupedModelGrid";
 import { IS_CLOUD_DEPLOYMENT } from "@/lib/deployment";
+import { getStaticAssetUrl } from "@/lib/staticAssets";
 
 export type CastKind = "character" | "scene" | "prop";
 
@@ -120,14 +121,14 @@ const CHARACTER_TEMPLATES: Record<CharacterTemplate, {
         descKey: "tplSimpleDesc",
         compositionEn: "构图：角色设定参考图，单张完整画面，无边框、无分栏，使用中性灰色背景。左半部分为大型头部特写，展示肩部以上区域，正面视角，面部和皮肤细节清晰。右半部分并排展示三个大小一致的全身站姿，分别为正面、侧面和背面，人物从头到脚完整可见，保持自然放松的中立姿势。所有视图使用一致的柔和棚拍光线，避免强烈阴影，整体照明均匀。",
         negativeAppend: "文字，标签，水印，界面覆盖，分栏边框，画框，多张独立图片",
-        exampleImage: "/assets/templates/simple-triview.png",
+        exampleImage: getStaticAssetUrl("/assets/templates/simple-triview.png"),
     },
     detailed: {
         labelKey: "tplDetailedLabel",
         descKey: "tplDetailedDesc",
         compositionEn: "Composition: detailed character reference sheet, single unified image, seamless layout without borders or frames, neutral gray background. Left section: three full-body standing views side by side (front / side / back), head-to-toe visible, neutral relaxed pose. Upper right: large face close-up portrait (shoulders up, detailed skin texture, sharp eyes, pores visible). Lower right: three smaller head shots showing different angles (front, three-quarter, profile). Consistent soft studio lighting, no harsh shadows, even illumination across all panels.",
         negativeAppend: "text, labels, watermark, UI overlay, panel borders, frames, multiple separate images",
-        exampleImage: "/assets/templates/detailed-reference.png",
+        exampleImage: getStaticAssetUrl("/assets/templates/detailed-reference.png"),
     },
     design_sheet: {
         labelKey: "tplDesignSheetLabel",
@@ -135,7 +136,7 @@ const CHARACTER_TEMPLATES: Record<CharacterTemplate, {
         compositionEn: "Composition: professional character design sheet, single unified image with dark cyberpunk-themed background (deep blue-black with subtle neon circuit patterns). Layout divided into labeled panels with thin border frames: - Top left: large dramatic character portrait (bust shot, three-quarter angle, moody rim lighting, glowing blue cybernetic eye) - Center: three full-body standing views (front / side / back) with labels \"正面\" \"侧面\" \"背面\" - Top right: 4 expression close-ups in a row (neutral, smirking, intense focus, combat rage), labeled \"表情特写\" - Bottom left: 3-4 detail close-up panels showing cybernetic eye mechanism, neck circuit tattoo, armor texture, weapon holster, labeled \"细节特写\" - Bottom right: character info panel with dark translucent background containing text fields (name, age, traits, abilities). Cinematic lighting, high detail, concept art quality, game character sheet aesthetic.",
         negativeAppend: "watermark, UI overlay, signature, low quality, distorted anatomy, multiple separate images",
         comingSoon: true,
-        exampleImage: "/assets/templates/design-sheet.png",
+        exampleImage: getStaticAssetUrl("/assets/templates/design-sheet.png"),
     },
 };
 

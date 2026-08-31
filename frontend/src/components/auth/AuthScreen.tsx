@@ -10,6 +10,7 @@ import {
   type AuthUser,
   type RegistrationPolicy,
 } from "@/lib/api";
+import { getStaticAssetUrl } from "@/lib/staticAssets";
 import LumenXBranding from "@/components/layout/LumenXBranding";
 
 type AuthMode = "login" | "register";
@@ -22,17 +23,17 @@ interface AuthScreenProps {
 
 const AUTH_IMAGES = [
   {
-    src: "/assets/styles/live_action__hong_kong_cinema__cha_chaan_teng_night__landscape.png",
+    src: getStaticAssetUrl("/assets/styles/live_action__hong_kong_cinema__cha_chaan_teng_night__landscape.png"),
     alt: "港风夜景样片",
     label: "镜头一",
   },
   {
-    src: "/assets/styles/style_lab__chinese_ink_fantasy__swordswoman_mountain_v2__portrait.png",
+    src: getStaticAssetUrl("/assets/styles/style_lab__chinese_ink_fantasy__swordswoman_mountain_v2__portrait.png"),
     alt: "水墨幻想人物样片",
     label: "镜头二",
   },
   {
-    src: "/assets/styles/japanese_anime__modern_cel_anime__rooftop_sunset_v2__landscape.png",
+    src: getStaticAssetUrl("/assets/styles/japanese_anime__modern_cel_anime__rooftop_sunset_v2__landscape.png"),
     alt: "天台落日动画样片",
     label: "镜头三",
   },

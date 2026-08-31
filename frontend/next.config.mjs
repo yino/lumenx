@@ -35,6 +35,11 @@ const nextConfig = {
                 hostname: "placehold.co",
             },
             {
+                protocol: "https",
+                hostname: "yino-drama.oss-cn-beijing.aliyuncs.com",
+                pathname: "/assets/**",
+            },
+            {
                 protocol: "http",
                 hostname: "localhost",
                 port: "17177",
