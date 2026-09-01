@@ -1,0 +1,62 @@
+# CNB push pipeline for the production container images.
+# The Docker build context is the repository root because the Dockerfiles copy
+# frontend/, src/, migrations/ and config/ from that context.
+
+main:
+  push:
+    - services:
+        - docker
+      stages:
+        - name: build and push backend
+          script: |
+            set -eu
+            registry="${CNB_DOCKER_REGISTRY}/${CNB_REPO_SLUG_LOWERCASE}"
+            tag="${CNB_COMMIT:-latest}"
+            image="${registry}/backend"
+
+            docker build \
+              --platform linux/amd64 \
+              --file docker/Dockerfile.backend \
+              --tag "${image}:${tag}" \
+              --tag "${image}:latest" \
+              .
+            docker push "${image}:${tag}"
+            if [ "${tag}" != "latest" ]; then
+              docker push "${image}:latest"
+            fi
+
+        - name: build and push frontend
+          script: |
+            set -eu
+            registry="${CNB_DOCKER_REGISTRY}/${CNB_REPO_SLUG_LOWERCASE}"
+            tag="${CNB_COMMIT:-latest}"
+            image="${registry}/frontend"
+
+            docker build \
+              --platform linux/amd64 \
+              --file docker/Dockerfile.frontend \
+              --tag "${image}:${tag}" \
+              --tag "${image}:latest" \
+              .
+            docker push "${image}:${tag}"
+            if [ "${tag}" != "latest" ]; then
+              docker push "${image}:latest"
+            fi
+
+        - name: build and push postgres tools
+          script: |
+            set -eu
+            registry="${CNB_DOCKER_REGISTRY}/${CNB_REPO_SLUG_LOWERCASE}"
+            tag="${CNB_COMMIT:-latest}"
+            image="${registry}/postgres-tools"
+
+            docker build \
+              --platform linux/amd64 \
+              --file docker/Dockerfile.postgres-tools \
+              --tag "${image}:${tag}" \
+              --tag "${image}:latest" \
+              .
+            docker push "${image}:${tag}"
+            if [ "${tag}" != "latest" ]; then
+              docker push "${image}:latest"
+            fi
