@@ -12,6 +12,7 @@ OPENSPEC_CHANGE ?= harden-cloud-launch-readiness
 .PHONY: help doctor install dev backend frontend build build-mac build-windows \
 	test test-backend test-frontend lint typecheck check-colors compile check migrate \
 	docker-env docker-config docker-production-config docker-build docker-up docker-down \
+	docker-frontend-image \
 	docker-logs docker-ps docker-migrate docker-admin-recover docker-admin-adopt \
 	openspec-validate release-check
 
@@ -41,6 +42,7 @@ help:
 		'  make docker-env      为本地 Docker 补齐 .env（不会输出凭据）' \
 		'  make docker-config   校验本地 Compose 配置' \
 		'  make docker-build    构建本地 Docker 镜像' \
+		'  make docker-frontend-image  按服务器架构构建并可选导出前端镜像' \
 		'  make docker-up       后台启动完整本地 Web 服务' \
 		'  make docker-down     停止本地服务（保留命名卷数据）' \
 		'  make docker-logs     持续查看本地服务日志' \
@@ -129,6 +131,9 @@ docker-production-config:
 
 docker-build: docker-config
 	$(COMPOSE) build
+
+docker-frontend-image:
+	./scripts/build-frontend-image.sh
 
 docker-up: docker-config
 	$(COMPOSE) up -d --build

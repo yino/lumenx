@@ -2103,8 +2103,8 @@ export default function StoryboardR2V() {
                             generateCount={paramsState.count}
                             genSummary={`${
                                 shot.tabMode === "direct_r2v"
-                                    ? (VIDEO_R2V_MODELS.find(m => m.id === videoConfig.r2vModel)?.name ?? videoConfig.r2vModel ?? "")
-                                    : (AVAILABLE_I2V_MODELS.find(m => m.id === videoConfig.model)?.name ?? videoConfig.model ?? "")
+                                    ? (VIDEO_R2V_MODELS.find(m => m.id === paramsState.model)?.name ?? paramsState.model ?? "")
+                                    : (AVAILABLE_I2V_MODELS.find(m => m.id === paramsState.model)?.name ?? paramsState.model ?? "")
                             } · ${paramsState.duration}s`}
                             canGenerate={
                                 shot.prompt.trim().length > 0

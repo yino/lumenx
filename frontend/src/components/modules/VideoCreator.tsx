@@ -19,7 +19,7 @@ import {
 
 import { useProjectStore } from "@/store/projectStore";
 import { api, API_URL, VideoTask } from "@/lib/api";
-import { R2V_SELECTION_MODEL_ID, getR2vRouteModelId, isR2vImageBased } from "@/lib/modelCatalog";
+import { R2V_SELECTION_MODEL_ID, VIDEO_R2V_MODELS, getR2vRouteModelId, isR2vImageBased } from "@/lib/modelCatalog";
 import { getAssetUrl, getAssetUrlWithTimestamp } from "@/lib/utils";
 import PromptBuilder, { PromptSegment, PromptBuilderRef } from "./PromptBuilder";
 import type { VideoParams } from "@/store/projectStore";
@@ -332,7 +332,11 @@ export default function VideoCreator({ onTaskCreated, remixData, onRemixClear, p
                 }
 
                 // Determine model based on generation mode
-                const actualModel = generationMode === 'r2v' ? getR2vRouteModelId(params.model) : params.model;
+                const actualModel = generationMode === 'r2v'
+                    ? (VIDEO_R2V_MODELS.some((model) => model.id === params.model)
+                        ? params.model
+                        : getR2vRouteModelId(params.model))
+                    : params.model;
                 const r2vImageBased = generationMode === 'r2v' && isR2vImageBased(actualModel);
                 const referenceVideos = generationMode === 'r2v' && !r2vImageBased
                     ? castSlots.filter(s => s.url).map(s => s.url)
@@ -402,8 +406,14 @@ export default function VideoCreator({ onTaskCreated, remixData, onRemixClear, p
                 }
 
                 // Determine model based on generation mode
-                // R2V mode uses the hidden route model, I2V uses the selected visible model.
-                const actualModel = generationMode === 'r2v' ? getR2vRouteModelId(params.model) : params.model;
+                // R2V mode keeps an explicitly selected R2V model when one is
+                // available; otherwise derive the family route from the I2V
+                // selection for older callers.
+                const actualModel = generationMode === 'r2v'
+                    ? (VIDEO_R2V_MODELS.some((model) => model.id === params.model)
+                        ? params.model
+                        : getR2vRouteModelId(params.model))
+                    : params.model;
                 const r2vImageBased = generationMode === 'r2v' && isR2vImageBased(actualModel);
 
                 // Get reference URLs from cast slots for R2V

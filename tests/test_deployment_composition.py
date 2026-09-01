@@ -169,7 +169,7 @@ def test_local_ai_bootstrap_is_explicitly_guarded_and_production_stays_closed() 
     assert "ARK_API_KEY: ${LUMENX_LOCAL_ARK_API_KEY:" in local_override
     assert "SEEDANCE_PROVIDER_MODE: ark" in local_override
     assert 'AICapability.VIDEO_I2V: "grok-imagine-video"' in script
-    assert 'AICapability.VIDEO_R2V: "seedance-2.0-r2v"' in script
+    assert 'AICapability.VIDEO_R2V: ("gemini-omni-1.1-flash", "seedance-2.0-r2v")' in script
     assert "LUMENX_NEW_AI_TASKS_EMERGENCY_DISABLED:-true" in production
     assert "ai-tasks-bootstrap:" not in production
 

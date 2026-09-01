@@ -60,6 +60,7 @@ def test_model_id_selects_vendor_and_seedance_reads_local_ark_model(
     seedance = factory.create("seedance-2.0-r2v")
     wan = factory.create("wan2.7-i2v")
     grok = factory.create("grok-imagine-video", provider="xlinks")
+    gemini = factory.create("gemini-omni-1.1-flash", provider="xlinks")
 
     assert isinstance(seedance, VolcengineSeedanceProvider)
     assert seedance.model_id == "seedance-2.0-r2v"
@@ -68,9 +69,12 @@ def test_model_id_selects_vendor_and_seedance_reads_local_ark_model(
     assert wan.model_id == "wan2.7-i2v"
     assert isinstance(grok, XlinksGrokVideoProvider)
     assert grok.model_id == "grok-imagine-video"
+    assert isinstance(gemini, XlinksGrokVideoProvider)
+    assert gemini.model_id == "gemini-omni-1.1-flash"
     assert credentials.references == [
         "ARK_API_KEY",
         "DASHSCOPE_API_KEY",
+        "XLINKS_API_KEY",
         "XLINKS_API_KEY",
     ]
 

@@ -19,6 +19,7 @@ import {
     getModelLineEntry,
     getModeGateway,
     resolveModelSettings,
+    isR2vImageBased,
 } from '@/lib/modelCatalog';
 
 type MockCatalog = Omit<typeof rawCatalog, 'model_lines' | 'modes' | 'compat'> & {
@@ -62,11 +63,18 @@ describe('model catalog selectors', () => {
             'pixverse-c1-i2v',
             'wan2.7-i2v',
             'grok-imagine-video',
+            'gemini-omni-1.1-flash',
             'viduq3-pro-i2v',
             'viduq3-turbo-i2v',
         ]);
-        expect(GLOBAL_R2V_MODELS.map((model) => model.id)).toEqual(['grok-imagine-video']);
-        expect(VIDEO_R2V_MODELS.map((model) => model.id)).toEqual(['grok-imagine-video']);
+        expect(GLOBAL_R2V_MODELS.map((model) => model.id)).toEqual([
+            'grok-imagine-video',
+            'gemini-omni-1.1-flash',
+        ]);
+        expect(VIDEO_R2V_MODELS.map((model) => model.id)).toEqual([
+            'grok-imagine-video',
+            'gemini-omni-1.1-flash',
+        ]);
     });
 
     it('keeps hidden and planned catalog entries out of visible selectors', () => {
@@ -173,8 +181,8 @@ describe('model catalog fallbacks', () => {
 
         expect(compatI2vModels.map((model) => model.id)).not.toContain('wan2.6-i2v');
         expect(compatI2vModels.some((model) => model.id === 'wan/wan2.6-video#i2v')).toBe(false);
-        // R2V rollout is deliberately allowlisted to Xlinks Grok even when
-        // compatibility metadata contains additional provider routes.
+        // R2V rollout is deliberately allowlisted to the two Xlinks models
+        // even when compatibility metadata contains additional routes.
         expect(compatR2vSelectionModelId).toBe('grok-imagine-video');
         expect(compatR2vRouteModelId).toBe('grok-imagine-video');
     });
@@ -196,6 +204,11 @@ describe('model catalog runtime helpers', () => {
         // use the project's i2i_model setting.
         expect(getMaxReferenceImages('wan2.6-image')).toBe(9);
         expect(getMaxReferenceImages('wan2.5-i2i-preview')).toBe(9);
+    });
+
+    it('treats both Xlinks video models as image-reference R2V models', () => {
+        expect(isR2vImageBased('grok-imagine-video')).toBe(true);
+        expect(isR2vImageBased('gemini-omni-1.1-flash')).toBe(true);
     });
 });
 

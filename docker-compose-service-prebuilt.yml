@@ -1,0 +1,9 @@
+# 生产前端预构建运行配置。
+#
+# 前端镜像必须由发布机按服务器架构构建并导入服务器，服务器只负责运行
+# Nginx 静态站点和同源 API 反向代理，不执行 npm ci/npm run build。
+services:
+  frontend:
+    image: ${LUMENX_FRONTEND_IMAGE:?请设置 LUMENX_FRONTEND_IMAGE（必须是已 docker load 的本地镜像）}
+    build: !reset null
+    pull_policy: never

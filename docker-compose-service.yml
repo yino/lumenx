@@ -8,7 +8,9 @@ name: lumenx-production
 #   1. 创建 secrets/postgres_password.txt、postgres_app_password.txt、
 #      bootstrap_admin_password.txt、session_secret.txt 及供应商/OSS secret。
 #   2. 设置 .env 中的 LUMENX_ALLOWED_ORIGINS、OSS 配置和 XLINKS_BASE_URL。
-#   3. docker compose -f docker-compose-service.yml up -d --build
+#   3. 首次或后端更新：docker compose -f docker-compose-service.yml up -d --build
+#      前端发布请先在本地构建镜像，再叠加 docker-compose-service-prebuilt.yml，
+#      避免在生产服务器执行 Node/npm 构建。
 #
 # 生产默认关闭注册和新 AI 任务。完成灰度、对账和供应商验证后，再通过受控
 # 配置发布解除对应熔断；不要通过修改历史数据库配置绕过策略。
@@ -311,6 +313,9 @@ services:
     build:
       context: .
       dockerfile: docker/Dockerfile.frontend
+    image: ${LUMENX_FRONTEND_IMAGE:-lumenx-frontend:local}
+    # 本地镜像不存在时直接失败，不要在生产服务器隐式拉取或重新构建。
+    pull_policy: never
     logging: *default-logging
     environment:
       LUMENX_LEGACY_API_COMPAT: ${LUMENX_LEGACY_API_COMPAT:-false}

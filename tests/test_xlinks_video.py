@@ -152,6 +152,27 @@ def test_xlinks_t2v_uses_newapi_json_fields(tmp_path):
     }
 
 
+def test_xlinks_accepts_gemini_omni_model_id(tmp_path):
+    provider = XlinksGrokVideoProvider(
+        "gemini-omni-1.1-flash",
+        SecretStr("test"),
+        base_url="https://api.xlinks.site/v1",
+    )
+    payload = provider._request_body(
+        VideoGenerationRequest(
+            model_id="gemini-omni-1.1-flash",
+            prompt="一个人在城市街道上慢慢走过",
+            output_path=str(tmp_path / "result.mp4"),
+            mode="t2v",
+            parameters={"duration": 5, "resolution": "720p"},
+        )
+    )
+    assert payload["model"] == "gemini-omni-1.1-flash"
+    assert payload["duration"] == 5
+    assert payload["width"] == 1280
+    assert payload["height"] == 720
+
+
 def test_xlinks_accepts_xlinks_wrapped_status_and_result_url(tmp_path):
     provider = XlinksGrokVideoProvider(
         "grok-imagine-video",

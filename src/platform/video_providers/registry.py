@@ -9,7 +9,7 @@ from ..contracts import CredentialProvider
 from .aliyun import AliyunWanVideoProvider
 from .interface import VideoProvider
 from .volcengine import VolcengineSeedanceProvider
-from .xlinks import XlinksGrokVideoProvider
+from .xlinks import XlinksVideoProvider
 
 
 class VideoProviderUnavailableError(LookupError):
@@ -47,11 +47,11 @@ DEFAULT_VIDEO_PROVIDERS = (
         builder=AliyunWanVideoProvider,
     ),
     VideoProviderRegistration(
-        name="xlinks-grok-imagine-video",
+        name="xlinks-video",
         provider="xlinks",
-        model_prefixes=("grok-imagine-video",),
+        model_prefixes=("grok-imagine-video", "gemini-omni-1.1-flash"),
         secret_ref="XLINKS_API_KEY",
-        builder=XlinksGrokVideoProvider,
+        builder=XlinksVideoProvider,
     ),
 )
 

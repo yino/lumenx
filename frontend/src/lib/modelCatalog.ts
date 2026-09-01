@@ -215,10 +215,13 @@ const SORTED_MODEL_ENTRIES = [...CATALOG_MODELS].sort((left, right) => {
     return left.display_name.localeCompare(right.display_name);
 });
 
-// R2V is temporarily exposed through Xlinks Grok only. Other catalog entries
-// stay intact so their adapters and metadata can be re-enabled without a
-// migration when product rollout resumes.
-export const ENABLED_R2V_MODEL_IDS = ['grok-imagine-video'] as const;
+// R2V currently exposes the two Xlinks models enabled by the cloud route
+// configuration. The server remains authoritative and rejects unconfigured
+// model choices even if a stale browser bundle submits one.
+export const ENABLED_R2V_MODEL_IDS = [
+    'grok-imagine-video',
+    'gemini-omni-1.1-flash',
+] as const;
 const ENABLED_R2V_MODEL_ID_SET = new Set<string>(ENABLED_R2V_MODEL_IDS);
 
 function isVisibleModel(model: CatalogModel, surface: VisibilitySurface): boolean {
@@ -409,6 +412,7 @@ export const VIDEO_I2V_MODELS = getVisibleModels('i2v', 'video_sidebar').map(toI
 // the server still performs the authoritative route check.
 export const CLOUD_VIDEO_I2V_MODEL_IDS = [
     'grok-imagine-video',
+    'gemini-omni-1.1-flash',
     'seedance-2.0-i2v',
 ] as const;
 export const CLOUD_VIDEO_I2V_MODELS = CLOUD_VIDEO_I2V_MODEL_IDS
@@ -446,9 +450,9 @@ export function isR2vSelectionModel(modelId: string): boolean {
 const R2V_ROUTE_MAP: Record<string, string> = {};
 for (const model of SORTED_MODEL_ENTRIES) {
     // Accept any visible r2v-capable model, not only `selection_group: r2v`
-    // ones: the xlinks family ships a single flat model
-    // (`grok-imagine-video`, selection_group `i2v`) that handles both i2v and
-    // r2v, and routing it to its own family keeps R2V generation on xlinks.
+    // ones: the xlinks family ships flat models (selection_group `i2v`) that
+    // handle both i2v and r2v, and routing them to their own family keeps R2V
+    // generation on xlinks.
     if (model.capabilities.includes('r2v')) {
         if (!R2V_ROUTE_MAP[model.family]) {
             R2V_ROUTE_MAP[model.family] = model.id;
@@ -479,5 +483,7 @@ export function isR2vImageBased(modelId: string): boolean {
     if (family === 'wan' && modelId === 'wan2.6-r2v') return false;
     return family === 'happyhorse' || family === 'wan' || family === 'kling'
         || family === 'pixverse' || family === 'vidu' || family === 'seedance'
-        || family === 'xlinks';
+        // The catalog keeps the historical family id `xlinks-grok-video`
+        // for compatibility with persisted canonical model ids.
+        || family === 'xlinks' || family === 'xlinks-grok-video';
 }

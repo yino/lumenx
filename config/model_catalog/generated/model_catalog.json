@@ -1,6 +1,7 @@
 {
   "compat": {
     "legacy_model_ids": {
+      "gemini-omni-1.1-flash": "xlinks-grok-video/gemini-omni-1.1-flash#i2v",
       "gpt-image-2": "gpt-image/gpt-image-2#image",
       "grok-imagine-video": "xlinks-grok-video/grok-imagine-video#i2v",
       "happyhorse-1.0-video-edit": "happyhorse/happyhorse-1.0-video-edit#i2v",
@@ -471,7 +472,7 @@
         ]
       },
       "default_backend": "xlinks",
-      "display_name": "Grok Imagine Video (Xlinks)",
+      "display_name": "Xlinks Video",
       "docs": {
         "official_snapshot_ids": [
           "newapi/video-generations/2026-08-25"
@@ -479,10 +480,12 @@
       },
       "family": "xlinks-grok-video",
       "models": [
+        "gemini-omni-1.1-flash",
         "grok-imagine-video"
       ],
       "provider": "xlinks",
       "routing_prefixes": [
+        "gemini-omni-1.1-flash",
         "grok-imagine-video"
       ],
       "supported_backends": [
@@ -2215,6 +2218,69 @@
         }
       }
     },
+    "xlinks-grok-video/gemini-omni-1.1-flash": {
+      "backend_env_key": null,
+      "credential_sources": {
+        "xlinks": [
+          "XLINKS_API_KEY"
+        ]
+      },
+      "default_backend": "xlinks",
+      "description": "Xlinks NewAPI-compatible text-to-video, image-to-video and reference-to-video generation",
+      "display_name": "Gemini Omni 1.1 Flash",
+      "docs": {
+        "context_hub_doc_ids": [
+          "newapi/video-generations"
+        ],
+        "official_snapshot_ids": [
+          "newapi/video-generations/2026-08-25"
+        ]
+      },
+      "family": "xlinks-grok-video",
+      "id": "xlinks-grok-video/gemini-omni-1.1-flash",
+      "legacy_model_ids": [
+        "gemini-omni-1.1-flash"
+      ],
+      "modes": [
+        "xlinks-grok-video/gemini-omni-1.1-flash#i2v"
+      ],
+      "provider": "xlinks",
+      "release_stage": "stable",
+      "routing_prefixes": [
+        "gemini-omni-1.1-flash",
+        "grok-imagine-video"
+      ],
+      "runtime": {
+        "xlinks": {
+          "capabilities": [
+            "t2v",
+            "i2v",
+            "r2v"
+          ],
+          "gateway": "xlinks"
+        }
+      },
+      "status": "active",
+      "supported_backends": [
+        "xlinks"
+      ],
+      "supported_modalities": [
+        "t2v",
+        "i2v",
+        "r2v"
+      ],
+      "transport": {
+        "audio_input_mode": {
+          "xlinks": "xlinks_audio_url"
+        },
+        "image_input_mode": {
+          "xlinks": "xlinks_video_image_url"
+        },
+        "reference_video_input_mode": {
+          "xlinks": "xlinks_reference_video_url"
+        }
+      }
+    },
     "xlinks-grok-video/grok-imagine-video": {
       "backend_env_key": null,
       "credential_sources": {
@@ -2244,6 +2310,7 @@
       "provider": "xlinks",
       "release_stage": "stable",
       "routing_prefixes": [
+        "gemini-omni-1.1-flash",
         "grok-imagine-video"
       ],
       "runtime": {
@@ -2279,6 +2346,103 @@
     }
   },
   "models": {
+    "gemini-omni-1.1-flash": {
+      "backend_env_key": null,
+      "capabilities": [
+        "t2v",
+        "i2v",
+        "r2v"
+      ],
+      "credential_sources": {
+        "xlinks": [
+          "XLINKS_API_KEY"
+        ]
+      },
+      "default_backend": "xlinks",
+      "description": "Xlinks NewAPI-compatible text-to-video, image-to-video and reference-to-video generation",
+      "display_name": "Gemini Omni 1.1 Flash",
+      "docs": {
+        "context_hub_doc_ids": [
+          "newapi/video-generations"
+        ],
+        "official_snapshot_ids": [
+          "newapi/video-generations/2026-08-25"
+        ]
+      },
+      "duration": {
+        "default": 5,
+        "max": 10,
+        "min": 1,
+        "step": 1,
+        "type": "slider"
+      },
+      "family": "xlinks-grok-video",
+      "id": "gemini-omni-1.1-flash",
+      "inputs": {
+        "reference_images": {
+          "max": 9,
+          "reference_type": "image"
+        }
+      },
+      "params": {
+        "audio": false,
+        "fps": {
+          "default": 30,
+          "options": [
+            24,
+            30
+          ]
+        },
+        "negativePrompt": true,
+        "qualityLevel": true,
+        "resolution": {
+          "default": "720p",
+          "options": [
+            "480p",
+            "720p",
+            "1080p"
+          ]
+        },
+        "seed": true,
+        "style": true,
+        "watermark": false
+      },
+      "provider": "xlinks",
+      "release_stage": "stable",
+      "routing_prefixes": [
+        "gemini-omni-1.1-flash",
+        "grok-imagine-video"
+      ],
+      "status": "active",
+      "supported_backends": [
+        "xlinks"
+      ],
+      "transport": {
+        "audio_input_mode": {
+          "xlinks": "xlinks_audio_url"
+        },
+        "image_input_mode": {
+          "xlinks": "xlinks_video_image_url"
+        },
+        "reference_video_input_mode": {
+          "xlinks": "xlinks_reference_video_url"
+        }
+      },
+      "ui": {
+        "badges": [
+          "new"
+        ],
+        "order": 74,
+        "recommended": false,
+        "selection_group": "i2v",
+        "visible_in": [
+          "project_settings",
+          "series_settings",
+          "video_sidebar",
+          "global_settings"
+        ]
+      }
+    },
     "gpt-image-2": {
       "backend_env_key": null,
       "capabilities": [
@@ -2433,6 +2597,7 @@
       "provider": "xlinks",
       "release_stage": "stable",
       "routing_prefixes": [
+        "gemini-omni-1.1-flash",
         "grok-imagine-video"
       ],
       "status": "active",
@@ -8848,6 +9013,116 @@
         "visible_in": []
       }
     },
+    "xlinks-grok-video/gemini-omni-1.1-flash#i2v": {
+      "backend_env_key": null,
+      "capabilities": [
+        "t2v",
+        "i2v",
+        "r2v"
+      ],
+      "credential_sources": {
+        "xlinks": [
+          "XLINKS_API_KEY"
+        ]
+      },
+      "default_backend": "xlinks",
+      "description": "Xlinks NewAPI-compatible text-to-video, image-to-video and reference-to-video generation",
+      "display_name": "Gemini Omni 1.1 Flash",
+      "docs": {
+        "context_hub_doc_ids": [
+          "newapi/video-generations"
+        ],
+        "official_snapshot_ids": [
+          "newapi/video-generations/2026-08-25"
+        ]
+      },
+      "duration": {
+        "default": 5,
+        "max": 10,
+        "min": 1,
+        "step": 1,
+        "type": "slider"
+      },
+      "family": "xlinks-grok-video",
+      "id": "xlinks-grok-video/gemini-omni-1.1-flash#i2v",
+      "inputs": {
+        "reference_images": {
+          "max": 9,
+          "reference_type": "image"
+        }
+      },
+      "legacy_model_id": "gemini-omni-1.1-flash",
+      "mode": "i2v",
+      "model_line_id": "xlinks-grok-video/gemini-omni-1.1-flash",
+      "params": {
+        "audio": false,
+        "fps": {
+          "default": 30,
+          "options": [
+            24,
+            30
+          ]
+        },
+        "negativePrompt": true,
+        "qualityLevel": true,
+        "resolution": {
+          "default": "720p",
+          "options": [
+            "480p",
+            "720p",
+            "1080p"
+          ]
+        },
+        "seed": true,
+        "style": true,
+        "watermark": false
+      },
+      "provider": "xlinks",
+      "release_stage": "stable",
+      "routing_prefixes": [
+        "gemini-omni-1.1-flash",
+        "grok-imagine-video"
+      ],
+      "runtime": {
+        "xlinks": {
+          "capabilities": [
+            "t2v",
+            "i2v",
+            "r2v"
+          ],
+          "gateway": "xlinks"
+        }
+      },
+      "status": "active",
+      "supported_backends": [
+        "xlinks"
+      ],
+      "transport": {
+        "audio_input_mode": {
+          "xlinks": "xlinks_audio_url"
+        },
+        "image_input_mode": {
+          "xlinks": "xlinks_video_image_url"
+        },
+        "reference_video_input_mode": {
+          "xlinks": "xlinks_reference_video_url"
+        }
+      },
+      "ui": {
+        "badges": [
+          "new"
+        ],
+        "order": 74,
+        "recommended": false,
+        "selection_group": "i2v",
+        "visible_in": [
+          "project_settings",
+          "series_settings",
+          "video_sidebar",
+          "global_settings"
+        ]
+      }
+    },
     "xlinks-grok-video/grok-imagine-video#i2v": {
       "backend_env_key": null,
       "capabilities": [
@@ -8915,6 +9190,7 @@
       "provider": "xlinks",
       "release_stage": "stable",
       "routing_prefixes": [
+        "gemini-omni-1.1-flash",
         "grok-imagine-video"
       ],
       "runtime": {

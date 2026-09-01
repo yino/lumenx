@@ -66,13 +66,13 @@ def test_generated_catalog_maps_to_inactive_reviewable_routes(catalog_seeder) ->
 
     assert created is True
     assert stored.status == "draft"
-    assert len(stored.draft.routes) == 48
+    assert len(stored.draft.routes) == 51
     assert len(
         {
             (route.capability, route.provider, route.provider_model_id)
             for route in stored.draft.routes
         }
-    ) == 48
+    ) == 51
     assert all(not route.enabled and not route.is_primary for route in stored.draft.routes)
     assert all(route.metering_formula.review_required for route in stored.draft.routes)
     assert {route.secret_ref for route in stored.draft.routes} == {

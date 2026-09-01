@@ -7,7 +7,8 @@ import { useProjectStore } from "@/store/projectStore";
 import VideoCreator from "./VideoCreator";
 import VideoSidebar from "./VideoSidebar";
 import { api, VideoTask } from "@/lib/api";
-import { resolveModelId } from "@/lib/modelCatalog";
+import { CLOUD_VIDEO_I2V_MODELS, resolveModelId } from "@/lib/modelCatalog";
+import { IS_CLOUD_DEPLOYMENT } from "@/lib/deployment";
 import StepHeader from "@/components/shared/StepHeader";
 
 export default function VideoGenerator() {
@@ -20,11 +21,16 @@ export default function VideoGenerator() {
     const [remixData, setRemixData] = useState<Partial<VideoTask> | null>(null);
 
     // Get default model from project settings
-    const defaultI2vModel = resolveModelId(
+    const configuredI2vModel = resolveModelId(
         'i2v',
         currentProject?.model_settings?.i2v_model,
         'video_sidebar',
     );
+    const defaultI2vModel = IS_CLOUD_DEPLOYMENT
+        ? (CLOUD_VIDEO_I2V_MODELS.some((model) => model.id === configuredI2vModel)
+            ? configuredI2vModel
+            : (CLOUD_VIDEO_I2V_MODELS[0]?.id ?? configuredI2vModel))
+        : configuredI2vModel;
 
     // Generation Params (Lifted State)
     const [params, setParams] = useState({
@@ -53,13 +59,19 @@ export default function VideoGenerator() {
 
     // Sync model from project settings when project changes
     useEffect(() => {
+        const configuredModel = resolveModelId(
+            'i2v',
+            currentProject?.model_settings?.i2v_model,
+            'video_sidebar',
+        );
+        const nextModel = IS_CLOUD_DEPLOYMENT
+            ? (CLOUD_VIDEO_I2V_MODELS.some((model) => model.id === configuredModel)
+                ? configuredModel
+                : (CLOUD_VIDEO_I2V_MODELS[0]?.id ?? configuredModel))
+            : configuredModel;
         setParams((p) => ({
             ...p,
-            model: resolveModelId(
-                'i2v',
-                currentProject?.model_settings?.i2v_model,
-                'video_sidebar',
-            ),
+            model: nextModel,
         }));
     }, [currentProject?.model_settings?.i2v_model]);
 

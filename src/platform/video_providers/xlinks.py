@@ -26,6 +26,10 @@ from .interface import VideoGenerationRequest
 DEFAULT_MAX_VIDEO_BYTES = 512 * 1024 * 1024
 DEFAULT_MAX_INPUT_IMAGE_BYTES = 20 * 1024 * 1024
 SUPPORTED_MODES = frozenset({"t2v", "i2v", "r2v"})
+SUPPORTED_MODEL_IDS = frozenset({
+    "grok-imagine-video",
+    "gemini-omni-1.1-flash",
+})
 SUPPORTED_IMAGE_MEDIA_TYPES = frozenset({"image/jpeg", "image/png", "image/webp"})
 SUPPORTED_RESOLUTIONS = {
     "720p": (1280, 720),
@@ -35,8 +39,8 @@ SUPPORTED_RESOLUTIONS = {
 TRANSIENT_STATUSES = frozenset({404, 408, 409, 425, 429, 500, 502, 503, 504})
 
 
-class XlinksGrokVideoProvider:
-    """NewAPI-compatible Xlinks adapter for grok-imagine-video."""
+class XlinksVideoProvider:
+    """NewAPI-compatible Xlinks adapter for supported video model IDs."""
 
     provider_name = "xlinks"
 
@@ -71,8 +75,9 @@ class XlinksGrokVideoProvider:
         self._validate_configuration()
 
     def _validate_configuration(self) -> None:
-        if self.model_id != "grok-imagine-video":
-            raise ValueError("Xlinks video adapter only supports grok-imagine-video")
+        if self.model_id not in SUPPORTED_MODEL_IDS:
+            supported = ", ".join(sorted(SUPPORTED_MODEL_IDS))
+            raise ValueError(f"Xlinks video adapter only supports: {supported}")
         if not self.api_key:
             raise ValueError("XLINKS_API_KEY is not configured")
         parsed = urlparse(self.base_url)
@@ -132,8 +137,8 @@ class XlinksGrokVideoProvider:
         if "x" not in normalized:
             raise ValueError("Xlinks video resolution is invalid")
         width_text, height_text = normalized.split("x", 1)
-        width = XlinksGrokVideoProvider._positive_integer(width_text, name="width")
-        height = XlinksGrokVideoProvider._positive_integer(height_text, name="height")
+        width = XlinksVideoProvider._positive_integer(width_text, name="width")
+        height = XlinksVideoProvider._positive_integer(height_text, name="height")
         return width, height
 
     @staticmethod
@@ -144,7 +149,7 @@ class XlinksGrokVideoProvider:
     ) -> None:
         value = parameters.get(name)
         if value is not None:
-            payload[name] = XlinksGrokVideoProvider._positive_integer(value, name=name)
+            payload[name] = XlinksVideoProvider._positive_integer(value, name=name)
 
     @staticmethod
     def _validate_data_uri(value: str, *, maximum_bytes: int) -> str:
@@ -669,3 +674,8 @@ class XlinksGrokVideoProvider:
                 "provider_task_id": task_id,
             },
         )
+
+
+# Backwards-compatible import for integrations that used the original
+# Grok-specific adapter name before the Xlinks video family gained Gemini.
+XlinksGrokVideoProvider = XlinksVideoProvider

@@ -31,13 +31,65 @@ Python 依赖默认通过阿里云 PyPI 镜像下载；在网络受限或海外�
 `PIP_INDEX_URL` 覆盖。构建输出应使用 Compose 的全局进度参数：
 `docker compose --progress=plain build`。
 
+## 前端本地构建、服务器运行
+
+生产服务器不需要安装 Node.js，也不应在服务器上执行前端 `npm ci` 或
+`npm run build`。前端是静态导出，发布机按服务器架构构建完整的 Nginx 镜像，
+服务器只导入镜像并运行它；Nginx 仍负责静态文件和 `/api/v1` 到 backend 的同源反代。
+
+在本地发布机（例如 macOS Docker Desktop）执行：
+
+```bash
+export LUMENX_FRONTEND_IMAGE=lumenx-frontend:20260901
+export LUMENX_FRONTEND_PLATFORM=linux/amd64
+export LUMENX_FRONTEND_ARCHIVE=/tmp/lumenx-frontend-20260901.tar.gz
+./scripts/build-frontend-image.sh
+```
+
+`linux/amd64` 要与服务器架构一致；ARM 服务器请改为 `linux/arm64`。脚本会在本地
+运行 Dockerfile 中的 `npm ci`/`npm run build`，并把包含静态产物、Nginx 配置及兼容脚本
+的镜像导出为压缩归档。构建前端时 Dockerfile 已固定 `NEXT_PUBLIC_DEPLOYMENT_MODE=cloud`，
+不受本机 `.env` 的 desktop 设置影响。
+
+将归档和当前仓库的 Compose 文件（至少包含 `docker-compose-service.yml`、
+`docker-compose-service-prebuilt.yml`）传到服务器后执行：
+
+```bash
+docker load < /path/to/lumenx-frontend-20260901.tar.gz
+export LUMENX_FRONTEND_IMAGE=lumenx-frontend:20260901
+docker compose --env-file .env \
+  -f docker-compose-service.yml \
+  -f docker-compose-service-prebuilt.yml \
+  config --quiet
+docker compose --env-file .env \
+  -f docker-compose-service.yml \
+  -f docker-compose-service-prebuilt.yml \
+  up -d --no-build --no-deps frontend
+```
+
+也可以把 `LUMENX_FRONTEND_IMAGE=lumenx-frontend:20260901` 写入服务器 `.env`，
+避免每次在 shell 中导出。预构建覆盖文件会清除 `frontend` 的 `build` 配置并设置
+`pull_policy: never`；镜像未通过 `docker load` 导入时会直接失败，不会退回到服务器构建。
+
+后端、迁移和 worker 仍可按原流程单独更新。更新后端时才使用相应的 `--build`，
+不要把 `frontend` 放进该次服务器构建目标；只更新前端时只执行上面的 `frontend` 命令。
+
 检查 Compose 展开结果，不输出 secret 内容：
 
 ```bash
-docker compose config --quiet
-docker compose up -d --build
+docker compose --env-file .env -f docker-compose-service.yml config --quiet
+# 首次部署或后端镜像更新时，再按需构建后端目标；不要把 frontend 加入目标。
+docker compose --env-file .env -f docker-compose-service.yml build \
+  database-role-bootstrap migration admin-bootstrap registration-mode-bootstrap \
+  backend ai-worker maintenance-worker scheduler postgres-backup
+docker compose --env-file .env -f docker-compose-service.yml up -d \
+  database-role-bootstrap migration admin-bootstrap registration-mode-bootstrap \
+  backend ai-worker maintenance-worker scheduler postgres-backup
 docker compose ps
 ```
+
+前端使用上一节的预构建覆盖文件单独启动；不要对包含 `frontend` 的服务执行
+`up -d --build`。
 
 后端 `/ready`、PostgreSQL、Redis 和 worker 健康检查必须全部通过。注册开放前先完成本文档的迁移、种子、管理员和对账步骤。
 

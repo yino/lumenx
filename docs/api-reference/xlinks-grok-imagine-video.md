@@ -1,9 +1,10 @@
-# Xlinks Grok Imagine Video API Evidence
+# Xlinks Video API Evidence
 
 - Source: <https://www.newapi.pro/zh/docs/api/ai-model/videos/createvideogeneration>
 - Status source: <https://www.newapi.pro/zh/docs/api/ai-model/videos/getvideogeneration>
 - Captured: 2026-08-25
-- Scope: LumenX PC/Cloud `video.t2v` and `video.i2v`
+- Scope: LumenX PC/Cloud `video.t2v`, `video.i2v`, and `video.r2v` for
+  `grok-imagine-video` and `gemini-omni-1.1-flash`
 
 Xlinks uses the open-source NewAPI video contract. The gateway is OpenAI-style
 Bearer authenticated and exposes asynchronous video generation endpoints below
@@ -34,8 +35,13 @@ HTTPS request and retries once with an `image_url` data URI. Network timeouts
 and all ambiguous task-creation failures are never retried.
 
 The NewAPI documentation defines the transport contract, but does not promise
-which upstream models a deployment enables. Xlinks must expose the
-`grok-imagine-video` model before this route can generate media.
+which upstream models a deployment enables. Xlinks must expose the requested
+model (`grok-imagine-video` or `gemini-omni-1.1-flash`) before that route can
+generate media. The Gemini model ID and its supplier reference price of
+0.8 CNY/second were provided by the product request on 2026-09-01; they are
+not asserted as facts by the NewAPI transport documentation. The supplied
+reference price is **0.8 CNY per second** (for example, 5 seconds = 4 CNY
+before any platform markup or算力券 conversion).
 
 Xlinks currently wraps status responses in a business envelope such as
 `{"code":"success","data":{"status":"SUCCESS","result_url":"..."}}`.

@@ -41,8 +41,8 @@ CATALOG_ROUTE_MODELS = {
     AICapability.VIDEO_R2V: "grok-imagine-video",
 }
 SECONDARY_CATALOG_ROUTE_MODELS = {
-    AICapability.VIDEO_I2V: ("seedance-2.0-i2v",),
-    AICapability.VIDEO_R2V: ("seedance-2.0-r2v",),
+    AICapability.VIDEO_I2V: ("gemini-omni-1.1-flash", "seedance-2.0-i2v"),
+    AICapability.VIDEO_R2V: ("gemini-omni-1.1-flash", "seedance-2.0-r2v"),
 }
 
 
@@ -239,10 +239,10 @@ def _enable_secondary_route(
 ) -> list[ModelRouteConfig]:
     """Upsert one explicitly allowlisted non-primary route.
 
-    The local bootstrap keeps the Xlinks route as the I2V primary while
-    enabling Seedance as a selectable secondary route. Other catalog routes
-    remain disabled so the browser cannot select a provider that this local
-    deployment did not explicitly opt into.
+    The local bootstrap keeps the Xlinks Grok route as the I2V/R2V primary
+    while enabling the explicitly approved Gemini and Seedance routes as
+    selectable secondaries. Other catalog routes remain disabled so the
+    browser cannot select a provider this deployment did not opt into.
     """
     updated: list[ModelRouteConfig] = []
     inserted = False
